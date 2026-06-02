@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Widget — Test Document</title>
+<style>
+  :root { --ink:#1c1917; --muted:#57534e; --paper:#fdfcfa; --rule:#e7e5e4; --accent:#c2410c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; line-height:1.7; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 64px 28px 120px; }
+  .eyebrow { font-family:-apple-system,system-ui,sans-serif; font-size:12px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--accent); font-weight:700; margin:0 0 8px; }
+  h1 { font-size:34px; line-height:1.15; margin:0 0 10px; }
+  .subtitle { color:var(--muted); font-size:18px; margin:0 0 40px; }
+  h2 { font-size:22px; margin:40px 0 12px; padding-top:14px; border-top:1px solid var(--rule); }
+  p { margin:0 0 16px; }
+  .lead { font-size:18px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size:.88em; background:#f5f5f4;
+    padding:1px 5px; border-radius:4px; }
+  .callout { background:#fff; border:1px solid var(--rule); border-left:3px solid var(--accent);
+    border-radius:8px; padding:14px 18px; margin:20px 0; font-size:16px; }
+  footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--rule);
+    font-family:-apple-system,system-ui,sans-serif; font-size:13px; color:var(--muted);
+    display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Reading companion · test fixture</p>
+  <h1>How the Ask Widget Works</h1>
+  <p class="subtitle">Highlight a sentence below, right-click, and choose ELI5, Prove it, or Ask a question.</p>
+
+  <p class="lead">This page exists to exercise the widget. Some statements below are deliberately
+  true and some are deliberately false, so that "Prove it" — which greps the project's real
+  source — has something to confirm and something to contradict.</p>
+
+  <h2>Networking</h2>
+  <p class="callout">The Ask Widget server binds to <code>0.0.0.0</code> on port 8899, listening on
+  all network interfaces so other machines on the LAN can reach it.</p>
+  <p>The sentence in the box above is the headline fact-check target. Highlight it and choose
+  <strong>Prove it</strong> — the answer should come back <em>Not supported</em> and cite the real
+  default host in <code>__main__.py</code>.</p>
+
+  <h2>Python packaging</h2>
+  <p>Homebrew's Python is a <strong>PEP 668 externally-managed environment</strong>, so a bare
+  <code>pip install</code> is refused and you must create a virtual environment first. Highlight
+  that phrase and choose <strong>ELI5</strong> for a plain-language explanation.</p>
+
+  <h2>Security</h2>
+  <p>Every request to <code>/ask</code> must carry a per-server random token that is baked into
+  the served <code>ask.js</code>, and the server additionally checks the Origin and Host headers
+  to defeat DNS-rebinding. Highlight this and choose <strong>Ask a question</strong> to dig into
+  why a token alone is not enough.</p>
+
+  <footer>
+    <span>Ask Widget test fixture</span>
+    <span>localhost:9000</span>
+  </footer>
+</div>
+
+<!-- the entire widget: -->
+<script src="http://localhost:8899/ask.js"></script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+"""CLI entrypoint: ``python -m ask_widget --folder ... --port 8899``."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import uvicorn
+
+from .app import create_app
+from .config import AppConfig
+
+
+def _under(path: Path, root: Path) -> bool:
+    try:
+        return path == root or path.is_relative_to(root)
+    except ValueError:
+        return False
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="ask_widget",
+        description="Local server for the highlight-to-ask reading companion widget.",
+    )
+    parser.add_argument(
+        "--folder",
+        default=str(Path.home() / "Projects"),
+        help="Default context folder Claude reads (its CLAUDE.md + files). Default: ~/Projects",
+    )
+    parser.add_argument("--port", type=int, default=8899)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host. Keep this loopback; anything else exposes the Claude runner.",
+    )
+    parser.add_argument("--model", default="sonnet", help="Model passed to `claude --model`.")
+    parser.add_argument(
+        "--allow-root",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Extra root the widget may point at (repeatable). Default root is ~/Projects.",
+    )
+    parser.add_argument(
+        "--allow-any",
+        action="store_true",
+        help="LOUD escape hatch: allow any readable directory. Disables the folder allowlist.",
+    )
+    args = parser.parse_args()
+
+    default_folder = Path(args.folder).expanduser().resolve()
+
+    roots: list[Path] = [(Path.home() / "Projects").resolve()]
+    roots += [Path(r).expanduser().resolve() for r in args.allow_root]
+    # Make sure the chosen default folder is itself reachable through the allowlist.
+    if not any(_under(default_folder, r) for r in roots):
+        roots.append(default_folder)
+    roots = list(dict.fromkeys(roots))  # dedupe, preserve order
+
+    config = AppConfig(
+        default_folder=default_folder,
+        allowed_roots=tuple(roots),
+        model=args.model,
+        host=args.host,
+        port=args.port,
+        allow_any=args.allow_any,
+    )
+    app = create_app(config)
+
+    roots_label = "(any — --allow-any)" if args.allow_any else ", ".join(str(r) for r in roots)
+    print(
+        "\n  Ask Widget server\n"
+        f"  Folder:  {default_folder}\n"
+        f"  Roots:   {roots_label}\n"
+        f"  Model:   {config.model}\n"
+        f"  URL:     http://{args.host}:{args.port}\n"
+        f'  Embed:   <script src="http://{args.host}:{args.port}/ask.js"></script>\n'
+    )
+    if args.host not in ("127.0.0.1", "localhost"):
+        print(
+            "  WARNING: binding to a non-loopback host exposes the read-only Claude\n"
+            "           runner to your network. Only do this on a trusted network.\n"
+        )
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
