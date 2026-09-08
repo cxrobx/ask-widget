@@ -136,3 +136,20 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(store.search("Shared selection")["documents"], [])
             self.assertEqual(store.stats()["documents"], 0)
             store.close()
+
+    def test_vault_root_setting_validates_and_normalizes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            data = Path(raw)
+            vault = data / "vault"
+            vault.mkdir()
+            store = Storage(data / "db")
+            self.assertTrue(store.settings()["vault_root"].endswith("CX"))
+            saved = store.update_settings({"vault_root": f"{vault}/./"}, model_default="sonnet")
+            self.assertEqual(saved["vault_root"], str(vault))
+            disabled = store.update_settings({"vault_root": "  "}, model_default="sonnet")
+            self.assertEqual(disabled["vault_root"], "")
+            with self.assertRaises(ValueError):
+                store.update_settings({"vault_root": str(data / "missing")}, model_default="sonnet")
+            with self.assertRaises(ValueError):
+                store.update_settings({"vault_root": "relative/path"}, model_default="sonnet")
+            store.close()

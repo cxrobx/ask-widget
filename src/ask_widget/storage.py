@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -29,6 +30,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "request_timeout": 120,
     "glass_transparency": 38,
     "appearance_theme": "system",
+    # Browsed read-only in Vault mode; "" disables the vault view.
+    "vault_root": str(Path.home() / "Documents" / "CX"),
 }
 
 
@@ -227,6 +230,17 @@ class Storage:
         for key in ("history_enabled", "allow_private_remote"):
             if key in patch:
                 clean[key] = bool(patch[key])
+        if "vault_root" in patch:
+            value = str(patch["vault_root"] or "").strip()
+            if value:
+                candidate = Path(value).expanduser()
+                if not candidate.is_absolute() or not candidate.is_dir():
+                    raise ValueError("Vault folder does not exist.")
+                # Lexical normalization only: the vault may contain symlinked
+                # folders, and every containment check compares against the
+                # path the user sees, never a resolved realpath.
+                value = os.path.normpath(str(candidate))
+            clean["vault_root"] = value
 
         now = time.time()
         with self._lock:
