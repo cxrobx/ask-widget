@@ -18,6 +18,10 @@ with socket.socket() as sock:
 PY
 )"
 SERVER_PID=""
+# Read the expected version from the bundle being tested, not a literal, so a
+# release bump never needs this script edited in lockstep.
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+  "$ROOT/launcher/build/Ask Widget.app/Contents/Info.plist")"
 
 cleanup() {
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -46,20 +50,20 @@ for _ in $(seq 1 80); do
   sleep 0.25
 done
 
-python3 - "$SMOKE_DIR/health.json" <<'PY'
+python3 - "$SMOKE_DIR/health.json" "$VERSION" <<'PY'
 import json, pathlib, sys
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload["status"] == "ok", payload
 assert payload["service"] == "ask-widget", payload
 assert payload["protocol"] == 3, payload
-assert payload["version"] == "0.5.0", payload
+assert payload["version"] == sys.argv[2], payload
 PY
 
 curl --fail --silent "http://127.0.0.1:$PORT/config" >"$SMOKE_DIR/config.json"
-python3 - "$SMOKE_DIR/config.json" <<'PY'
+python3 - "$SMOKE_DIR/config.json" "$VERSION" <<'PY'
 import json, pathlib, sys
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
-assert payload["version"] == "0.5.0", payload
+assert payload["version"] == sys.argv[2], payload
 assert payload["default_folder"], payload
 assert payload["provider"] in {"claude", "codex"}, payload
 assert payload["model"], payload
@@ -72,6 +76,21 @@ payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload["ok"] is True, payload
 assert [provider["id"] for provider in payload["providers"]] == ["claude", "codex"], payload
 PY
+
+curl --fail --silent "http://127.0.0.1:$PORT/api/session" >"$SMOKE_DIR/session.json"
+python3 - "$SMOKE_DIR/session.json" <<'PY'
+import json, pathlib, sys
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert payload["ok"] is True, payload
+assert payload["service"] == "ask-widget", payload
+assert payload["token"], payload
+PY
+
+curl --fail --silent "http://127.0.0.1:$PORT/vault" >"$SMOKE_DIR/vault.html"
+grep -q '<iframe id=reader' "$SMOKE_DIR/vault.html" || {
+  echo "Bundled /vault did not render the reader shell." >&2
+  exit 1
+}
 
 curl --fail --silent "http://127.0.0.1:$PORT/ask.js" >"$SMOKE_DIR/ask.js"
 if grep -q "__ASK_TOKEN__" "$SMOKE_DIR/ask.js"; then

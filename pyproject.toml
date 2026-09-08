@@ -1,6 +1,6 @@
 [project]
 name = "ask-widget"
-version = "0.5.0"
+version = "0.6.0"
 description = "Highlight-to-ask reading companion with subscription-backed Claude and Codex CLI providers."
 requires-python = ">=3.11"
 dependencies = [
