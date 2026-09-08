@@ -774,6 +774,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func goHome() {
         webView?.load(URLRequest(url: URL(string: "\(baseURL)/")!))
     }
+    @objc private func goVault() {
+        webView?.load(URLRequest(url: URL(string: "\(baseURL)/vault")!))
+    }
     @objc private func openInBrowser() {
         NSWorkspace.shared.open(webView?.url ?? URL(string: "\(baseURL)/")!)
     }
@@ -907,6 +910,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         fileItem.submenu = fileMenu
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
         fileMenu.addItem(menuItem("Launcher Home", #selector(goHome), "n"))
+        fileMenu.addItem(menuItem("Vault", #selector(goVault), "V"))
 
         let editItem = NSMenuItem()
         main.addItem(editItem)

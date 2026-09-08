@@ -136,6 +136,29 @@ select text in another app, open its Services menu, and choose **Ask Selection
 with Ask Widget**. Ask Widget opens a temporary reading page and selects the
 shared passage automatically.
 
+### Vault mode
+
+**Vault** in the sidebar (or **File ▸ Vault**, ⌘⇧V) opens a persistent folder
+tree beside the reader. Set the folder under **Settings ▸ Vault**; it defaults to
+`~/Documents/CX`. Saving it also adds the folder to the allowed context roots, so
+answers can cite the notes themselves — remove it there and the tree keeps
+working, but the reader's context folder falls back to the default.
+
+Inside the vault the Markdown reader understands Obsidian's conventions:
+
+| Written | Rendered |
+|---|---|
+| YAML frontmatter | A collapsible **Properties** block; tags become pills. |
+| `[[Note]]`, `[[Note\|alias]]`, `[[Note#Heading]]` | A link resolved by Obsidian's shortest-path rules — the linking note's own folder wins, then the shallowest match. |
+| `[[Missing]]` | A dotted span naming the note that does not exist. |
+| `![[image.png]]` | The image, preferring the vault's attachment folder. |
+| `[text](../Other.md)` | A reader link; relative and percent-encoded paths resolve. |
+
+Clicking a link swaps the reader pane and moves the tree highlight; the browser
+Back button walks the history. Press `/` to focus the filter box, Escape to clear
+it. Symlinked vault folders are followed and keep their vault-visible paths, so
+links between notes inside them stay in the vault.
+
 ### Supported documents
 
 | Source | Behavior |
@@ -201,6 +224,10 @@ to search or reuse them. Turn off **Save reading history** in Settings to stop
 persisting new conversations.
 Browser/WKWebView answer-cache entries live in local storage and obey the cache
 TTL and maximum-entry settings.
+
+Saving a **Vault folder** in Settings also registers it as an allowed context
+root, which is what lets a question asked inside a note cite that note's
+neighbours. Clearing the field hides Vault mode and leaves the root in place.
 
 Additional trusted roots can be managed in Settings. The launcher also reads
 `~/.config/ask-widget/allow-roots` at startup for compatibility; use one path per
@@ -301,6 +328,8 @@ ask-widget/
 │   ├── providers.py          subscription auth and live model discovery
 │   ├── runner.py             subscription-only provider dispatch
 │   ├── storage.py            SQLite schema and queries
+│   ├── vault.py              vault index: tree, wikilink resolution, containment
+│   ├── vault_ui.py           vault shell: note tree beside the reader iframe
 │   └── viewer.py             secure HTML/Markdown/text/PDF readers
 ├── static/ask.js             selection UI and streamed answer panel
 ├── tests/                    API, security, storage, viewer, and runner tests
