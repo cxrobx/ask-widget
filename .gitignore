@@ -7,3 +7,5 @@ __pycache__/
 launcher/build/
 launcher/.build-venv/
 tmp/
+integrations/obsidian/node_modules/
+integrations/obsidian/main.js

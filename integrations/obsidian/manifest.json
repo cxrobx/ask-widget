@@ -1,0 +1,9 @@
+{
+  "id": "ask-widget",
+  "name": "Ask Widget",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "ELI5, Prove it, and Ask a question on any selection, answered by the local Ask Widget service.",
+  "author": "CX Ventures",
+  "isDesktopOnly": true
+}

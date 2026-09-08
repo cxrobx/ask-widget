@@ -233,11 +233,31 @@ Additional trusted roots can be managed in Settings. The launcher also reads
 `~/.config/ask-widget/allow-roots` at startup for compatibility; use one path per
 line, with `~` expansion and `#` comments supported.
 
+### Obsidian plugin
+
+`integrations/obsidian/` is a desktop-only Obsidian plugin that runs the same
+three actions on a selection inside a note and streams the answer into a
+right-sidebar panel. Answers are filed under the note's absolute path, so they
+appear in this app's Library and History too. Build and install it with:
+
+```bash
+VAULT="$HOME/Documents/CX" ./scripts/install-obsidian-plugin.sh
+```
+
+Enable it under **Community plugins**, then quit and relaunch Obsidian — a newly
+enabled plugin is not loaded by Cmd+R. See
+[`integrations/obsidian/README.md`](integrations/obsidian/README.md) for the
+development loop and the settings the plugin needs.
+
 ## Security model
 
 Ask Widget can invoke Claude or Codex against local files, so the local HTTP boundary is
 deliberately narrow:
 
+0. Browser origins are allowlisted, never `*`: `null` (file://), localhost, and
+   `127.0.0.1`, plus anything listed in the `allowed_origins` setting. It holds
+   `app://obsidian.md` by default so the Obsidian plugin can reach the API;
+   clearing it shuts the plugin out at the server.
 1. The service binds to `127.0.0.1` by default.
 2. Host headers must be `127.0.0.1:<port>` or `localhost:<port>` to block DNS
    rebinding.
@@ -316,6 +336,9 @@ build.
 
 ```text
 ask-widget/
+├── integrations/
+│   ├── alfred/               Alfred file action
+│   └── obsidian/             Obsidian plugin (TypeScript, esbuild)
 ├── launcher/                 native Swift app and release build
 ├── scripts/                  bundled-service smoke test
 ├── src/ask_widget/

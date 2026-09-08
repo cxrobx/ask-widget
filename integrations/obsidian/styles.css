@@ -1,0 +1,119 @@
+/* Theme-agnostic: only Obsidian CSS variables, so AnuPpuccin and any snippet
+   the user has applied keep control of the actual colours. */
+.ask-widget-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px 12px;
+  font-size: var(--font-ui-small);
+}
+.ask-widget-panel .askw-head { display: flex; flex-direction: column; gap: 2px; }
+.ask-widget-panel .askw-title { font-weight: var(--font-semibold); color: var(--text-normal); }
+.ask-widget-panel .askw-title[data-elapsed]::after {
+  content: " · " attr(data-elapsed);
+  color: var(--text-faint);
+  font-weight: var(--font-normal);
+}
+.ask-widget-panel .askw-meta { color: var(--text-muted); }
+.ask-widget-panel .askw-passage {
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+.ask-widget-panel .askw-passage summary { cursor: pointer; color: var(--text-muted); }
+.ask-widget-panel .askw-passage blockquote {
+  margin: 8px 0 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ask-widget-panel .askw-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: var(--radius-l);
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: var(--font-smallest);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ask-widget-panel .askw-badge-supported { background: var(--color-green); color: var(--text-on-accent); }
+.ask-widget-panel .askw-badge-partially { background: var(--color-yellow); color: var(--text-on-accent); }
+.ask-widget-panel .askw-badge-not,
+.ask-widget-panel .askw-badge-no { background: var(--color-red); color: var(--text-on-accent); }
+.ask-widget-panel .askw-tools { display: flex; flex-wrap: wrap; gap: 4px; }
+.ask-widget-panel .askw-pill {
+  padding: 1px 7px;
+  border-radius: var(--radius-l);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-smallest);
+}
+.ask-widget-panel .askw-answer { min-height: 1em; color: var(--text-normal); }
+.ask-widget-panel .askw-waiting { color: var(--text-faint); font-style: italic; }
+.ask-widget-panel .askw-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-error);
+}
+.ask-widget-panel .askw-section-title {
+  color: var(--text-faint);
+  font-size: var(--font-smallest);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ask-widget-panel .askw-citation { margin-top: 6px; }
+.ask-widget-panel .askw-citation-open {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-accent);
+  text-align: left;
+  cursor: pointer;
+}
+.ask-widget-panel .askw-citation-open:hover { background: var(--background-modifier-hover); }
+.ask-widget-panel .askw-citation pre {
+  max-height: 120px;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: var(--radius-s);
+  background: var(--background-primary-alt);
+  color: var(--text-muted);
+  font-size: var(--font-smallest);
+  white-space: pre-wrap;
+}
+.ask-widget-panel .askw-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-widget-panel .askw-followup { display: flex; gap: 6px; align-items: flex-end; }
+.ask-widget-panel .askw-followup textarea {
+  flex: 1;
+  min-height: 2.4em;
+  resize: vertical;
+  font-family: inherit;
+}
+.ask-widget-modal blockquote {
+  margin: 10px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ask-widget-modal input[type="text"] { width: 100%; }
+.ask-widget-modal .askw-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
