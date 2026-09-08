@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+
+from fastapi.testclient import TestClient
 
 from ask_widget import __version__
 from ask_widget.app import PROTOCOL_VERSION, create_app
@@ -14,10 +15,11 @@ class RuntimeContractTests(unittest.TestCase):
     def test_health_identifies_the_service_and_protocol(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
-            app = create_app(AppConfig(default_folder=root, allowed_roots=(root,), data_dir=root / "data"))
-            route = next(route for route in app.routes if getattr(route, "path", None) == "/health")
-
-            body = asyncio.run(route.endpoint())
+            app = create_app(
+                AppConfig(default_folder=root, allowed_roots=(root,), port=8899, data_dir=root / "data")
+            )
+            with TestClient(app, base_url="http://127.0.0.1:8899") as client:
+                body = client.get("/health").json()
 
             self.assertEqual(body["status"], "ok")
             self.assertEqual(body["service"], "ask-widget")

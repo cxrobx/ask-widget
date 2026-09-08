@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -13,6 +14,11 @@ from typing import Any
 
 
 SCHEMA_VERSION = 3
+
+# Extra browser origins allowed to reach /ask and the JSON APIs, beyond the
+# built-in localhost set. The Obsidian plugin's renderer origin is the default.
+MAX_ALLOWED_ORIGINS = 16
+_ORIGIN_RE = re.compile(r"^[a-z][a-z0-9+.-]*://[a-z0-9.-]+(:\d{1,5})?$", re.IGNORECASE)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "provider": "claude",
@@ -32,6 +38,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "appearance_theme": "system",
     # Browsed read-only in Vault mode; "" disables the vault view.
     "vault_root": str(Path.home() / "Documents" / "CX"),
+    "allowed_origins": ["app://obsidian.md"],
 }
 
 
@@ -169,6 +176,9 @@ class Storage:
         values.update(stored)
         if "claude_model" not in stored and isinstance(stored.get("model"), str):
             values["claude_model"] = stored["model"]
+        origins = values.get("allowed_origins")
+        if not isinstance(origins, list) or not all(isinstance(item, str) for item in origins):
+            values["allowed_origins"] = list(DEFAULT_SETTINGS["allowed_origins"])
         provider = values.get("provider") if values.get("provider") in {"claude", "codex"} else "claude"
         values["provider"] = provider
         values["model"] = values[f"{provider}_model"]
@@ -230,6 +240,22 @@ class Storage:
         for key in ("history_enabled", "allow_private_remote"):
             if key in patch:
                 clean[key] = bool(patch[key])
+        if "allowed_origins" in patch:
+            raw = patch["allowed_origins"]
+            if not isinstance(raw, list):
+                raise ValueError("Allowed origins must be a list.")
+            if len(raw) > MAX_ALLOWED_ORIGINS:
+                raise ValueError(f"At most {MAX_ALLOWED_ORIGINS} allowed origins.")
+            origins: list[str] = []
+            for item in raw:
+                origin = str(item).strip().rstrip("/")
+                if not origin:
+                    continue
+                if "*" in origin or not _ORIGIN_RE.match(origin):
+                    raise ValueError(f"{origin!r} is not a scheme://host[:port] origin.")
+                if origin not in origins:
+                    origins.append(origin)
+            clean["allowed_origins"] = origins
         if "vault_root" in patch:
             value = str(patch["vault_root"] or "").strip()
             if value:

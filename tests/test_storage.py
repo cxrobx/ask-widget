@@ -153,3 +153,26 @@ class StorageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.update_settings({"vault_root": "relative/path"}, model_default="sonnet")
             store.close()
+
+    def test_allowed_origins_default_and_update(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            store = Storage(Path(raw))
+            self.assertEqual(store.settings()["allowed_origins"], ["app://obsidian.md"])
+            saved = store.update_settings(
+                {"allowed_origins": ["app://obsidian.md/", "http://localhost:9999", "app://obsidian.md"]},
+                model_default="sonnet",
+            )
+            self.assertEqual(saved["allowed_origins"], ["app://obsidian.md", "http://localhost:9999"])
+            self.assertEqual(
+                store.update_settings({"allowed_origins": []}, model_default="sonnet")["allowed_origins"], []
+            )
+            for bad in (["*"], ["app://obsidian.md/path"], "app://obsidian.md", [{"a": 1}]):
+                with self.assertRaises(ValueError):
+                    store.update_settings({"allowed_origins": bad}, model_default="sonnet")
+            with store._lock:
+                store._db.execute(
+                    "INSERT OR REPLACE INTO settings(key, value_json, updated_at) VALUES('allowed_origins', '\"oops\"', 0)"
+                )
+                store._db.commit()
+            self.assertEqual(store.settings()["allowed_origins"], ["app://obsidian.md"])
+            store.close()

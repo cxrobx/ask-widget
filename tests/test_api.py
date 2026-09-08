@@ -376,3 +376,150 @@ class VaultApiTests(unittest.TestCase):
         roots = [item["path"] for item in app.state.storage.roots()]
         self.assertIn(str(self.vault.resolve()), roots)
         app.state.storage.close()
+
+
+class PluginOriginTests(unittest.TestCase):
+    """The Obsidian plugin talks to the same API from app://obsidian.md."""
+
+    OBSIDIAN = "app://obsidian.md"
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.document = (self.root / "guide.md")
+        self.document.write_text("# Guide\n\nThe server is local.", encoding="utf-8")
+        self.document = self.document.resolve()
+        self.config = AppConfig(
+            default_folder=self.root,
+            allowed_roots=(self.root,),
+            port=8899,
+            data_dir=self.root / "data",
+        )
+        self.app = create_app(self.config)
+        self.client_context = TestClient(self.app, base_url="http://127.0.0.1:8899")
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        self.temp.cleanup()
+
+    def ask(self, origin: str):
+        async def fake_stream(*args, **kwargs):
+            yield _sse("token", {"text": "ok"})
+            yield _sse("done", {"elapsed_ms": 3})
+
+        body = {
+            "token": self.config.token,
+            "action": "eli5",
+            "selection": "The server is local.",
+            "folder": str(self.root),
+            "document_source": str(self.document),
+        }
+        with patch("ask_widget.app.stream_answer", fake_stream):
+            return self.client.post("/ask", json=body, headers={"origin": origin})
+
+    def test_obsidian_origin_is_allowed_on_ask_and_api(self) -> None:
+        response = self.ask(self.OBSIDIAN)
+        self.assertIn("event: meta", response.text)
+        self.assertNotIn("origin not allowed", response.text)
+        self.assertEqual(response.headers["access-control-allow-origin"], self.OBSIDIAN)
+        self.assertEqual(response.headers["vary"], "Origin")
+        history = self.client.get(
+            "/api/history", params={"source": str(self.document)}, headers={"origin": self.OBSIDIAN}
+        )
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.headers["access-control-allow-origin"], self.OBSIDIAN)
+
+    def test_unlisted_origins_are_still_rejected(self) -> None:
+        for origin in (
+            "https://attacker.example",
+            "app://evil.md",
+            "app://obsidian.md.evil",
+            "app://obsidian.md/",
+        ):
+            with self.subTest(origin=origin):
+                blocked = self.client.get("/api/library", headers={"origin": origin})
+                self.assertEqual(blocked.status_code, 403)
+                self.assertNotIn("access-control-allow-origin", blocked.headers)
+                stream = self.ask(origin)
+                self.assertIn("Refused: origin not allowed.", stream.text)
+                self.assertNotIn("access-control-allow-origin", stream.headers)
+
+    def test_session_endpoint_returns_token_only_to_allowed_origins(self) -> None:
+        allowed = self.client.get("/api/session", headers={"origin": self.OBSIDIAN})
+        self.assertEqual(allowed.status_code, 200)
+        payload = allowed.json()
+        self.assertEqual(payload["token"], self.config.token)
+        self.assertEqual(payload["service"], "ask-widget")
+        self.assertEqual(payload["protocol"], 3)
+        self.assertEqual(payload["provider"], "claude")
+        self.assertEqual(payload["request_timeout"], 120)
+        self.assertEqual(allowed.headers["cache-control"], "no-store")
+
+        blocked = self.client.get("/api/session", headers={"origin": "https://attacker.example"})
+        self.assertEqual(blocked.status_code, 403)
+        self.assertNotIn("token", blocked.json())
+
+        self.assertEqual(self.client.get("/api/session").status_code, 200)
+
+    def test_preflight_echoes_allowed_origin_and_headers(self) -> None:
+        for path in ("/ask", "/api/roots"):
+            with self.subTest(path=path):
+                response = self.client.options(path, headers={"origin": self.OBSIDIAN})
+                self.assertEqual(response.status_code, 204)
+                self.assertEqual(response.headers["access-control-allow-origin"], self.OBSIDIAN)
+                self.assertIn("Content-Type", response.headers["access-control-allow-headers"])
+
+    def test_allowed_origins_setting_is_persisted_and_validated(self) -> None:
+        saved = self.client.post(
+            "/api/settings",
+            json={"token": self.config.token, "settings": {"allowed_origins": ["app://obsidian.md"]}},
+        )
+        self.assertEqual(saved.json()["settings"]["allowed_origins"], ["app://obsidian.md"])
+        for bad in ("*", "app://x/path"):
+            rejected = self.client.post(
+                "/api/settings", json={"token": self.config.token, "settings": {"allowed_origins": [bad]}}
+            )
+            self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(
+            self.client.post(
+                "/api/settings", json={"token": self.config.token, "settings": {"allowed_origins": "nope"}}
+            ).status_code,
+            400,
+        )
+
+        cleared = self.client.post(
+            "/api/settings", json={"token": self.config.token, "settings": {"allowed_origins": []}}
+        )
+        self.assertEqual(cleared.json()["settings"]["allowed_origins"], [])
+        self.assertEqual(
+            self.client.get("/api/library", headers={"origin": self.OBSIDIAN}).status_code, 403
+        )
+        self.assertEqual(
+            self.client.get("/api/library", headers={"origin": "http://localhost:9999"}).status_code, 200
+        )
+
+    def test_health_and_plugin_routes_carry_cors_headers(self) -> None:
+        headers = {"origin": self.OBSIDIAN}
+        health = self.client.get("/health", headers=headers)
+        self.assertEqual(health.json()["service"], "ask-widget")
+        self.assertEqual(health.headers["access-control-allow-origin"], self.OBSIDIAN)
+        for path, params in (
+            ("/api/settings", None),
+            ("/api/document", {"source": str(self.document)}),
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path, params=params, headers=headers)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["access-control-allow-origin"], self.OBSIDIAN)
+        added = self.client.post(
+            "/api/roots", json={"token": self.config.token, "path": str(self.root)}, headers=headers
+        )
+        self.assertEqual(added.status_code, 200)
+        self.assertEqual(added.headers["access-control-allow-origin"], self.OBSIDIAN)
+        opened = self.client.post(
+            "/api/open-source",
+            json={"token": self.config.token, "path": str(self.document), "folder": str(self.root)},
+            headers=headers,
+        )
+        self.assertIn("access-control-allow-origin", opened.headers)

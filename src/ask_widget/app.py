@@ -5,7 +5,9 @@ Security model (all enforced on POST /ask):
   2. Host header must be 127.0.0.1:<port> or localhost:<port> — blocks
      DNS-rebinding, where a malicious page resolves its own domain to 127.0.0.1.
   3. Origin allowlist (NOT ``*``): null (file://), http(s)://localhost[:*],
-     http(s)://127.0.0.1[:*]. ``*`` stays only on GET /ask.js so the script tag
+     http(s)://127.0.0.1[:*], plus any origin the user added to the
+     ``allowed_origins`` setting (``app://obsidian.md`` by default, for the
+     Obsidian plugin). ``*`` stays only on GET /ask.js so the script tag
      loads from any page.
   4. Per-server random token, baked into ask.js at serve time, required in the
      /ask body.
@@ -93,11 +95,13 @@ _LOCALHOST_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
-def _origin_allowed(origin: str | None) -> bool:
+def _origin_allowed(origin: str | None, extra: tuple[str, ...] | list[str] = ()) -> bool:
     if origin is None:
         return True  # no Origin header (same-origin / non-browser): nothing to block
     if origin == "null":
         return True  # file://
+    if origin in extra:
+        return True  # explicitly allowed in Settings (e.g. the Obsidian plugin)
     return bool(_LOCALHOST_ORIGIN.match(origin))
 
 
@@ -105,14 +109,15 @@ def _host_allowed(host: str, port: int) -> bool:
     return host in (f"127.0.0.1:{port}", f"localhost:{port}")
 
 
-def _cors_headers(origin: str | None) -> dict[str, str]:
+def _cors_headers(origin: str | None, extra: tuple[str, ...] | list[str] = ()) -> dict[str, str]:
     """CORS headers to echo for an allowed cross-origin request (empty otherwise)."""
-    if origin is None or not _origin_allowed(origin):
+    if origin is None or not _origin_allowed(origin, extra):
         return {}
     return {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "600",
         "Vary": "Origin",
     }
 
@@ -237,6 +242,16 @@ def create_app(config: AppConfig) -> FastAPI:
     # Per-document expiring capabilities replace the old process-wide asset set.
     app.state.asset_caps = OrderedDict()
 
+    def allowed_origins() -> list[str]:
+        raw = storage.settings(model_default=config.model).get("allowed_origins")
+        return [item for item in raw if isinstance(item, str)] if isinstance(raw, list) else []
+
+    def origin_ok(origin: str | None) -> bool:
+        return _origin_allowed(origin, allowed_origins())
+
+    def cors(origin: str | None) -> dict[str, str]:
+        return _cors_headers(origin, allowed_origins())
+
     def err_stream(message: str, origin: str | None) -> StreamingResponse:
         async def gen():
             yield _sse("error", {"message": message})
@@ -244,22 +259,25 @@ def create_app(config: AppConfig) -> FastAPI:
         return StreamingResponse(
             gen(),
             media_type="text/event-stream",
-            headers={**_cors_headers(origin), **_SSE_HEADERS},
+            headers={**cors(origin), **_SSE_HEADERS},
         )
 
     @app.get("/health")
-    async def health():
+    async def health(request: Request):
         # The native launcher validates this identity instead of assuming that
         # any process returning HTTP 200 on port 8899 is safe to embed.
-        return {
-            "status": "ok",
-            "service": "ask-widget",
-            "version": __version__,
-            "protocol": PROTOCOL_VERSION,
-            "runtime": f"python-{sys.version_info.major}.{sys.version_info.minor}",
-            "claude_available": find_claude() is not None,
-            "codex_available": find_codex() is not None,
-        }
+        return JSONResponse(
+            {
+                "status": "ok",
+                "service": "ask-widget",
+                "version": __version__,
+                "protocol": PROTOCOL_VERSION,
+                "runtime": f"python-{sys.version_info.major}.{sys.version_info.minor}",
+                "claude_available": find_claude() is not None,
+                "codex_available": find_codex() is not None,
+            },
+            headers=cors(request.headers.get("origin")),
+        )
 
     @app.get("/ask.js")
     async def ask_js():
@@ -290,7 +308,7 @@ def create_app(config: AppConfig) -> FastAPI:
             "cache_max_entries": settings["cache_max_entries"],
             "appearance_theme": settings["appearance_theme"],
         }
-        return JSONResponse(body, headers=_cors_headers(origin))
+        return JSONResponse(body, headers=cors(origin))
 
     @app.get("/", response_class=HTMLResponse)
     async def launcher():
@@ -517,7 +535,7 @@ def create_app(config: AppConfig) -> FastAPI:
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return JSONResponse({"ok": False, "error": "host not allowed"}, status_code=403)
         origin = request.headers.get("origin")
-        if not _origin_allowed(origin):
+        if not origin_ok(origin):
             return JSONResponse({"ok": False, "error": "origin not allowed"}, status_code=403)
         return None
 
@@ -544,7 +562,7 @@ def create_app(config: AppConfig) -> FastAPI:
             action=action if action in {"ask", "eli5", "prove"} else None,
             since=since,
         )
-        return JSONResponse({"ok": True, **data}, headers=_cors_headers(request.headers.get("origin")))
+        return JSONResponse({"ok": True, **data}, headers=cors(request.headers.get("origin")))
 
     @app.get("/api/history")
     async def history(request: Request, source: str, selection: str = "", limit: int = 20):
@@ -555,7 +573,7 @@ def create_app(config: AppConfig) -> FastAPI:
         )
         return JSONResponse(
             {"ok": True, "conversations": items, "document": app.state.storage.document(source)},
-            headers=_cors_headers(request.headers.get("origin")),
+            headers=cors(request.headers.get("origin")),
         )
 
     @app.get("/api/conversations/{request_id}")
@@ -569,14 +587,17 @@ def create_app(config: AppConfig) -> FastAPI:
             return JSONResponse({"ok": False, "error": "history entry not found"}, status_code=404)
         return JSONResponse(
             {"ok": True, "conversation": item},
-            headers=_cors_headers(request.headers.get("origin")),
+            headers=cors(request.headers.get("origin")),
         )
 
     @app.get("/api/document")
     async def document_api(request: Request, source: str):
         if denied := api_forbidden(request):
             return denied
-        return {"ok": True, "document": app.state.storage.document(source[:4000])}
+        return JSONResponse(
+            {"ok": True, "document": app.state.storage.document(source[:4000])},
+            headers=cors(request.headers.get("origin")),
+        )
 
     @app.get("/api/folder")
     async def validate_folder_api(request: Request, path: str):
@@ -587,22 +608,22 @@ def create_app(config: AppConfig) -> FastAPI:
             return JSONResponse(
                 {"ok": False, "error": "Folder is missing or outside the allowed roots."},
                 status_code=400,
-                headers=_cors_headers(request.headers.get("origin")),
+                headers=cors(request.headers.get("origin")),
             )
         return JSONResponse(
             {"ok": True, "path": str(resolved)},
-            headers=_cors_headers(request.headers.get("origin")),
+            headers=cors(request.headers.get("origin")),
         )
 
     @app.get("/api/vault/tree")
     async def vault_tree_api(request: Request):
         if denied := api_forbidden(request):
             return denied
-        cors = _cors_headers(request.headers.get("origin"))
+        headers = cors(request.headers.get("origin"))
         root = _vault_root(app)
         if root is None:
             return JSONResponse(
-                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=cors
+                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=headers
             )
         index = await asyncio.to_thread(app.state.vault.get, root)
         return JSONResponse(
@@ -614,18 +635,18 @@ def create_app(config: AppConfig) -> FastAPI:
                 "truncated": index.truncated,
                 "tree": index.tree_json(),
             },
-            headers=cors,
+            headers=headers,
         )
 
     @app.get("/api/vault/search")
     async def vault_search_api(request: Request, q: str = "", limit: int = 50):
         if denied := api_forbidden(request):
             return denied
-        cors = _cors_headers(request.headers.get("origin"))
+        headers = cors(request.headers.get("origin"))
         root = _vault_root(app)
         if root is None:
             return JSONResponse(
-                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=cors
+                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=headers
             )
         q = q[:200]
         limit = max(1, min(limit, 200))
@@ -638,7 +659,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 "items": [{"name": item.name, "path": str(item.path), "folder": item.folder} for item in items],
                 "truncated": truncated,
             },
-            headers=cors,
+            headers=headers,
         )
 
     @app.get("/api/settings")
@@ -646,11 +667,45 @@ def create_app(config: AppConfig) -> FastAPI:
         if denied := api_forbidden(request):
             return denied
         storage: Storage = app.state.storage
-        return {
-            "ok": True,
-            "settings": storage.settings(model_default=config.model),
-            "roots": storage.roots(),
-        }
+        return JSONResponse(
+            {
+                "ok": True,
+                "settings": storage.settings(model_default=config.model),
+                "roots": storage.roots(),
+            },
+            headers=cors(request.headers.get("origin")),
+        )
+
+    @app.get("/api/session")
+    async def session_api(request: Request):
+        """Hand a trusted client the request token and the current runtime shape.
+
+        This is no weaker than GET /ask.js, which already serves the same token
+        to any origin (``Access-Control-Allow-Origin: *``) so the widget script
+        tag works from a file:// page. Tightening /ask.js to the allowlist is a
+        separate change; this route is gated on host + origin like the rest of
+        the JSON API.
+        """
+        if denied := api_forbidden(request):
+            return denied
+        settings = app.state.storage.settings(model_default=config.model)
+        return JSONResponse(
+            {
+                "ok": True,
+                "service": "ask-widget",
+                "protocol": PROTOCOL_VERSION,
+                "version": __version__,
+                "token": config.token,
+                "provider": settings["provider"],
+                "model": settings["model"],
+                "reasoning_effort": settings["reasoning_effort"],
+                "first_activity_timeout": settings["first_activity_timeout"],
+                "request_timeout": settings["request_timeout"],
+                "cache_ttl_hours": settings["cache_ttl_hours"],
+                "cache_max_entries": settings["cache_max_entries"],
+            },
+            headers={**cors(request.headers.get("origin")), "Cache-Control": "no-store"},
+        )
 
     @app.get("/api/models")
     async def models_api(request: Request):
@@ -678,7 +733,7 @@ def create_app(config: AppConfig) -> FastAPI:
             catalog["selected_effort"] = settings.get(f"{provider}_effort", "medium")
         return JSONResponse(
             {"ok": True, "selected_provider": settings["provider"], "providers": catalogs},
-            headers=_cors_headers(request.headers.get("origin")),
+            headers=cors(request.headers.get("origin")),
         )
 
     @app.post("/api/settings")
@@ -746,7 +801,10 @@ def create_app(config: AppConfig) -> FastAPI:
         if not path.is_dir():
             return JSONResponse({"ok": False, "error": "folder does not exist"}, status_code=400)
         app.state.storage.add_root(path)
-        return {"ok": True, "roots": app.state.storage.roots()}
+        return JSONResponse(
+            {"ok": True, "roots": app.state.storage.roots()},
+            headers=cors(request.headers.get("origin")),
+        )
 
     @app.delete("/api/roots")
     async def remove_root_api(request: Request):
@@ -833,20 +891,20 @@ def create_app(config: AppConfig) -> FastAPI:
             )
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        return {"ok": True}
+        return JSONResponse({"ok": True}, headers=cors(request.headers.get("origin")))
 
     @app.options("/ask")
     async def ask_preflight(request: Request):
-        return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
+        return Response(status_code=204, headers=cors(request.headers.get("origin")))
 
     @app.options("/api/{path:path}")
     async def api_preflight(request: Request, path: str):
-        return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
+        return Response(status_code=204, headers=cors(request.headers.get("origin")))
 
     @app.options("/open-in-provider")
     @app.options("/open-in-claude")
     async def open_in_provider_preflight(request: Request):
-        return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
+        return Response(status_code=204, headers=cors(request.headers.get("origin")))
 
     @app.post("/open-in-provider")
     @app.post("/open-in-claude")
@@ -855,12 +913,12 @@ def create_app(config: AppConfig) -> FastAPI:
         # side effect. All app-level outcomes return 200 + {ok,...} so the widget
         # (cross-origin or same-origin) can read them.
         origin = request.headers.get("origin")
-        cors = _cors_headers(origin)
+        headers = cors(origin)
 
         def reply(payload, status=200):
-            return JSONResponse(payload, status_code=status, headers=cors)
+            return JSONResponse(payload, status_code=status, headers=headers)
 
-        if not _origin_allowed(origin):
+        if not origin_ok(origin):
             return reply({"ok": False, "error": "origin not allowed"})
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return reply({"ok": False, "error": "host not allowed"})
@@ -904,7 +962,7 @@ def create_app(config: AppConfig) -> FastAPI:
         origin = request.headers.get("origin")
         host = request.headers.get("host", "")
 
-        if not _origin_allowed(origin):
+        if not origin_ok(origin):
             return err_stream("Refused: origin not allowed.", origin)
         if not _host_allowed(host, config.port):
             return err_stream("Refused: host not allowed (possible DNS-rebinding).", origin)
@@ -1077,7 +1135,7 @@ def create_app(config: AppConfig) -> FastAPI:
         return StreamingResponse(
             gen(),
             media_type="text/event-stream",
-            headers={**_cors_headers(origin), **_SSE_HEADERS, "X-Request-ID": request_id},
+            headers={**cors(origin), **_SSE_HEADERS, "X-Request-ID": request_id},
         )
 
     return app
