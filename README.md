@@ -233,6 +233,23 @@ Additional trusted roots can be managed in Settings. The launcher also reads
 `~/.config/ask-widget/allow-roots` at startup for compatibility; use one path per
 line, with `~` expansion and `#` comments supported.
 
+### Run headless
+
+The service normally starts with the app, but it can also run on its own so the
+Obsidian plugin and any browser page work with nothing open:
+
+```bash
+./scripts/install-daemon.sh              # LaunchAgent, starts at login
+./scripts/install-daemon.sh --status
+./scripts/install-daemon.sh --uninstall
+```
+
+The agent runs the same bundled server the app would spawn, logging to
+`~/Library/Logs/ask-widget-daemon.log`. The two coexist: the launcher adopts a
+healthy service rather than starting a second one, and only terminates a server
+it spawned itself, so quitting the app leaves the daemon serving. If the app
+happens to own the port, the daemon idles and takes over when the app quits.
+
 ### Obsidian plugin
 
 `integrations/obsidian/` is a desktop-only Obsidian plugin that runs the same
@@ -340,7 +357,7 @@ ask-widget/
 │   ├── alfred/               Alfred file action
 │   └── obsidian/             Obsidian plugin (TypeScript, esbuild)
 ├── launcher/                 native Swift app and release build
-├── scripts/                  bundled-service smoke test
+├── scripts/                  smoke tests, background daemon, plugin install
 ├── src/ask_widget/
 │   ├── app.py                HTTP API, capabilities, persistence orchestration
 │   ├── claude_runner.py      Claude process lifecycle and SSE translation

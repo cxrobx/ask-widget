@@ -254,6 +254,7 @@ export class AskWidgetPanel extends ItemView {
     const box = this.answerEl.createDiv({ cls: "askw-error" });
     box.createSpan({ text: message });
     if (error instanceof ServiceError && error.kind === "offline") {
+      // Auto-start already ran and failed, so offer the visible app as a fallback.
       box.createEl("button", { text: "Open the app" }).addEventListener("click", async () => {
         this.plugin.service.openInApp();
         new Notice("Starting Ask Widget…");

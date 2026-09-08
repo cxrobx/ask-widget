@@ -158,7 +158,11 @@ export default class AskWidgetPlugin extends Plugin {
 
   private reportServiceError(error: unknown): void {
     if (error instanceof ServiceError && error.kind === "offline") {
-      const notice = new Notice("Ask Widget isn't running.", 8000);
+      // ensureSession already tried to start the background service.
+      const message = this.service.hasDaemon()
+        ? "The Ask Widget background service did not start."
+        : "Ask Widget isn't running. Install the background service to skip this.";
+      const notice = new Notice(message, 8000);
       const button = notice.noticeEl.createEl("button", { text: "Open the app" });
       button.addEventListener("click", async () => {
         this.service.openInApp();

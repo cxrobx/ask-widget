@@ -5,8 +5,9 @@ Ask Widget app already running on your Mac. Answers stream into a right-sidebar
 panel and are saved under the note's absolute path, so they also appear in Ask
 Widget's own Library and History.
 
-Desktop only: the plugin talks to `http://127.0.0.1:8899` and launches the macOS
-app when it isn't running.
+Desktop only: the plugin talks to `http://127.0.0.1:8899`. If nothing is
+listening it starts the service itself and retries, so the app never has to be
+open.
 
 ## Install
 
@@ -21,6 +22,21 @@ Cmd+R; only a full relaunch loads it the first time.
 
 Finally, open the plugin's settings and press **Allow vault folder** once. That
 registers the vault with the service so answers may cite your notes.
+
+## Run without opening the app
+
+Install the LaunchAgent once and the service runs headless at login:
+
+```bash
+../../scripts/install-daemon.sh            # install and start
+../../scripts/install-daemon.sh --status
+../../scripts/install-daemon.sh --uninstall
+```
+
+The app and the daemon coexist: whichever binds the port first owns it, opening
+the app attaches to a running service instead of starting a second one, and
+quitting the app leaves the daemon serving. Without the agent the plugin still
+works — it runs the service on demand, falling back to launching the app.
 
 ## Use
 

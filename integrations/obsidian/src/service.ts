@@ -8,6 +8,9 @@
  */
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { join } from "node:path";
 
 import { SseSplitter, type SseFrame } from "./sse";
 
@@ -62,9 +65,13 @@ export interface Citation {
 
 const TOKEN_ERRORS = ["Refused: invalid or missing token.", "invalid token"];
 const BUNDLE_ID = "com.cx.ask-widget";
+const DAEMON_LABEL = "com.cx.ask-widget.server";
+const DAEMON_SCRIPT = join(homedir(), ".local", "bin", "ask-widget-daemon");
 
 export class AskService {
   private session: Session | null = null;
+  /** Set while a start attempt is in flight, so parallel actions wait on one. */
+  private starting: Promise<boolean> | null = null;
 
   constructor(private baseUrl: string) {}
 
@@ -107,10 +114,22 @@ export class AskService {
     return { service: body.service, protocol: body.protocol ?? 0, version: body.version ?? "" };
   }
 
-  /** Fetch (and cache) the request token plus the current provider/model. */
+  /** Fetch (and cache) the request token plus the current provider/model.
+   *
+   * When nothing is listening, start the background service and try once more,
+   * so an action in Obsidian works with the app closed.
+   */
   async ensureSession(force = false): Promise<Session> {
     if (this.session && !force) return this.session;
-    await this.health();
+    try {
+      await this.health();
+    } catch (error) {
+      if (!(error instanceof ServiceError) || error.kind !== "offline") throw error;
+      if (!(await this.autoStart())) {
+        throw new ServiceError("offline", `Ask Widget could not be started at ${this.baseUrl}.`);
+      }
+      await this.health();
+    }
     const body = await this.json<Session & { ok?: boolean }>("/api/session");
     if (!body.token) {
       throw new ServiceError("incompatible", "Ask Widget did not return a session token.");
@@ -241,18 +260,59 @@ export class AskService {
     execFile("/usr/bin/open", args, () => {});
   }
 
-  /** Poll /health until the app answers, after asking macOS to launch it. */
-  async waitForService(timeoutMs = 10_000): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        await this.health();
-        this.session = null;
-        return true;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+  /** Whether the background LaunchAgent is installed on this machine. */
+  hasDaemon(): boolean {
+    return existsSync(DAEMON_SCRIPT);
+  }
+
+  /**
+   * Bring the service up without opening the app.
+   *
+   * Preferred route is the LaunchAgent, which runs the bundled server headless;
+   * `kickstart` starts it if it is loaded but not running and is a no-op when it
+   * already is. Falls back to running the daemon script directly, then to
+   * launching the GUI app, so a machine with no agent installed still works.
+   */
+  private spawnService(): void {
+    const uid = userInfo().uid;
+    execFile("/bin/launchctl", ["kickstart", `gui/${uid}/${DAEMON_LABEL}`], (error) => {
+      if (!error) return;
+      if (this.hasDaemon()) {
+        const child = execFile(DAEMON_SCRIPT, { env: process.env }, () => {});
+        child.unref?.();
+        return;
       }
+      this.openInApp();
+    });
+  }
+
+  /** Start the service and wait for it to answer. Concurrent calls share one. */
+  async autoStart(timeoutMs = 12_000): Promise<boolean> {
+    if (this.starting) return this.starting;
+    this.starting = (async () => {
+      this.spawnService();
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        try {
+          await this.health();
+          this.session = null;
+          return true;
+        } catch {
+          // keep polling until the deadline
+        }
+      }
+      return false;
+    })();
+    try {
+      return await this.starting;
+    } finally {
+      this.starting = null;
     }
-    return false;
+  }
+
+  /** Back-compat alias used by the panel's manual "Open the app" button. */
+  async waitForService(timeoutMs = 10_000): Promise<boolean> {
+    return this.autoStart(timeoutMs);
   }
 }
