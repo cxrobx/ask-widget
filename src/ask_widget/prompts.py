@@ -3,9 +3,9 @@
 Two halves per request:
   * the **user prompt** (``build_user_prompt``) — the highlighted passage, its
     surrounding context, and the task; and
-  * the **append-system-prompt** (``append_system_for``) — a per-action
-    instruction appended to Claude's default system prompt via
-    ``--append-system-prompt`` (confirmed to exist on CLI v2.1.160).
+  * the **provider instruction** (``append_system_for``) — a per-action
+    instruction passed to Claude as an appended system prompt and to Codex as a
+    clearly delimited instruction block.
 """
 
 from __future__ import annotations
@@ -41,9 +41,15 @@ ASK_APPEND = (
 
 _APPENDS = {"eli5": ELI5_APPEND, "prove": PROVE_APPEND, "ask": ASK_APPEND}
 
+_STYLE_APPEND = {
+    "concise": " Keep the answer compact and omit unnecessary preamble.",
+    "balanced": " Give enough explanation to make the answer self-contained.",
+    "detailed": " Be thorough, explain reasoning, and include useful supporting detail.",
+}
 
-def append_system_for(action: str) -> str:
-    return _APPENDS.get(action, SHARED_PREAMBLE)
+
+def append_system_for(action: str, response_style: str = "concise") -> str:
+    return _APPENDS.get(action, SHARED_PREAMBLE) + _STYLE_APPEND.get(response_style, "")
 
 
 _HANDOFF_LABELS = {
@@ -60,7 +66,7 @@ def build_handoff_prompt(
     question: str | None = None,
     answer: str | None = None,
 ) -> str:
-    """Seed prompt for an 'Open in Claude' dedicated session, scoped to `folder`."""
+    """Seed prompt for a dedicated provider session scoped to ``folder``."""
     from pathlib import Path  # local import keeps module import-light
 
     name = Path(folder).name
@@ -97,7 +103,7 @@ def _conversation_block(history: "list[dict] | None") -> str | None:
 
     ``history`` is a list of ``{"role": "user"|"assistant", "text": str}`` turns
     (oldest first), supplied by the widget when the user asks a follow-up in the
-    answer panel. The runner is stateless (one ``claude -p`` per request), so the
+    answer panel. The runner is stateless (one headless CLI run per request), so the
     thread is reconstructed here rather than via session resume.
     """
     if not history:
@@ -122,11 +128,19 @@ def build_user_prompt(
     context: str | None = None,
     question: str | None = None,
     history: "list[dict] | None" = None,
+    document_source: str | None = None,
+    document_page: int | None = None,
 ) -> str:
     sel = (selection or "").strip()
     ctx = (context or "").strip()
 
-    blocks = ['Highlighted passage:\n"""\n' + sel + '\n"""']
+    blocks: list[str] = []
+    if document_source:
+        location = f"Source document: {document_source}"
+        if document_page:
+            location += f" (page {document_page})"
+        blocks.append(location)
+    blocks.append('Highlighted passage:\n"""\n' + sel + '\n"""')
     if ctx and ctx != sel:
         blocks.append('Surrounding text (for reference only):\n"""\n' + ctx + '\n"""')
 

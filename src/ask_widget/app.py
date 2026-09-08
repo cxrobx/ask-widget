@@ -10,7 +10,7 @@ Security model (all enforced on POST /ask):
   4. Per-server random token, baked into ask.js at serve time, required in the
      /ask body.
   5. Folder allowlist via AppConfig.resolve_allowed (resolve() + is_relative_to).
-  6. Read-only tool lock lives in claude_runner.build_cmd.
+  6. Read-only tool locks live in the Claude and Codex runner commands.
 
 Every refusal is an ``event: error`` on a 200 SSE stream (not 403/429) so the
 widget's stream reader can parse and display it.
@@ -19,24 +19,44 @@ widget's stream reader can parse and display it.
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
+import json
 import logging
 import re
+import secrets
+import sys
+import time
 import urllib.parse
+import uuid
+from collections import OrderedDict
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from .claude_runner import _sse, stream_answer
+from .runner import _sse, stream_answer
+from .citations import open_source
 from .config import AppConfig
+from .diagnostics import build_diagnostics
+from .launcher_ui import launcher_page
 from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
+from .providers import find_claude, find_codex, provider_catalogs, provider_status
+from .storage import Storage
 from . import handoff, viewer
+from . import __version__
 
 logger = logging.getLogger("ask_widget.app")
 
-STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
+_FROZEN_ROOT = getattr(sys, "_MEIPASS", None)
+STATIC_DIR = (
+    Path(_FROZEN_ROOT) / "static"
+    if _FROZEN_ROOT
+    else Path(__file__).resolve().parent.parent.parent / "static"
+)
 ASK_JS = STATIC_DIR / "ask.js"
 TOKEN_PLACEHOLDER = "__ASK_TOKEN__"
+PROTOCOL_VERSION = 3
 
 MAX_CONCURRENT = 3
 MAX_SELECTION = 4000
@@ -46,6 +66,8 @@ MAX_RECENT = 8
 # of turns and each turn's length so a malicious page can't blow up the prompt.
 MAX_HISTORY_TURNS = 12
 MAX_HISTORY_TEXT = 4000
+MAX_ASSET_CAPABILITIES = 32
+ASSET_CAPABILITY_TTL = 8 * 60 * 60
 
 
 def _sanitize_history(raw: object) -> list[dict]:
@@ -102,6 +124,57 @@ def _remember_folder(app: FastAPI, folder: str) -> None:
     del recent[MAX_RECENT:]
 
 
+def _runtime_roots(app: FastAPI) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for item in app.state.storage.roots():
+        try:
+            path = Path(item["path"]).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if path.is_dir() and path not in roots:
+            roots.append(path)
+    return tuple(roots)
+
+
+def _resolve_folder(app: FastAPI, raw: str | None) -> Path | None:
+    config: AppConfig = app.state.config
+    value = raw or str(config.default_folder)
+    if config.allow_any:
+        try:
+            path = Path(value).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return path if path.is_dir() else None
+    try:
+        path = Path(value).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not path.is_dir():
+        return None
+    for root in _runtime_roots(app):
+        try:
+            if path == root or path.is_relative_to(root):
+                return path
+        except ValueError:
+            continue
+    return None
+
+
+def _decode_sse(chunk: str) -> tuple[str | None, dict]:
+    event = None
+    payload: dict = {}
+    for line in chunk.splitlines():
+        if line.startswith("event: "):
+            event = line[7:].strip()
+        elif line.startswith("data: "):
+            try:
+                decoded = json.loads(line[6:])
+                payload = decoded if isinstance(decoded, dict) else {}
+            except json.JSONDecodeError:
+                payload = {}
+    return event, payload
+
+
 def _esc(s: str) -> str:
     return (
         str(s)
@@ -123,86 +196,22 @@ def _error_page(message: str) -> str:
     )
 
 
-def _launcher_page(config: AppConfig) -> str:
-    default_folder = _esc(str(config.default_folder))
-    roots = "(any folder)" if config.allow_any else _esc(", ".join(str(r) for r in config.allowed_roots))
-    return f"""<!doctype html><html><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width, initial-scale=1">
-<title>Ask Widget</title>
-<style>
-  body{{font:16px/1.6 -apple-system,system-ui,sans-serif;color:#1c1917;background:#fdfcfa;
-    max-width:640px;margin:0 auto;padding:56px 24px 80px}}
-  h1{{font-size:26px;margin:0 0 6px}} .sub{{color:#57534e;margin:0 0 28px}}
-  label{{display:block;font-weight:600;font-size:13px;margin:18px 0 6px}}
-  input{{width:100%;padding:11px 13px;border:1px solid #d6d3d1;border-radius:9px;font:inherit}}
-  input:focus{{outline:none;border-color:#c2410c}}
-  .hint{{color:#78716c;font-size:13px;margin:5px 0 0}}
-  button{{margin-top:22px;background:#c2410c;color:#fff;border:none;border-radius:9px;
-    padding:12px 22px;font:inherit;font-weight:600;cursor:pointer}}
-  button:hover{{background:#9a3412}}
-  code{{background:#f5f5f4;padding:1px 6px;border-radius:5px;font-size:13px}}
-  .meta{{margin-top:34px;padding-top:18px;border-top:1px solid #e7e5e4;color:#57534e;font-size:13.5px}}
-  .row{{display:flex;gap:8px;align-items:stretch}} .row input{{flex:1}}
-  .browse{{display:none;margin:0;white-space:nowrap;background:#fff;color:#44403c;
-    border:1px solid #d6d3d1;border-radius:9px;padding:0 16px;font-size:13px;font-weight:500}}
-  .browse:hover{{background:#f5f5f4}}
-  body.native .browse{{display:inline-flex;align-items:center}}
-</style></head><body>
-<h1>Ask Widget</h1>
-<p class=sub>Open any HTML — a URL or a local file — with the highlight-to-ask widget on top of it.</p>
-<form onsubmit="go(event)">
-  <label for=src>Document URL or local file path</label>
-  <div class=row>
-    <input id=src autofocus spellcheck=false placeholder="https://… or choose a file →">
-    <button type=button class=browse data-pick=file data-target=src>Choose file…</button>
-  </div>
-  <p class=hint>The page is re-served from this server so the widget runs same-origin (no file://, no mixed content).</p>
-  <label for=folder>Context folder for Claude (its CLAUDE.md + files)</label>
-  <div class=row>
-    <input id=folder spellcheck=false value="{default_folder}">
-    <button type=button class=browse data-pick=folder data-target=folder>Choose…</button>
-  </div>
-  <p class=hint>Must be inside an allowed root: <code>{roots}</code>. You can also change it later from the folder pill.</p>
-  <button type=submit>Open with Ask Widget &rarr;</button>
-</form>
-<div class=meta>
-  <p>Prefer to embed manually in a page you control? Add before <code>&lt;/body&gt;</code>:<br>
-  <code>&lt;script src="{_esc(config.host)}:{config.port}/ask.js" …&gt;</code> (served at <code>/ask.js</code>).</p>
-</div>
-<script>
-function go(e){{
-  e.preventDefault();
-  var src=document.getElementById('src').value.trim();
-  var folder=document.getElementById('folder').value.trim();
-  if(!src) return;
-  var u='/view?src='+encodeURIComponent(src);
-  if(folder) u+='&folder='+encodeURIComponent(folder);
-  location.href=u;
-}}
-// Native macOS picker — only available inside the Ask Widget app (WKWebView).
-var NATIVE = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.askwPick);
-if(NATIVE) document.body.classList.add('native');
-async function pick(kind, targetId){{
-  try{{
-    var el=document.getElementById(targetId);
-    var p=await window.webkit.messageHandlers.askwPick.postMessage({{kind:kind, initial:el.value}});
-    if(p){{ el.value=p; el.focus(); }}
-  }}catch(e){{}}
-}}
-document.querySelectorAll('.browse').forEach(function(b){{
-  b.addEventListener('click', function(){{ pick(b.getAttribute('data-pick'), b.getAttribute('data-target')); }});
-}});
-</script>
-</body></html>"""
-
-
 def create_app(config: AppConfig) -> FastAPI:
-    app = FastAPI(title="ask-widget", version="0.1.0")
+    storage = Storage(config.data_dir)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        storage.close()
+
+    app = FastAPI(title="ask-widget", version=__version__, lifespan=lifespan)
     app.state.config = config
+    app.state.storage = storage
+    app.state.storage.sync_builtin_roots(config.allowed_roots)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENT)
     app.state.recent_folders = [str(config.default_folder)]
-    # Exact files /_fs may serve — populated as local docs are opened via /view.
-    app.state.allowed_assets = set()
+    # Per-document expiring capabilities replace the old process-wide asset set.
+    app.state.asset_caps = OrderedDict()
 
     def err_stream(message: str, origin: str | None) -> StreamingResponse:
         async def gen():
@@ -216,7 +225,17 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        # The native launcher validates this identity instead of assuming that
+        # any process returning HTTP 200 on port 8899 is safe to embed.
+        return {
+            "status": "ok",
+            "service": "ask-widget",
+            "version": __version__,
+            "protocol": PROTOCOL_VERSION,
+            "runtime": f"python-{sys.version_info.major}.{sys.version_info.minor}",
+            "claude_available": find_claude() is not None,
+            "codex_available": find_codex() is not None,
+        }
 
     @app.get("/ask.js")
     async def ask_js():
@@ -234,17 +253,62 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/config")
     async def get_config(request: Request):
         origin = request.headers.get("origin")
+        settings = app.state.storage.settings(model_default=config.model)
         body = {
             "default_folder": str(config.default_folder),
-            "allowed_roots": ["(any)"] if config.allow_any else [str(r) for r in config.allowed_roots],
+            "allowed_roots": ["(any)"] if config.allow_any else [str(r) for r in _runtime_roots(app)],
             "recent_folders": list(app.state.recent_folders),
-            "model": config.model,
+            "model": settings["model"],
+            "provider": settings["provider"],
+            "reasoning_effort": settings["reasoning_effort"],
+            "version": __version__,
+            "cache_ttl_hours": settings["cache_ttl_hours"],
+            "cache_max_entries": settings["cache_max_entries"],
+            "appearance_theme": settings["appearance_theme"],
         }
         return JSONResponse(body, headers=_cors_headers(origin))
 
     @app.get("/", response_class=HTMLResponse)
     async def launcher():
-        return HTMLResponse(_launcher_page(config))
+        settings = app.state.storage.settings(model_default=config.model)
+        return HTMLResponse(launcher_page(config, settings))
+
+    @app.get("/quick", response_class=HTMLResponse)
+    async def quick_read(request: Request, text: str, folder: str | None = None):
+        if not _host_allowed(request.headers.get("host", ""), config.port):
+            return HTMLResponse(_error_page("Refused: host not allowed."), status_code=403)
+        passage = text.strip()[:20_000]
+        if not passage:
+            return HTMLResponse(_error_page("No selected text was provided."), status_code=400)
+        origin = str(request.base_url).rstrip("/")
+        seed_folder = _resolve_folder(app, folder) if folder else config.default_folder
+        if seed_folder is None:
+            return HTMLResponse(_error_page("The saved context folder is no longer allowed."), status_code=400)
+        source = f"service://selection/{uuid.uuid4().hex[:12]}"
+        body = (
+            "<h1>Shared selection</h1><p>Select the passage or right-click it to ask.</p>"
+            f'<blockquote id="askw-quick-selection">{_esc(passage)}</blockquote>'
+        )
+        html_text = viewer._reading_shell("Shared selection", body, kind="selection")
+        seed = (
+            f'<meta name="askw-folder" content="{_esc(str(seed_folder))}">'
+            f'<meta name="askw-src" content="{_esc(source)}">'
+            '<meta name="askw-auto-selection" content="1">'
+            f'<script src="{origin}/ask.js"></script>'
+        )
+        html_text = html_text.replace("</body>", seed + "</body>")
+        app.state.storage.upsert_document(
+            source=source,
+            title="Shared selection",
+            kind="selection",
+            folder=str(seed_folder),
+        )
+        return HTMLResponse(
+            html_text,
+            headers={
+                "Content-Security-Policy": "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'"
+            },
+        )
 
     @app.get("/view", response_class=HTMLResponse)
     async def view(request: Request, src: str, folder: str | None = None):
@@ -255,10 +319,25 @@ def create_app(config: AppConfig) -> FastAPI:
         # Same-origin as the page the user navigated to (localhost vs 127.0.0.1
         # must match, or the injected ask.js would be cross-origin).
         origin = str(request.base_url).rstrip("/")
+        settings = app.state.storage.settings(model_default=config.model)
         try:
             if viewer.is_remote(src):
-                html_text = await asyncio.to_thread(viewer.fetch_remote, src)
+                html_text = await asyncio.to_thread(
+                    viewer.fetch_remote,
+                    src,
+                    allow_private=bool(settings["allow_private_remote"]),
+                )
                 doc_src = src
+                title_match = re.search(
+                    r"<title[^>]*>(.*?)</title>", html_text, re.IGNORECASE | re.DOTALL
+                )
+                title = (
+                    html_lib.unescape(re.sub(r"<[^>]+>", "", title_match.group(1))).strip()
+                    if title_match
+                    else src
+                )
+                kind = "remote-html"
+                page_count = None
             else:
                 raw = src.strip()
                 if raw.lower().startswith("file://"):
@@ -274,30 +353,62 @@ def create_app(config: AppConfig) -> FastAPI:
                         status_code=400,
                     )
                 path = candidate.resolve()
-                if path.suffix.lower() not in (".html", ".htm"):
-                    return HTMLResponse(
-                        _error_page("Only .html/.htm files can be opened locally."), status_code=400
-                    )
-                html_text = await asyncio.to_thread(viewer.read_local, path)
+                loaded = await asyncio.to_thread(viewer.load_local_document, path)
+                html_text = loaded.html
                 doc_src = str(path)
+                title = loaded.title
+                kind = loaded.kind
+                page_count = loaded.page_count
         except viewer.ViewerError as exc:
-            return HTMLResponse(_error_page(str(exc)), status_code=404)
-        seed = folder if (folder and config.resolve_allowed(folder)) else None
+            return HTMLResponse(_error_page(str(exc)), status_code=400)
+        seed_path = _resolve_folder(app, folder) if folder else config.default_folder
+        seed = str(seed_path) if seed_path else None
+        capability = secrets.token_urlsafe(18)
+        interactive_local_html = kind == "html" and not viewer.is_remote(doc_src)
         out, assets = viewer.prepare_html(
-            doc_src, html_text=html_text, server_origin=origin, folder=seed
+            doc_src,
+            html_text=html_text,
+            server_origin=origin,
+            folder=seed,
+            asset_token=capability,
+            allow_document_scripts=interactive_local_html,
         )
-        app.state.allowed_assets.update(assets)
-        # The viewed document's own scripts are stripped; this CSP is the floor that
-        # also blocks inline handlers and any beacon to a non-self origin. The widget
-        # is fully self-contained (no CDN), so 'self' is all it needs.
-        csp = "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'"
+        caps: OrderedDict = app.state.asset_caps
+        caps[capability] = {
+            "assets": assets,
+            "source": doc_src,
+            "expires": time.time() + ASSET_CAPABILITY_TTL,
+        }
+        caps.move_to_end(capability)
+        while len(caps) > MAX_ASSET_CAPABILITIES:
+            caps.popitem(last=False)
+        app.state.storage.upsert_document(
+            source=doc_src,
+            title=title,
+            kind=kind,
+            folder=seed,
+            page_count=page_count,
+        )
+        # Trusted local HTML retains its authored scripts and inline button handlers.
+        # Remote HTML remains inert. In both cases, scripts cannot connect away from
+        # the local service, embed plugins, or change the document base URL.
+        script_src = (
+            "script-src 'self' 'unsafe-inline'"
+            if interactive_local_html
+            else "script-src 'self'"
+        )
+        csp = f"{script_src}; connect-src 'self'; object-src 'none'; base-uri 'none'"
         return HTMLResponse(out, headers={"Content-Security-Policy": csp})
 
-    @app.get("/_fs/{path:path}")
-    async def fs_asset(request: Request, path: str):
+    @app.get("/_fs/{capability}/{path:path}")
+    async def fs_asset(request: Request, capability: str, path: str):
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return Response("Forbidden", status_code=403)
-        result = viewer.resolve_fs_path(path, allowed=app.state.allowed_assets, home=Path.home())
+        cap = app.state.asset_caps.get(capability)
+        if not cap or cap["expires"] < time.time():
+            app.state.asset_caps.pop(capability, None)
+            return Response("Expired", status_code=404)
+        result = viewer.resolve_fs_path(path, allowed=cap["assets"], home=Path.home())
         if result is None:
             return Response("Not found", status_code=404)
         abspath, ctype = result
@@ -305,13 +416,20 @@ def create_app(config: AppConfig) -> FastAPI:
         return Response(content=data, media_type=ctype, headers={"Cache-Control": "no-cache"})
 
     @app.get("/_mtime")
-    async def doc_mtime(request: Request, src: str):
+    async def doc_mtime(request: Request, src: str, cap: str):
         # Cheap change-detection for live reload: returns a stat signature the
         # /view page polls. Host-checked like /_fs; returns strictly less than
         # /view already does (which serves the file's full contents). Live reload
         # is local-only — remote URLs have no mtime.
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return Response("Forbidden", status_code=403)
+        capability = app.state.asset_caps.get(cap)
+        if (
+            not capability
+            or capability["expires"] < time.time()
+            or capability["source"] != src
+        ):
+            return JSONResponse({"ok": False})
         if viewer.is_remote(src):
             return JSONResponse({"ok": False})
         raw = src.strip()
@@ -321,7 +439,7 @@ def create_app(config: AppConfig) -> FastAPI:
             path = Path(raw).expanduser().resolve()
         except (OSError, RuntimeError, ValueError):
             return JSONResponse({"ok": False})
-        if path.suffix.lower() not in (".html", ".htm"):
+        if path.suffix.lower() not in viewer.LOCAL_DOCUMENT_EXTENSIONS:
             return JSONResponse({"ok": False})
         try:
             st = await asyncio.to_thread(path.stat)
@@ -332,17 +450,297 @@ def create_app(config: AppConfig) -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
+    # MARK: - Library, settings, and diagnostics APIs
+
+    def api_forbidden(request: Request) -> JSONResponse | None:
+        if not _host_allowed(request.headers.get("host", ""), config.port):
+            return JSONResponse({"ok": False, "error": "host not allowed"}, status_code=403)
+        origin = request.headers.get("origin")
+        if not _origin_allowed(origin):
+            return JSONResponse({"ok": False, "error": "origin not allowed"}, status_code=403)
+        return None
+
+    @app.get("/api/library")
+    async def library(
+        request: Request,
+        q: str = "",
+        provider: str = "",
+        model: str = "",
+        source: str = "",
+        action: str = "",
+        days: int = 0,
+    ):
+        if denied := api_forbidden(request):
+            return denied
+        storage: Storage = app.state.storage
+        since = time.time() - min(max(days, 0), 3650) * 86_400 if days else None
+        data = storage.search(
+            q[:200],
+            limit=100,
+            provider=provider if provider in {"claude", "codex"} else None,
+            model=model[:100] or None,
+            source=source[:4000] or None,
+            action=action if action in {"ask", "eli5", "prove"} else None,
+            since=since,
+        )
+        return JSONResponse({"ok": True, **data}, headers=_cors_headers(request.headers.get("origin")))
+
+    @app.get("/api/history")
+    async def history(request: Request, source: str, selection: str = "", limit: int = 20):
+        if denied := api_forbidden(request):
+            return denied
+        items = app.state.storage.recent_conversations(
+            limit=limit, source=source[:4000], selection=selection[:MAX_SELECTION] or None
+        )
+        return JSONResponse(
+            {"ok": True, "conversations": items, "document": app.state.storage.document(source)},
+            headers=_cors_headers(request.headers.get("origin")),
+        )
+
+    @app.get("/api/conversations/{request_id}")
+    async def conversation_api(request: Request, request_id: str):
+        if denied := api_forbidden(request):
+            return denied
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id):
+            return JSONResponse({"ok": False, "error": "invalid request id"}, status_code=400)
+        item = app.state.storage.conversation(request_id)
+        if item is None:
+            return JSONResponse({"ok": False, "error": "history entry not found"}, status_code=404)
+        return JSONResponse(
+            {"ok": True, "conversation": item},
+            headers=_cors_headers(request.headers.get("origin")),
+        )
+
+    @app.get("/api/document")
+    async def document_api(request: Request, source: str):
+        if denied := api_forbidden(request):
+            return denied
+        return {"ok": True, "document": app.state.storage.document(source[:4000])}
+
+    @app.get("/api/folder")
+    async def validate_folder_api(request: Request, path: str):
+        if denied := api_forbidden(request):
+            return denied
+        resolved = _resolve_folder(app, path)
+        if resolved is None:
+            return JSONResponse(
+                {"ok": False, "error": "Folder is missing or outside the allowed roots."},
+                status_code=400,
+                headers=_cors_headers(request.headers.get("origin")),
+            )
+        return JSONResponse(
+            {"ok": True, "path": str(resolved)},
+            headers=_cors_headers(request.headers.get("origin")),
+        )
+
+    @app.get("/api/settings")
+    async def settings_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        storage: Storage = app.state.storage
+        return {
+            "ok": True,
+            "settings": storage.settings(model_default=config.model),
+            "roots": storage.roots(),
+        }
+
+    @app.get("/api/models")
+    async def models_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        settings = app.state.storage.settings(model_default=config.model)
+        catalogs = await asyncio.to_thread(provider_catalogs)
+        for catalog in catalogs:
+            provider = str(catalog.get("id"))
+            selected = str(settings.get(f"{provider}_model") or "")
+            models = catalog.get("models") if isinstance(catalog.get("models"), list) else []
+            if selected and not any(item.get("id") == selected for item in models):
+                models.append(
+                    {
+                        "id": selected,
+                        "label": f"{selected} (saved; unavailable)",
+                        "description": "This saved model is not in the installed CLI's current catalog.",
+                        "efforts": [],
+                        "default_effort": settings.get(f"{provider}_effort", "medium"),
+                        "unavailable": True,
+                    }
+                )
+            catalog["models"] = models
+            catalog["selected_model"] = selected
+            catalog["selected_effort"] = settings.get(f"{provider}_effort", "medium")
+        return JSONResponse(
+            {"ok": True, "selected_provider": settings["provider"], "providers": catalogs},
+            headers=_cors_headers(request.headers.get("origin")),
+        )
+
+    @app.post("/api/settings")
+    async def update_settings_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        patch = body.get("settings") if isinstance(body.get("settings"), dict) else {}
+        if any(
+            key in patch
+            for key in ("provider", "model", "claude_model", "codex_model", "claude_effort", "codex_effort")
+        ):
+            current = app.state.storage.settings(model_default=config.model)
+            provider = str(patch.get("provider") or current["provider"])
+            model = str(
+                patch.get(f"{provider}_model")
+                or patch.get("model")
+                or current.get(f"{provider}_model")
+                or ""
+            )
+            effort = str(patch.get(f"{provider}_effort") or current.get(f"{provider}_effort") or "medium")
+            catalogs = await asyncio.to_thread(provider_catalogs)
+            catalog = next((item for item in catalogs if item.get("id") == provider), None)
+            available = catalog.get("models", []) if catalog else []
+            if available and model not in {item.get("id") for item in available}:
+                return JSONResponse(
+                    {"ok": False, "error": f"{model!r} is not available for {provider}. Refresh the model catalog."},
+                    status_code=400,
+                )
+            selected = next((item for item in available if item.get("id") == model), None)
+            supported_efforts = selected.get("efforts", []) if selected else []
+            if supported_efforts and effort not in supported_efforts:
+                return JSONResponse(
+                    {"ok": False, "error": f"{effort!r} effort is not supported by {model}."},
+                    status_code=400,
+                )
+        try:
+            settings = app.state.storage.update_settings(
+                patch,
+                model_default=config.model,
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return {"ok": True, "settings": settings}
+
+    @app.post("/api/roots")
+    async def add_root_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        body = await request.json()
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        try:
+            path = Path(str(body.get("path") or "")).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return JSONResponse({"ok": False, "error": "invalid folder"}, status_code=400)
+        if not path.is_dir():
+            return JSONResponse({"ok": False, "error": "folder does not exist"}, status_code=400)
+        app.state.storage.add_root(path)
+        return {"ok": True, "roots": app.state.storage.roots()}
+
+    @app.delete("/api/roots")
+    async def remove_root_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        body = await request.json()
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        try:
+            path = Path(str(body.get("path") or "")).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return JSONResponse({"ok": False, "error": "invalid folder"}, status_code=400)
+        if not app.state.storage.remove_root(path):
+            return JSONResponse({"ok": False, "error": "built-in roots cannot be removed"}, status_code=400)
+        return {"ok": True, "roots": app.state.storage.roots()}
+
+    @app.get("/api/diagnostics")
+    async def diagnostics_api(request: Request, probe: bool = False):
+        if denied := api_forbidden(request):
+            return denied
+        settings = app.state.storage.settings(model_default=config.model)
+        result = await asyncio.to_thread(
+            build_diagnostics,
+            app.state.storage,
+            provider=settings["provider"],
+            model=settings["model"],
+            effort=settings["reasoning_effort"],
+            roots=app.state.storage.roots(),
+            default_folder=config.default_folder,
+            probe=probe,
+        )
+        return JSONResponse(result)
+
+    @app.post("/api/position")
+    async def update_position_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        body = await request.json()
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        source = str(body.get("source") or "")[:4000]
+        if not app.state.storage.document(source):
+            return JSONResponse({"ok": False, "error": "unknown document"}, status_code=404)
+        app.state.storage.update_position(source, float(body.get("scroll_y") or 0))
+        return {"ok": True}
+
+    @app.get("/api/export")
+    async def export_api(request: Request, src: str):
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            markdown = app.state.storage.export_markdown(src)
+        except KeyError:
+            return Response("Document not found", status_code=404)
+        filename = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(src).stem or "reading-notes")
+        return Response(
+            markdown,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}-notes.md"'},
+        )
+
+    @app.post("/api/open-source")
+    async def open_source_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        body = await request.json()
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        try:
+            path = Path(str(body.get("path") or "")).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return JSONResponse({"ok": False, "error": "invalid source path"}, status_code=400)
+        folder = _resolve_folder(app, body.get("folder"))
+        inside_folder = bool(folder and (path == folder or path.is_relative_to(folder)))
+        known_document = app.state.storage.document(str(path)) is not None
+        if not inside_folder and not known_document:
+            return JSONResponse({"ok": False, "error": "source is outside the active context"}, status_code=403)
+        try:
+            await asyncio.to_thread(
+                open_source,
+                path,
+                line=int(body["line"]) if body.get("line") else None,
+                page=int(body["page"]) if body.get("page") else None,
+            )
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return {"ok": True}
+
     @app.options("/ask")
     async def ask_preflight(request: Request):
         return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
 
-    @app.options("/open-in-claude")
-    async def open_in_claude_preflight(request: Request):
+    @app.options("/api/{path:path}")
+    async def api_preflight(request: Request, path: str):
         return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
 
+    @app.options("/open-in-provider")
+    @app.options("/open-in-claude")
+    async def open_in_provider_preflight(request: Request):
+        return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
+
+    @app.post("/open-in-provider")
     @app.post("/open-in-claude")
-    async def open_in_claude(request: Request):
-        # Same gating as /ask — this spawns a terminal running `claude`, a real
+    async def open_in_provider(request: Request):
+        # Same gating as /ask — this spawns a terminal agent session, a real
         # side effect. All app-level outcomes return 200 + {ok,...} so the widget
         # (cross-origin or same-origin) can read them.
         origin = request.headers.get("origin")
@@ -362,7 +760,15 @@ def create_app(config: AppConfig) -> FastAPI:
         if body.get("token") != config.token:
             return reply({"ok": False, "error": "invalid token"})
 
-        folder = config.resolve_allowed(body.get("folder") or str(config.default_folder))
+        settings = app.state.storage.settings(model_default=config.model)
+        provider = str(body.get("provider") or settings["provider"])
+        if provider not in {"claude", "codex"}:
+            return reply({"ok": False, "error": "unknown provider"})
+        runtime = await asyncio.to_thread(provider_status, provider)
+        if not runtime.get("subscription"):
+            return reply({"ok": False, "error": runtime.get("repair") or "subscription login required"})
+
+        folder = _resolve_folder(app, body.get("folder"))
         if folder is None:
             return reply({"ok": False, "error": f"folder not allowed: {body.get('folder')!r}"})
 
@@ -377,7 +783,7 @@ def create_app(config: AppConfig) -> FastAPI:
             return reply({"ok": True, "prompt": prompt})
 
         try:
-            await asyncio.to_thread(handoff.open_in_claude, folder, prompt)
+            await asyncio.to_thread(handoff.open_in_provider, provider, folder, prompt)
         except Exception as exc:
             return reply({"ok": False, "error": str(exc), "prompt": prompt})
         return reply({"ok": True, "opened": True, "prompt": prompt})
@@ -414,7 +820,14 @@ def create_app(config: AppConfig) -> FastAPI:
         if action == "ask" and not question:
             return err_stream("No question was provided.", origin)
 
-        folder = config.resolve_allowed(body.get("folder") or str(config.default_folder))
+        request_mode = str(body.get("request_mode") or "generated")
+        if request_mode not in {"generated", "rerun", "edited", "continue"}:
+            request_mode = "generated"
+        parent_request_id = str(body.get("parent_request_id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", parent_request_id):
+            parent_request_id = ""
+
+        folder = _resolve_folder(app, body.get("folder"))
         if folder is None:
             return err_stream(
                 f"Refused: folder not allowed or not a directory: {body.get('folder')!r}", origin
@@ -422,32 +835,138 @@ def create_app(config: AppConfig) -> FastAPI:
         _remember_folder(app, str(folder))
 
         history = _sanitize_history(body.get("history"))
-        prompt = build_user_prompt(action, selection, context, question, history)
-        append_system = append_system_for(action)
+        document_source = str(body.get("document_source") or "")[:4000] or None
+        document_title = str(body.get("document_title") or "")[:500] or None
+        try:
+            document_page = int(body.get("document_page")) if body.get("document_page") else None
+        except (TypeError, ValueError):
+            document_page = None
+        settings = app.state.storage.settings(model_default=config.model)
+        provider = settings["provider"]
+        model = settings["model"]
+        effort = settings["reasoning_effort"]
+        prompt = build_user_prompt(
+            action,
+            selection,
+            context,
+            question,
+            history,
+            document_source=document_source,
+            document_page=document_page,
+        )
+        append_system = append_system_for(action, settings["response_style"])
         sem: asyncio.Semaphore = app.state.sem
+        request_id = uuid.uuid4().hex
+        started = time.monotonic()
+        document_id = None
+        if document_source:
+            existing = app.state.storage.document(document_source)
+            if existing:
+                document_id = existing["id"]
+            else:
+                kind = "remote" if viewer.is_remote(document_source) else Path(document_source).suffix.lstrip(".") or "web"
+                document_id = app.state.storage.upsert_document(
+                    source=document_source,
+                    title=document_title or Path(document_source).name or document_source,
+                    kind=kind,
+                    folder=str(folder),
+                )
+        if settings["history_enabled"]:
+            app.state.storage.start_conversation(
+                request_id=request_id,
+                document_id=document_id,
+                document_source=document_source,
+                document_title=document_title,
+                document_page=document_page,
+                selection=selection,
+                context=context,
+                action=action,
+                question=question,
+                folder=str(folder),
+                provider=provider,
+                model=model,
+                effort=effort,
+                request_mode=request_mode,
+                parent_request_id=parent_request_id or None,
+            )
 
         async def gen():
             acquired = False
+            answer = ""
+            error = ""
+            citations: list[dict] = []
+            trace: list[dict] = []
+            status = "error"
             try:
+                yield _sse(
+                    "meta",
+                    {
+                        "request_id": request_id,
+                        "provider": provider,
+                        "model": model,
+                        "effort": effort,
+                        "request_mode": request_mode,
+                        "parent_request_id": parent_request_id or None,
+                    },
+                )
                 try:
                     await asyncio.wait_for(sem.acquire(), timeout=0.05)
                     acquired = True
                 except asyncio.TimeoutError:
+                    error = "Server busy (too many concurrent requests). Try again in a moment."
                     yield _sse(
                         "error",
-                        {"message": "Server busy (too many concurrent requests). Try again in a moment."},
+                        {"message": error, "retryable": True},
                     )
                     return
-                async for chunk in stream_answer(prompt, folder, config.model, append_system):
+                async for chunk in stream_answer(
+                    provider,
+                    prompt,
+                    folder,
+                    model,
+                    append_system,
+                    effort=effort,
+                    document_source=document_source,
+                    first_activity_timeout=float(settings["first_activity_timeout"]),
+                    stream_timeout=float(settings["request_timeout"]),
+                ):
+                    event, data = _decode_sse(chunk)
+                    if event == "token":
+                        answer += str(data.get("text") or "")
+                    elif event == "tool_trace":
+                        trace.append(data)
+                    elif event == "citations":
+                        citations = data.get("items") if isinstance(data.get("items"), list) else []
+                    elif event == "error":
+                        error = str(data.get("message") or f"{provider.title()} reported an error.")
+                    elif event == "done":
+                        status = "complete"
                     yield chunk
+            except asyncio.CancelledError:
+                status = "cancelled"
+                error = "Request cancelled by the reader."
+                raise
+            except Exception as exc:
+                error = f"Unexpected request failure: {exc}"
+                yield _sse("error", {"message": error, "retryable": True})
             finally:
                 if acquired:
                     sem.release()
+                if settings["history_enabled"]:
+                    app.state.storage.finish_conversation(
+                        request_id,
+                        status=status,
+                        answer=answer,
+                        error=error,
+                        citations=citations,
+                        trace=trace,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                    )
 
         return StreamingResponse(
             gen(),
             media_type="text/event-stream",
-            headers={**_cors_headers(origin), **_SSE_HEADERS},
+            headers={**_cors_headers(origin), **_SSE_HEADERS, "X-Request-ID": request_id},
         )
 
     return app

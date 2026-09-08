@@ -1,7 +1,7 @@
 """Frozen application config + the folder-allowlist security check.
 
 The allowlist is the single most important security boundary in this server:
-it decides which directories the spawned ``claude`` process is allowed to read.
+it decides which directories spawned model-provider processes are allowed to read.
 The check is deliberately done *after* ``Path.resolve()` (which follows symlinks)
 and uses ``Path.is_relative_to`` rather than string prefixing — ``str.startswith``
 would let ``~/Projects-evil`` slip past an allowed ``~/Projects`` root.
@@ -22,6 +22,7 @@ class AppConfig:
     host: str = "127.0.0.1"
     port: int = 8899
     allow_any: bool = False
+    data_dir: Path | None = None
     # Per-server random secret, baked into ask.js at serve time and required in
     # the /ask body. Defense-in-depth behind the Origin + Host checks.
     token: str = field(default_factory=lambda: secrets.token_urlsafe(32))

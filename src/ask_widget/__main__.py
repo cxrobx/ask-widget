@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import threading
+import time
 from pathlib import Path
 
 import uvicorn
@@ -18,6 +21,23 @@ def _under(path: Path, root: Path) -> bool:
         return False
 
 
+def _watch_parent(parent_pid: int) -> None:
+    """Exit if the native launcher disappears without terminating its child.
+
+    A normal app quit still sends SIGTERM. This guard covers force-quit/crash so
+    a stale server does not survive indefinitely and get mistaken for a fresh
+    app instance on the next launch.
+    """
+    while True:
+        time.sleep(2)
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            os._exit(0)
+        except PermissionError:
+            pass  # The process exists; we just cannot signal it.
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="ask_widget",
@@ -26,13 +46,13 @@ def main() -> None:
     parser.add_argument(
         "--folder",
         default=str(Path.home() / "Projects"),
-        help="Default context folder Claude reads (its CLAUDE.md + files). Default: ~/Projects",
+        help="Default context folder the selected provider may read. Default: ~/Projects",
     )
     parser.add_argument("--port", type=int, default=8899)
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Bind host. Keep this loopback; anything else exposes the Claude runner.",
+        help="Bind host. Keep this loopback; anything else exposes the model runners.",
     )
     parser.add_argument("--model", default="sonnet", help="Model passed to `claude --model`.")
     parser.add_argument(
@@ -47,7 +67,21 @@ def main() -> None:
         action="store_true",
         help="LOUD escape hatch: allow any readable directory. Disables the folder allowlist.",
     )
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Override the application data directory (primarily for development/tests).",
+    )
     args = parser.parse_args()
+
+    if args.parent_pid and args.parent_pid > 1 and args.parent_pid != os.getpid():
+        threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()
 
     default_folder = Path(args.folder).expanduser().resolve()
 
@@ -65,6 +99,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         allow_any=args.allow_any,
+        data_dir=Path(args.data_dir).expanduser().resolve() if args.data_dir else None,
     )
     app = create_app(config)
 
@@ -79,8 +114,8 @@ def main() -> None:
     )
     if args.host not in ("127.0.0.1", "localhost"):
         print(
-            "  WARNING: binding to a non-loopback host exposes the read-only Claude\n"
-            "           runner to your network. Only do this on a trusted network.\n"
+            "  WARNING: binding to a non-loopback host exposes the read-only model\n"
+            "           runners to your network. Only do this on a trusted network.\n"
         )
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

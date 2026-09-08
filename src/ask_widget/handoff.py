@@ -1,9 +1,7 @@
-"""Open a dedicated `claude` session in a terminal, scoped to a folder.
+"""Open a dedicated Claude or Codex session in a terminal, scoped to a folder.
 
-Mirrors cxmail's "Open in Claude": write a seed prompt + a launch script, then
-open a terminal running ``claude "$(cat prompt.txt)"`` cd'd into the context
-folder (so the session gets that folder's CLAUDE.md + file access). Ghostty is
-preferred (same as cxmail); iTerm / Terminal.app are fallbacks.
+Write a seed prompt and a launch script, then open the selected subscription CLI
+inside the context folder. Ghostty is preferred; iTerm and Terminal are fallbacks.
 """
 
 from __future__ import annotations
@@ -12,6 +10,8 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from .providers import find_claude, find_codex
+
 _TERMINALS = [
     ("/Applications/Ghostty.app", "ghostty"),
     (str(Path.home() / "Applications/Ghostty.app"), "ghostty"),
@@ -19,33 +19,6 @@ _TERMINALS = [
     ("/System/Applications/Utilities/Terminal.app", "open"),
     ("/Applications/Utilities/Terminal.app", "open"),
 ]
-
-_CLAUDE_FALLBACKS = [
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-    str(Path.home() / ".local/bin/claude"),
-    str(Path.home() / ".claude/local/claude"),
-    str(Path.home() / ".bun/bin/claude"),
-]
-
-
-def find_claude() -> str | None:
-    # GUI apps don't inherit the shell PATH; ask a login shell first.
-    try:
-        out = subprocess.run(
-            ["/bin/zsh", "-lc", "command -v claude"], capture_output=True, text=True, timeout=5
-        )
-        if out.returncode == 0:
-            p = out.stdout.strip()
-            if p and Path(p).exists():
-                return p
-    except Exception:
-        pass
-    for c in _CLAUDE_FALLBACKS:
-        if Path(c).exists():
-            return c
-    return None
-
 
 def _find_terminal() -> tuple[str, str] | None:
     for path, kind in _TERMINALS:
@@ -58,14 +31,20 @@ def _shq(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def open_in_claude(folder: Path, prompt: str) -> None:
-    """Launch a terminal running `claude` in `folder` with `prompt`. Raises on failure."""
-    claude = find_claude()
-    if not claude:
-        raise RuntimeError(
-            "The `claude` CLI wasn't found. Install Claude Code "
-            "(npm install -g @anthropic-ai/claude-code)."
+def open_in_provider(provider: str, folder: Path, prompt: str) -> None:
+    """Launch an interactive subscription-backed provider session."""
+    if provider == "codex":
+        executable = find_codex()
+        invocation = 'unset OPENAI_API_KEY CODEX_API_KEY\nexec {exe} -s read-only "$(cat {pf})"'
+    else:
+        executable = find_claude()
+        invocation = (
+            "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK "
+            "CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY\n"
+            'exec {exe} --strict-mcp-config "$(cat {pf})"'
         )
+    if not executable:
+        raise RuntimeError(f"The `{provider}` CLI was not found. Install it and sign in with your subscription.")
     term = _find_terminal()
     if not term:
         raise RuntimeError("No terminal found (Ghostty / iTerm / Terminal).")
@@ -77,13 +56,10 @@ def open_in_claude(folder: Path, prompt: str) -> None:
     prompt_file.write_text(prompt, encoding="utf-8")
 
     launch = scratch / "launch.command"
-    # `--strict-mcp-config` (with no `--mcp-config`) starts the session with zero
-    # MCP servers, so cd'ing into a project folder no longer triggers Claude's
-    # "N new MCP servers found in this project — confirm" approval screen. This is
-    # a lightweight reading-companion handoff; it doesn't need the user's MCP fleet.
     launch.write_text(
-        "#!/bin/zsh -l\nset -e\ncd {folder}\nexec {claude} --strict-mcp-config \"$(cat {pf})\"\n".format(
-            folder=_shq(str(folder)), claude=_shq(claude), pf=_shq(str(prompt_file))
+        "#!/bin/zsh -l\nset -e\ncd {folder}\n{invocation}\n".format(
+            folder=_shq(str(folder)),
+            invocation=invocation.format(exe=_shq(executable), pf=_shq(str(prompt_file))),
         ),
         encoding="utf-8",
     )
@@ -109,3 +85,8 @@ def open_in_claude(folder: Path, prompt: str) -> None:
     subprocess.Popen(
         cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
+
+
+def open_in_claude(folder: Path, prompt: str) -> None:
+    """Backward-compatible Claude handoff."""
+    open_in_provider("claude", folder, prompt)

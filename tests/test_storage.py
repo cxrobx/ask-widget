@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from ask_widget.storage import Storage
+
+
+class StorageTests(unittest.TestCase):
+    def test_settings_documents_conversations_and_export_persist(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            data = Path(raw)
+            source = str(data / "guide.md")
+            store = Storage(data)
+            settings = store.update_settings(
+                {
+                    "model": "haiku",
+                    "response_style": "balanced",
+                    "cache_max_entries": 12,
+                    "glass_transparency": 64,
+                    "appearance_theme": "dark",
+                },
+                model_default="sonnet",
+            )
+            self.assertEqual(settings["model"], "haiku")
+            self.assertEqual(settings["glass_transparency"], 64)
+            self.assertEqual(settings["appearance_theme"], "dark")
+            document_id = store.upsert_document(
+                source=source, title="Guide", kind="markdown", folder=str(data)
+            )
+            store.start_conversation(
+                request_id="request-1",
+                document_id=document_id,
+                document_source=source,
+                document_title="Guide",
+                document_page=None,
+                selection="The service is local.",
+                context="Context",
+                action="prove",
+                question="",
+                folder=str(data),
+                provider="claude",
+                model="haiku",
+                effort="high",
+                request_mode="rerun",
+                parent_request_id="request-parent",
+            )
+            store.finish_conversation(
+                "request-1",
+                status="complete",
+                answer="Supported by `src/app.py:10`.",
+                citations=[{"path": "src/app.py", "line": 10}],
+                trace=[{"tool": "Read"}],
+                latency_ms=125,
+            )
+            store.close()
+
+            reopened = Storage(data)
+            self.assertEqual(reopened.settings()["model"], "haiku")
+            self.assertEqual(reopened.recent_documents()[0]["conversation_count"], 1)
+            item = reopened.recent_conversations()[0]
+            self.assertEqual(item["status"], "complete")
+            self.assertEqual(item["provider"], "claude")
+            self.assertEqual(item["effort"], "high")
+            self.assertEqual(item["request_mode"], "rerun")
+            self.assertEqual(item["parent_request_id"], "request-parent")
+            self.assertEqual(item["citations"][0]["line"], 10)
+            self.assertEqual(reopened.conversation("request-1")["answer"], item["answer"])
+            self.assertEqual(len(reopened.recent_conversations(provider="claude", model="haiku")), 1)
+            self.assertEqual(reopened.recent_conversations(provider="codex"), [])
+            self.assertIn("haiku", reopened.history_facets()["models"])
+            exported = reopened.export_markdown(source)
+            self.assertIn("# Guide", exported)
+            self.assertIn("Supported by", exported)
+            reopened.close()
+
+    def test_v2_history_columns_migrate_without_losing_answers(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            data = Path(raw)
+            store = Storage(data)
+            store.start_conversation(
+                request_id="legacy",
+                document_id=None,
+                document_source="legacy.md",
+                document_title="Legacy",
+                document_page=None,
+                selection="Legacy passage",
+                context="",
+                action="ask",
+                question="Old question?",
+                folder=raw,
+                provider="claude",
+                model="sonnet",
+            )
+            store.finish_conversation("legacy", status="complete", answer="Old answer.")
+            with store._lock:
+                store._db.execute("ALTER TABLE conversations DROP COLUMN effort")
+                store._db.execute("ALTER TABLE conversations DROP COLUMN request_mode")
+                store._db.execute("ALTER TABLE conversations DROP COLUMN parent_request_id")
+                store._db.commit()
+            store.close()
+
+            migrated = Storage(data)
+            item = migrated.conversation("legacy")
+            self.assertEqual(item["answer"], "Old answer.")
+            self.assertEqual(item["effort"], "medium")
+            self.assertEqual(item["request_mode"], "generated")
+            self.assertIsNone(item["parent_request_id"])
+            migrated.close()
+
+    def test_builtin_root_cannot_be_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            data = Path(raw)
+            root = data / "root"
+            extra = data / "extra"
+            root.mkdir()
+            extra.mkdir()
+            store = Storage(data / "db")
+            store.sync_builtin_roots((root,))
+            store.add_root(extra)
+            self.assertFalse(store.remove_root(root))
+            self.assertTrue(store.remove_root(extra))
+            store.close()
+
+    def test_ephemeral_service_selections_do_not_clutter_the_library(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            store = Storage(Path(raw))
+            store.upsert_document(
+                source="service://selection/abc",
+                title="Shared selection",
+                kind="selection",
+                folder=raw,
+            )
+            self.assertEqual(store.recent_documents(), [])
+            self.assertEqual(store.search("Shared selection")["documents"], [])
+            self.assertEqual(store.stats()["documents"], 0)
+            store.close()

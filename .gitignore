@@ -5,3 +5,5 @@ __pycache__/
 *.egg-info/
 .playwright-mcp/
 launcher/build/
+launcher/.build-venv/
+tmp/

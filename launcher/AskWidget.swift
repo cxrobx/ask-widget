@@ -1,247 +1,917 @@
-// Ask Widget — macOS launcher.
-// Starts the local FastAPI server (if it isn't already up) and shows the launcher
-// in a WKWebView window. Pattern adapted from resume-platform/launcher-swift.
+// Ask Widget — resilient macOS launcher.
+//
+// Production builds ship the FastAPI service as a bundled executable. A
+// checkout-local runtime remains as a development fallback, but the installed
+// app never depends on ~/Projects/ask-widget or its .venv.
 import Cocoa
 @preconcurrency import WebKit
 import UniformTypeIdentifiers
 
-let PORT = 8899
-let BASE = "http://localhost:\(PORT)"
+private let port = 8899
+private let baseURL = "http://127.0.0.1:\(port)"
+private let expectedService = "ask-widget"
+private let expectedProtocol = 3
+private let releasesURL = URL(string: "https://github.com/cxrobx/ask-widget/releases/latest")!
+private let releasesAPIURL = URL(string: "https://api.github.com/repos/cxrobx/ask-widget/releases/latest")!
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
+private enum HealthResult {
+    case healthy(providerAvailable: Bool)
+    case unavailable(String)
+    case incompatible(String)
+}
 
+private struct ServerLaunch {
+    let executable: URL
+    let arguments: [String]
+    let workingDirectory: URL
+    let label: String
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
+    WKUIDelegate, WKScriptMessageHandlerWithReply
+{
     private var window: NSWindow!
     private var webView: WKWebView?
+    private var statusLabel: NSTextField?
     private var server: Process?
     private var didSpawn = false
+    private var startupID: UUID?
+    private var showingFailure = false
+    private var logHandle: FileHandle?
+    private var pendingDocumentURL: URL?
+    private var pendingQuickText: String?
+    private var keyDownMonitor: Any?
+    private let zoomLevels: [CGFloat] = [
+        0.50, 0.67, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00,
+    ]
+
+    private lazy var logURL: URL = {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Ask Widget", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )
+        return directory.appendingPathComponent("ask-widget.log")
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.servicesProvider = self
         buildMenu()
+        installKeyboardShortcuts()
         buildLoadingWindow()
-        // If a server is already healthy (e.g. started from a terminal), reuse it;
-        // otherwise spawn our own. Either way, open the UI once it answers /health.
-        checkHealth { [weak self] alive in
-            if alive {
-                DispatchQueue.main.async { self?.openApp() }
+        beginStartup()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        startupID = nil
+        if let keyDownMonitor { NSEvent.removeMonitor(keyDownMonitor) }
+        keyDownMonitor = nil
+        stopOwnedServer()
+        closeLog()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication, hasVisibleWindows: Bool
+    ) -> Bool {
+        if !hasVisibleWindows { window?.makeKeyAndOrderFront(nil) }
+        return true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first else { return }
+        if webView == nil {
+            pendingDocumentURL = url
+        } else {
+            openDocumentURL(url)
+        }
+    }
+
+    @objc func askSelection(
+        _ pasteboard: NSPasteboard,
+        userData: String,
+        error: AutoreleasingUnsafeMutablePointer<NSString?>
+    ) {
+        guard let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            error.pointee = "Ask Widget did not receive any selected text."
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.webView == nil {
+                self.pendingQuickText = String(text.prefix(20_000))
+                self.window?.makeKeyAndOrderFront(nil)
             } else {
-                self?.startServer()
-                self?.waitForServer(attempts: 40) {
-                    DispatchQueue.main.async { self?.openApp() }
+                self.openQuickSelection(String(text.prefix(20_000)))
+            }
+        }
+    }
+
+    @objc func openDocumentWithAskWidget(
+        _ pasteboard: NSPasteboard,
+        userData: String,
+        error: AutoreleasingUnsafeMutablePointer<NSString?>
+    ) {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true,
+        ]
+        guard let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self], options: options
+        ) as? [URL], let url = urls.first else {
+            error.pointee = "Ask Widget did not receive a document."
+            return
+        }
+        guard isSupportedDocument(url) else {
+            error.pointee = "Ask Widget supports HTML, Markdown, text, and PDF documents."
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.webView == nil {
+                self.pendingDocumentURL = url
+                self.window?.makeKeyAndOrderFront(nil)
+            } else {
+                self.openDocumentURL(url)
+            }
+        }
+    }
+
+    // MARK: - Server lifecycle
+
+    private func beginStartup() {
+        let id = UUID()
+        startupID = id
+        showingFailure = false
+        updateStatus("Checking local service…")
+
+        checkHealth { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.startupID == id else { return }
+                switch result {
+                case .healthy(let providerAvailable):
+                    self.openApp(providerAvailable: providerAvailable)
+                case .incompatible(let detail):
+                    self.failStartup(
+                        "Port \(port) is already in use by another service.",
+                        detail: detail,
+                        id: id
+                    )
+                case .unavailable:
+                    self.startServer(id: id)
                 }
             }
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        if didSpawn { server?.terminate() }   // only kill a server WE started
-    }
+    private func startServer(id: UUID) {
+        guard let launch = resolveServerLaunch() else {
+            failStartup(
+                "The Ask Widget service is missing.",
+                detail: "Rebuild the app with launcher/build-app.sh. No bundled service or usable development checkout was found.",
+                id: id
+            )
+            return
+        }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+        do {
+            try prepareLog()
+        } catch {
+            failStartup(
+                "Ask Widget could not create its log file.",
+                detail: error.localizedDescription,
+                id: id
+            )
+            return
+        }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { window?.makeKeyAndOrderFront(nil) }
-        return true
-    }
-
-    // MARK: - Server
-
-    private func startServer() {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let repo = "\(home)/Projects/ask-widget"
-        // `zsh -l` so the spawned python inherits the login PATH and can find the
-        // `claude` binary (~/.local/bin). `exec` so terminate() hits python, not zsh.
-        // Extra --allow-root entries come from ~/.config/ask-widget/allow-roots
-        // (one absolute path per line, ~ allowed, # comments). Optional.
-        var extraRoots = ""
-        let rootsFile = "\(home)/.config/ask-widget/allow-roots"
-        if let raw = try? String(contentsOfFile: rootsFile, encoding: .utf8) {
-            for line in raw.split(separator: "\n") {
-                let t = line.trimmingCharacters(in: .whitespaces)
-                guard !t.isEmpty, !t.hasPrefix("#") else { continue }
-                let path = t.hasPrefix("~")
-                    ? home + t.dropFirst()
-                    : t
-                extraRoots += " --allow-root \(path)"
+        let process = Process()
+        process.executableURL = launch.executable
+        process.arguments = launch.arguments
+        process.currentDirectoryURL = launch.workingDirectory
+        process.environment = launcherEnvironment()
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        process.terminationHandler = { [weak self, weak process] _ in
+            guard let self, let process else { return }
+            let status = process.terminationStatus
+            DispatchQueue.main.async {
+                guard self.startupID == id, !self.showingFailure else { return }
+                self.failStartup(
+                    "The Ask Widget service exited before it was ready.",
+                    detail: "\(launch.label) exited with status \(status).",
+                    id: id
+                )
             }
         }
-        let cmd = "exec .venv/bin/python -m ask_widget"
-            + " --folder \(home)/Projects"
-            + extraRoots
-            + " --port \(PORT)"
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        p.arguments = ["-l", "-c", cmd]
-        p.currentDirectoryURL = URL(fileURLWithPath: repo)
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+
+        writeLog("\n=== Launcher \(Date()) — \(launch.label) ===\n")
+        updateStatus("Starting \(launch.label)…")
         do {
-            try p.run()
-            server = p
+            try process.run()
+            server = process
             didSpawn = true
+            waitForServer(id: id, deadline: Date().addingTimeInterval(20))
         } catch {
-            showError("Couldn't start the server.\n\nMake sure ~/Projects/ask-widget/.venv exists (python3 -m venv .venv && pip install -e .).")
+            failStartup(
+                "The Ask Widget service could not be launched.",
+                detail: error.localizedDescription,
+                id: id
+            )
         }
     }
 
-    private func checkHealth(_ done: @escaping (Bool) -> Void) {
-        var req = URLRequest(url: URL(string: "\(BASE)/health")!)
-        req.timeoutInterval = 1.5
-        URLSession.shared.dataTask(with: req) { _, resp, _ in
-            done((resp as? HTTPURLResponse)?.statusCode == 200)
+    private func checkHealth(_ completion: @escaping (HealthResult) -> Void) {
+        guard let url = URL(string: "\(baseURL)/health") else {
+            completion(.unavailable("Invalid health URL."))
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 1.0
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            guard let http = response as? HTTPURLResponse else {
+                completion(.unavailable(error?.localizedDescription ?? "No response."))
+                return
+            }
+            guard http.statusCode == 200 else {
+                completion(.incompatible("The process on port \(port) returned HTTP \(http.statusCode)."))
+                return
+            }
+            guard
+                let data,
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                json["service"] as? String == expectedService,
+                json["protocol"] as? Int == expectedProtocol
+            else {
+                completion(.incompatible("Its health response does not identify a compatible Ask Widget service."))
+                return
+            }
+            let providerAvailable =
+                (json["claude_available"] as? Bool ?? false) ||
+                (json["codex_available"] as? Bool ?? false)
+            completion(.healthy(providerAvailable: providerAvailable))
         }.resume()
     }
 
-    private func waitForServer(attempts: Int, completion: @escaping () -> Void) {
-        guard attempts > 0 else {
+    private func waitForServer(id: UUID, deadline: Date) {
+        guard startupID == id else { return }
+        checkHealth { [weak self] result in
+            guard let self else { return }
             DispatchQueue.main.async {
-                self.showError("The server did not start in time.\n\nTry running it from a terminal:\n  cd ~/Projects/ask-widget && ./run.sh")
+                guard self.startupID == id, !self.showingFailure else { return }
+                switch result {
+                case .healthy(let providerAvailable):
+                    self.openApp(providerAvailable: providerAvailable)
+                case .incompatible(let detail):
+                    self.failStartup(
+                        "The local service returned an incompatible response.",
+                        detail: detail,
+                        id: id
+                    )
+                case .unavailable:
+                    if Date() >= deadline {
+                        self.failStartup(
+                            "The Ask Widget service did not become ready.",
+                            detail: "Startup exceeded 20 seconds.",
+                            id: id
+                        )
+                    } else {
+                        self.updateStatus("Waiting for the local service…")
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
+                            self.waitForServer(id: id, deadline: deadline)
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    private func resolveServerLaunch() -> ServerLaunch? {
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+        let commonArguments = serverArguments(home: home)
+
+        if let resources = Bundle.main.resourceURL {
+            let bundled = resources.appendingPathComponent("Server/ask-widget-server")
+            if fileManager.isExecutableFile(atPath: bundled.path) {
+                return ServerLaunch(
+                    executable: bundled,
+                    arguments: commonArguments,
+                    workingDirectory: bundled.deletingLastPathComponent(),
+                    label: "bundled service"
+                )
+            }
+        }
+
+        // Development fallbacks. ASK_WIDGET_REPO is useful when the checkout is
+        // elsewhere; the bundle-relative candidate supports launcher/build.
+        var candidates: [URL] = []
+        if let override = ProcessInfo.processInfo.environment["ASK_WIDGET_REPO"],
+           !override.isEmpty {
+            candidates.append(URL(fileURLWithPath: (override as NSString).expandingTildeInPath))
+        }
+        let bundleCheckout = Bundle.main.bundleURL
+            .deletingLastPathComponent() // build/
+            .deletingLastPathComponent() // launcher/
+            .deletingLastPathComponent() // checkout/
+        candidates.append(bundleCheckout)
+        candidates.append(home.appendingPathComponent("Projects/ask-widget", isDirectory: true))
+
+        var seen = Set<String>()
+        for repo in candidates where seen.insert(repo.standardizedFileURL.path).inserted {
+            let python = repo.appendingPathComponent(".venv/bin/python")
+            if fileManager.isExecutableFile(atPath: python.path) {
+                return ServerLaunch(
+                    executable: python,
+                    arguments: ["-m", "ask_widget"] + commonArguments,
+                    workingDirectory: repo,
+                    label: "development service"
+                )
+            }
+            let runScript = repo.appendingPathComponent("run.sh")
+            if fileManager.isExecutableFile(atPath: runScript.path) {
+                return ServerLaunch(
+                    executable: URL(fileURLWithPath: "/bin/bash"),
+                    arguments: [runScript.path] + commonArguments,
+                    workingDirectory: repo,
+                    label: "development bootstrap"
+                )
+            }
+        }
+        return nil
+    }
+
+    private func serverArguments(home: URL) -> [String] {
+        var arguments = [
+            "--folder", home.appendingPathComponent("Projects").path,
+            "--port", String(port),
+            "--parent-pid", String(ProcessInfo.processInfo.processIdentifier),
+        ]
+        let rootsFile = home.appendingPathComponent(".config/ask-widget/allow-roots")
+        if let raw = try? String(contentsOf: rootsFile, encoding: .utf8) {
+            for line in raw.split(whereSeparator: \Character.isNewline) {
+                let value = line.trimmingCharacters(in: .whitespaces)
+                guard !value.isEmpty, !value.hasPrefix("#") else { continue }
+                let expanded = (value as NSString).expandingTildeInPath
+                arguments += ["--allow-root", expanded]
+            }
+        }
+        return arguments
+    }
+
+    private func launcherEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let preferred = [
+            "\(home)/.local/bin",
+            "\(home)/.claude/local",
+            "\(home)/.bun/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        let inherited = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+        environment["PATH"] = Array(NSOrderedSet(array: preferred + inherited))
+            .compactMap { $0 as? String }
+            .joined(separator: ":")
+        environment["PYTHONUNBUFFERED"] = "1"
+        return environment
+    }
+
+    private func stopOwnedServer() {
+        if didSpawn, let server, server.isRunning {
+            server.terminate()
+        }
+        server = nil
+        didSpawn = false
+    }
+
+    // MARK: - Diagnostics and recovery
+
+    private func prepareLog() throws {
+        closeLog()
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        if let size = try? logURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > 2_000_000 {
+            let previous = logURL.deletingLastPathComponent()
+                .appendingPathComponent("ask-widget.previous.log")
+            try? fileManager.removeItem(at: previous)
+            try fileManager.moveItem(at: logURL, to: previous)
+        }
+        if !fileManager.fileExists(atPath: logURL.path) {
+            guard fileManager.createFile(atPath: logURL.path, contents: nil) else {
+                throw NSError(
+                    domain: "AskWidgetLauncher",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Could not create \(logURL.path)."]
+                )
+            }
+        }
+        logHandle = try FileHandle(forWritingTo: logURL)
+        try logHandle?.seekToEnd()
+    }
+
+    private func writeLog(_ text: String) {
+        guard let data = text.data(using: .utf8) else { return }
+        try? logHandle?.write(contentsOf: data)
+        try? logHandle?.synchronize()
+    }
+
+    private func closeLog() {
+        try? logHandle?.close()
+        logHandle = nil
+    }
+
+    private func logTail(maxLines: Int = 18) -> String {
+        guard let data = try? Data(contentsOf: logURL),
+              let text = String(data: data.suffix(24_000), encoding: .utf8) else {
+            return "No service output was captured."
+        }
+        return text.split(separator: "\n", omittingEmptySubsequences: false)
+            .suffix(maxLines)
+            .joined(separator: "\n")
+    }
+
+    private func failStartup(_ summary: String, detail: String, id: UUID) {
+        guard startupID == id, !showingFailure else { return }
+        showingFailure = true
+        stopOwnedServer()
+        updateStatus("Startup failed")
+
+        let diagnostic = """
+        \(detail)
+
+        Log: \(logURL.path)
+
+        Recent output:
+        \(logTail())
+        """
+
+        while true {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = summary
+            alert.informativeText = diagnostic
+            alert.addButton(withTitle: "Retry")
+            alert.addButton(withTitle: "Open Log")
+            alert.addButton(withTitle: "Quit")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                startupID = nil
+                showingFailure = false
+                beginStartup()
+                return
+            }
+            if response == .alertSecondButtonReturn {
+                ensureLogExists()
+                NSWorkspace.shared.open(logURL)
+                continue
+            }
+            NSApp.terminate(nil)
             return
         }
-        checkHealth { [weak self] alive in
-            if alive { completion() }
-            else { DispatchQueue.global().asyncAfter(deadline: .now() + 0.75) { self?.waitForServer(attempts: attempts - 1, completion: completion) } }
+    }
+
+    private func ensureLogExists() {
+        let directory = logURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
         }
     }
 
     // MARK: - UI
 
-    private func openApp() {
-        let cfg = WKWebViewConfiguration()
-        cfg.defaultWebpagePreferences.allowsContentJavaScript = true
-        // Native file/folder picker bridge: the launcher page calls
-        // window.webkit.messageHandlers.askwPick.postMessage({kind}) and gets back
-        // the chosen absolute path (impossible in a plain browser).
-        cfg.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "askwPick")
-        let wv = WKWebView(frame: .zero, configuration: cfg)
-        wv.navigationDelegate = self
-        wv.uiDelegate = self
-        wv.allowsBackForwardNavigationGestures = true
-        wv.load(URLRequest(url: URL(string: "\(BASE)/")!))
-        webView = wv
+    private func openApp(providerAvailable: Bool) {
+        startupID = nil
+        statusLabel = nil
 
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.titlebarAppearsTransparent = false
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.addScriptMessageHandler(
+            self, contentWorld: .page, name: "askwPick"
+        )
+        configuration.userContentController.addScriptMessageHandler(
+            self, contentWorld: .page, name: "askwAppearance"
+        )
+        configuration.userContentController.addScriptMessageHandler(
+            self, contentWorld: .page, name: "askwClipboard"
+        )
+        // WebKit does not consistently expose the Clipboard API to localhost
+        // pages. Give interactive local HTML a browser-compatible writeText()
+        // backed by the native pasteboard. The message handler replies with a
+        // Promise, matching the standard Clipboard API contract.
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: """
+            (() => {
+              const writeText = (text) =>
+                window.webkit.messageHandlers.askwClipboard.postMessage({text: String(text)});
+              try {
+                if (typeof Clipboard !== 'undefined' && Clipboard.prototype) {
+                  Object.defineProperty(Clipboard.prototype, 'writeText', {
+                    configurable: true,
+                    value: writeText,
+                    writable: true
+                  });
+                }
+                const nativeClipboard = navigator.clipboard;
+                const bridgedClipboard = nativeClipboard
+                  ? new Proxy(nativeClipboard, {
+                      get(target, property) {
+                        if (property === 'writeText') return writeText;
+                        const value = target[property];
+                        return typeof value === 'function' ? value.bind(target) : value;
+                      }
+                    })
+                  : {writeText};
+                Object.defineProperty(navigator, 'clipboard', {
+                  configurable: true,
+                  value: bridgedClipboard
+                });
+              } catch (_) {
+                window.askWidgetClipboard = {writeText};
+              }
+            })();
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = self
+        view.uiDelegate = self
+        view.allowsBackForwardNavigationGestures = true
+        // Match cxtasks' material stack: AppKit supplies the desktop blur and
+        // the page supplies only alpha-aware pane tints. A CSS backdrop filter
+        // cannot see beyond the WebView, so transparency without this native
+        // layer would expose a sharp, unreadable desktop instead of glass.
+        view.underPageBackgroundColor = .clear
+        view.setValue(false, forKey: "drawsBackground")
+        view.load(URLRequest(url: URL(string: "\(baseURL)/")!))
+        webView = view
+
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.title = "Ask Widget"
-        window.contentView = wv
+        let material = glassMaterialView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        material.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+            view.topAnchor.constraint(equalTo: material.topAnchor),
+            view.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+        ])
+        window.contentView = material
         window.setContentSize(NSSize(width: 1200, height: 860))
         window.minSize = NSSize(width: 720, height: 520)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        if !providerAvailable {
+            writeLog("WARNING: neither claude nor codex was found by the local service.\n")
+        }
+        if let url = pendingDocumentURL {
+            pendingDocumentURL = nil
+            openDocumentURL(url)
+        } else if let text = pendingQuickText {
+            pendingQuickText = nil
+            openQuickSelection(text)
+        }
     }
 
     private func buildLoadingWindow() {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 170),
-                          styleMask: [.titled, .closable, .fullSizeContentView],
-                          backing: .buffered, defer: false)
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 210),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
         window.titlebarAppearsTransparent = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.title = "Ask Widget"
         window.isMovableByWindowBackground = true
         window.center()
 
-        let root = NSView()
+        let root = glassMaterialView()
         let spinner = NSProgressIndicator()
-        spinner.style = .spinning; spinner.startAnimation(nil)
+        spinner.style = .spinning
+        spinner.startAnimation(nil)
         spinner.translatesAutoresizingMaskIntoConstraints = false
+
         let title = NSTextField(labelWithString: "Ask Widget")
-        title.font = .boldSystemFont(ofSize: 15); title.translatesAutoresizingMaskIntoConstraints = false
-        let sub = NSTextField(labelWithString: "Starting…")
-        sub.font = .systemFont(ofSize: 13); sub.textColor = .secondaryLabelColor
-        sub.translatesAutoresizingMaskIntoConstraints = false
-        [spinner, title, sub].forEach { root.addSubview($0) }
+        title.font = .boldSystemFont(ofSize: 16)
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let status = NSTextField(labelWithString: "Starting…")
+        status.font = .systemFont(ofSize: 13)
+        status.textColor = .secondaryLabelColor
+        status.alignment = .center
+        status.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel = status
+
+        [spinner, title, status].forEach { root.addSubview($0) }
         window.contentView = root
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -16),
+            spinner.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -20),
             title.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             title.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 14),
-            sub.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            sub.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+            status.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            status.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
+            status.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 24),
+            status.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -24),
         ])
         window.makeKeyAndOrderFront(nil)
     }
 
-    // Native picker bridge → returns the chosen absolute path (or null if cancelled).
-    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
-                              replyHandler: @escaping (Any?, String?) -> Void) {
+    private func glassMaterialView() -> NSVisualEffectView {
+        let material = NSVisualEffectView()
+        material.material = .underWindowBackground
+        material.blendingMode = .behindWindow
+        // Keep the glass stable while the user works in another window, as in
+        // cxtasks; following window-active state turns inactive glass flat grey.
+        material.state = .active
+        return material
+    }
+
+    private func updateStatus(_ text: String) {
+        DispatchQueue.main.async { [weak self] in self?.statusLabel?.stringValue = text }
+    }
+
+    // Native picker bridge → chosen absolute path, or null on cancellation.
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage,
+        replyHandler: @escaping (Any?, String?) -> Void
+    ) {
         let body = message.body as? [String: Any] ?? [:]
+        if message.name == "askwClipboard" {
+            guard let text = body["text"] as? String else {
+                replyHandler(nil, "Clipboard text is missing.")
+                return
+            }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            if pasteboard.setString(String(text.prefix(1_000_000)), forType: .string) {
+                replyHandler(true, nil)
+            } else {
+                replyHandler(nil, "Could not write to the clipboard.")
+            }
+            return
+        }
+        if message.name == "askwAppearance" {
+            let appearance: NSAppearance?
+            switch body["theme"] as? String {
+            case "dark":
+                appearance = NSAppearance(named: .darkAqua)
+            case "light":
+                appearance = NSAppearance(named: .aqua)
+            default:
+                appearance = nil
+            }
+            // Native menus (including HTML <select> popups) resolve their
+            // colors from NSApp, while the title bar resolves from the window.
+            // Keep both halves on the same explicit appearance.
+            NSApp.appearance = appearance
+            window.appearance = appearance
+            replyHandler(true, nil)
+            return
+        }
         let kind = body["kind"] as? String ?? "folder"
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         if kind == "file" {
             panel.canChooseFiles = true
             panel.canChooseDirectories = false
-            panel.allowedContentTypes = [UTType.html]
+            panel.allowedContentTypes = supportedDocumentTypes()
             panel.prompt = "Open"
-            panel.message = "Choose an HTML document to open with the widget"
+            panel.message = "Choose an HTML, Markdown, text, or PDF document"
         } else {
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
             panel.canCreateDirectories = false
             panel.prompt = "Use Folder"
-            panel.message = "Choose the context folder Claude should read (its CLAUDE.md + files)"
+            panel.message = "Choose the context folder the selected provider should read"
         }
         if let initial = body["initial"] as? String, !initial.isEmpty,
            FileManager.default.fileExists(atPath: initial) {
             panel.directoryURL = URL(fileURLWithPath: initial)
         }
-        panel.begin { resp in
-            replyHandler(resp == .OK ? panel.url?.path : nil, nil)
+        panel.begin { response in
+            replyHandler(response == .OK ? panel.url?.path : nil, nil)
         }
     }
 
-    // Let target=_blank / window.open links open in the same view.
-    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url { webView.load(URLRequest(url: url)) }
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            webView.load(URLRequest(url: url))
+        }
         return nil
     }
 
     // MARK: - Menu
 
     @objc private func reload() { webView?.reload() }
-    @objc private func goHome() { webView?.load(URLRequest(url: URL(string: "\(BASE)/")!)) }
+    @objc private func zoomIn() { stepZoom(direction: 1) }
+    @objc private func zoomOut() { stepZoom(direction: -1) }
+    @objc private func resetZoom() { webView?.pageZoom = 1.0 }
+
+    private func stepZoom(direction: Int) {
+        guard let webView else { return }
+        let current = webView.pageZoom
+        if direction > 0 {
+            webView.pageZoom = zoomLevels.first(where: { $0 > current + 0.001 })
+                ?? zoomLevels.last!
+        } else {
+            webView.pageZoom = zoomLevels.last(where: { $0 < current - 0.001 })
+                ?? zoomLevels.first!
+        }
+    }
+
+    private func installKeyboardShortcuts() {
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self else { return event }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags.contains(.command),
+                  !flags.contains(.control),
+                  !flags.contains(.option) else { return event }
+            switch event.charactersIgnoringModifiers {
+            case "=", "+":
+                self.zoomIn()
+            case "-", "_":
+                self.zoomOut()
+            case "0":
+                self.resetZoom()
+            default:
+                return event
+            }
+            return nil
+        }
+    }
+
+    @objc private func goHome() {
+        webView?.load(URLRequest(url: URL(string: "\(baseURL)/")!))
+    }
     @objc private func openInBrowser() {
-        let url = webView?.url ?? URL(string: "\(BASE)/")!
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(webView?.url ?? URL(string: "\(baseURL)/")!)
+    }
+    @objc private func openLogs() {
+        ensureLogExists()
+        NSWorkspace.shared.open(logURL)
+    }
+    @objc private func checkForUpdates() {
+        var request = URLRequest(url: releasesAPIURL)
+        request.timeoutInterval = 10
+        request.setValue("Ask-Widget/\(currentVersion())", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode
+            guard error == nil, status == 200, let data,
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let rawTag = payload["tag_name"] as? String else {
+                DispatchQueue.main.async {
+                    self?.showUpdateResult(
+                        title: "Couldn’t Check for Updates",
+                        message: error?.localizedDescription ?? "GitHub returned HTTP \(status ?? 0).",
+                        offerReleases: true
+                    )
+                }
+                return
+            }
+            let latest = rawTag.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+            let current = self?.currentVersion() ?? "0"
+            let isNewer = latest.compare(current, options: .numeric) == .orderedDescending
+            DispatchQueue.main.async {
+                self?.showUpdateResult(
+                    title: isNewer ? "Ask Widget \(latest) Is Available" : "Ask Widget Is Up to Date",
+                    message: isNewer
+                        ? "You’re running \(current). Open the release page to download the update."
+                        : "You’re running the latest release (\(current)).",
+                    offerReleases: isNewer
+                )
+            }
+        }.resume()
+    }
+
+    private func currentVersion() -> String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    private func showUpdateResult(title: String, message: String, offerReleases: Bool) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        if offerReleases { alert.addButton(withTitle: "Open Releases") }
+        alert.addButton(withTitle: offerReleases ? "Later" : "OK")
+        if alert.runModal() == .alertFirstButtonReturn, offerReleases {
+            NSWorkspace.shared.open(releasesURL)
+        }
     }
     @objc private func openDocument() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType.html]
+        panel.allowedContentTypes = supportedDocumentTypes()
         panel.allowsMultipleSelection = false
-        panel.begin { [weak self] resp in
-            guard resp == .OK, let path = panel.url?.path else { return }
-            var comps = URLComponents(string: "\(BASE)/view")!
-            comps.queryItems = [URLQueryItem(name: "src", value: path)]
-            if let u = comps.url { self?.webView?.load(URLRequest(url: u)) }
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.openDocumentURL(url)
+        }
+    }
+
+    private func supportedDocumentTypes() -> [UTType] {
+        var types: [UTType] = [.html, .pdf, .plainText]
+        for ext in ["htm", "md", "markdown"] {
+            if let type = UTType(filenameExtension: ext), !types.contains(type) {
+                types.append(type)
+            }
+        }
+        return types
+    }
+
+    private func isSupportedDocument(_ url: URL) -> Bool {
+        ["html", "htm", "md", "markdown", "txt", "pdf"]
+            .contains(url.pathExtension.lowercased())
+    }
+
+    private func openDocumentURL(_ documentURL: URL) {
+        var components = URLComponents(string: "\(baseURL)/view")!
+        components.queryItems = [URLQueryItem(name: "src", value: documentURL.path)]
+        if let url = components.url {
+            webView?.load(URLRequest(url: url))
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func openQuickSelection(_ text: String) {
+        var components = URLComponents(string: "\(baseURL)/quick")!
+        components.queryItems = [URLQueryItem(name: "text", value: text)]
+        if let url = components.url {
+            webView?.load(URLRequest(url: url))
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
     private func menuItem(_ title: String, _ action: Selector, _ key: String) -> NSMenuItem {
-        let mi = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        mi.target = self
-        return mi
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        return item
     }
 
     private func buildMenu() {
         let main = NSMenu()
 
-        let appItem = NSMenuItem(); main.addItem(appItem)
-        let appMenu = NSMenu(); appItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(title: "About Ask Widget", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        appMenu.addItem(NSMenuItem(
+            title: "About Ask Widget",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: ""
+        ))
+        appMenu.addItem(menuItem("Check for Updates…", #selector(checkForUpdates), ""))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Hide Ask Widget", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
-        appMenu.addItem(NSMenuItem(title: "Quit Ask Widget", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(
+            title: "Hide Ask Widget", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"
+        ))
+        appMenu.addItem(NSMenuItem(
+            title: "Quit Ask Widget", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
+        ))
 
-        let fileItem = NSMenuItem(); main.addItem(fileItem)
-        let fileMenu = NSMenu(title: "File"); fileItem.submenu = fileMenu
+        let fileItem = NSMenuItem()
+        main.addItem(fileItem)
+        let fileMenu = NSMenu(title: "File")
+        fileItem.submenu = fileMenu
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
         fileMenu.addItem(menuItem("Launcher Home", #selector(goHome), "n"))
 
-        // Edit menu — required for Cmd+C/V/X/A inside WKWebView (Ask textarea, paste).
-        let editItem = NSMenuItem(); main.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit"); editItem.submenu = editMenu
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
         editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
         editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
         editMenu.addItem(.separator())
@@ -250,25 +920,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
         editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
 
-        let viewItem = NSMenuItem(); main.addItem(viewItem)
-        let viewMenu = NSMenu(title: "View"); viewItem.submenu = viewMenu
+        let viewItem = NSMenuItem()
+        main.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View")
+        viewItem.submenu = viewMenu
         viewMenu.addItem(menuItem("Reload", #selector(reload), "r"))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(menuItem("Zoom In", #selector(zoomIn), "+"))
+        viewMenu.addItem(menuItem("Zoom Out", #selector(zoomOut), "-"))
+        viewMenu.addItem(menuItem("Actual Size", #selector(resetZoom), "0"))
+        viewMenu.addItem(.separator())
         viewMenu.addItem(menuItem("Open in Default Browser", #selector(openInBrowser), "B"))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(menuItem("Open Service Log", #selector(openLogs), "L"))
 
-        let winItem = NSMenuItem(); main.addItem(winItem)
-        let winMenu = NSMenu(title: "Window"); winItem.submenu = winMenu
-        winMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"))
-        winMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        let windowItem = NSMenuItem()
+        main.addItem(windowItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowItem.submenu = windowMenu
+        windowMenu.addItem(NSMenuItem(
+            title: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"
+        ))
+        windowMenu.addItem(NSMenuItem(
+            title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"
+        ))
 
         NSApp.mainMenu = main
-    }
-
-    private func showError(_ message: String) {
-        DispatchQueue.main.async {
-            let a = NSAlert(); a.alertStyle = .critical; a.messageText = "Ask Widget"
-            a.informativeText = message; a.addButton(withTitle: "Quit")
-            a.runModal(); NSApp.terminate(nil)
-        }
     }
 }
 

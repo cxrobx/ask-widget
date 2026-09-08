@@ -1,8 +1,8 @@
 """ask-widget — highlight-to-ask reading companion.
 
-A drop-in ``<script>`` widget plus a local FastAPI server that shells out to the
-``claude`` CLI (read-only, with ``--add-dir <folder>``) so every answer has the
-full context of a folder's ``CLAUDE.md`` and files.
+A drop-in ``<script>`` widget plus a local FastAPI server that runs the signed-in
+Claude or Codex CLI in read-only mode so answers can use a trusted local context
+folder without API keys.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"

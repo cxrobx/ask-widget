@@ -1,0 +1,7 @@
+-r requirements-runtime.lock
+charset-normalizer==3.4.9
+httpcore2==2.10.0
+httpx2==2.10.0
+pillow==12.3.0
+reportlab==5.0.0
+truststore==0.10.4

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>bundleid</key>
+    <string>com.cx.ask-widget.alfred</string>
+    <key>connections</key>
+    <dict>
+        <key>5A9B4161-9EF0-4D76-9C30-7B6126952E4C</key>
+        <array>
+            <dict>
+                <key>destinationuid</key>
+                <string>825A36E8-355B-4D1D-BDC7-04A9AF7D810C</string>
+                <key>modifiers</key>
+                <integer>0</integer>
+                <key>modifiersubtext</key>
+                <string></string>
+                <key>vitoclose</key>
+                <false/>
+            </dict>
+        </array>
+    </dict>
+    <key>createdby</key>
+    <string>Ask Widget</string>
+    <key>description</key>
+    <string>Open supported documents in Ask Widget from Alfred Universal Actions.</string>
+    <key>disabled</key>
+    <false/>
+    <key>name</key>
+    <string>Open in Ask Widget</string>
+    <key>objects</key>
+    <array>
+        <dict>
+            <key>config</key>
+            <dict>
+                <key>acceptsmulti</key>
+                <integer>0</integer>
+                <key>filetypes</key>
+                <array>
+                    <string>public.html</string>
+                    <string>net.daringfireball.markdown</string>
+                    <string>+public.plain-text</string>
+                    <string>com.adobe.pdf</string>
+                </array>
+                <key>name</key>
+                <string>Open in Ask Widget</string>
+            </dict>
+            <key>uid</key>
+            <string>5A9B4161-9EF0-4D76-9C30-7B6126952E4C</string>
+            <key>type</key>
+            <string>alfred.workflow.trigger.action</string>
+            <key>version</key>
+            <integer>1</integer>
+        </dict>
+        <dict>
+            <key>config</key>
+            <dict>
+                <key>concurrently</key>
+                <false/>
+                <key>escaping</key>
+                <integer>102</integer>
+                <key>script</key>
+                <string>/usr/bin/open -b com.cx.ask-widget "$1"</string>
+                <key>scriptargtype</key>
+                <integer>1</integer>
+                <key>scriptfile</key>
+                <string></string>
+                <key>type</key>
+                <integer>5</integer>
+            </dict>
+            <key>uid</key>
+            <string>825A36E8-355B-4D1D-BDC7-04A9AF7D810C</string>
+            <key>type</key>
+            <string>alfred.workflow.action.script</string>
+            <key>version</key>
+            <integer>2</integer>
+        </dict>
+    </array>
+    <key>readme</key>
+    <string>Select an HTML, Markdown, text, or PDF document in Alfred, open Universal Actions, and choose “Open in Ask Widget”. Ask Widget.app must be installed.</string>
+    <key>uid</key>
+    <string>0AC863CA-840D-4C10-B916-0EEBE84C71C5</string>
+    <key>userconfigurationconfig</key>
+    <array/>
+    <key>variablesdontexport</key>
+    <array/>
+    <key>version</key>
+    <string>1.0.0</string>
+    <key>webaddress</key>
+    <string>https://github.com/cxrobx/ask-widget</string>
+</dict>
+</plist>

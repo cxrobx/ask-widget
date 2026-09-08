@@ -1,245 +1,308 @@
-# ask-widget
+# Ask Widget
 
-Highlight any text on a local HTML page, **right-click**, and get **ELI5**,
-**Prove it**, or **Ask a question…** — each answer streamed from a `claude` CLI
-call that has the **full context of a folder you point it at** (its `CLAUDE.md`
-+ files, read agentically via Read/Grep/Glob).
+Ask Widget is a local-first reading workspace for Claude Code and Codex. Open an HTML,
+Markdown, text, or PDF document; select a passage; then right-click for **ELI5**,
+**Prove it**, or **Ask a question**. Answers stream into the document and can use
+read-only evidence from a context folder you choose.
 
-It's a single drop-in `<script>` widget plus a tiny local **FastAPI** server.
-Built for the HTML artifacts produced by `~/.claude/docs/html-design/`, but it
-works on any local page.
+Version 0.5 adds a reusable local question-history workspace: inspect full saved
+answers, filter by passage, document, provider, model, or date, ask a saved
+question again, edit it before asking, or restore its answer and continue the
+visible conversation. Version 0.4 introduced subscription-backed Claude and
+Codex providers, live model catalogs, and native model selectors.
 
+```text
+selection → Ask Widget → local FastAPI service → Claude CLI (claude.ai subscription)
+                ↑              │               ↘ Codex CLI (ChatGPT subscription)
+                └──── answer, tool trace, validated citations ───────────────┘
 ```
-highlight → right-click → ELI5 / Prove it / Ask…
-        │
-        ▼
-  ask.js (widget)  ──POST /ask──▶  FastAPI server  ──▶  claude -p --add-dir <folder>
-        ▲                                                  (read-only: Read/Grep/Glob)
-        └───────────────  SSE: token / tool_status / done / error  ◀──┘
-```
 
-## Install (PEP 668 — a venv is required)
+## What it includes
 
-Homebrew Python is "externally managed", so a bare `pip install` fails. Use a venv:
+- A native **Ask Widget.app** with its own frozen Python service. The installed
+  app does not depend on this checkout, a project virtual environment, or a
+  system Python.
+- The same macOS glass material model as cxtasks: a native
+  `NSVisualEffectView`, transparent WebView, alpha-aware sidebar/content/card
+  layers, persistent System/Light/Dark themes, and a glass-level control. The
+  document reader and floating answer UI use the same translucent materials.
+- A reading library with recent documents, recent answers, search, per-document
+  reading position, and Markdown note export.
+- HTML, Markdown, plain-text, and text-based PDF readers. Trusted local HTML keeps
+  its buttons and scripts; PDF selections retain their page number for prompts
+  and evidence.
+- Streaming answers with first-activity and total timeouts, heartbeats, Stop,
+  Retry, follow-up questions, and visible Read/Grep/Glob traces.
+- A native provider selector and CLI-discovered model selectors. Claude models
+  come from the aliases advertised by the installed Claude CLI; Codex models
+  and supported reasoning efforts come from its live account model catalog.
+- Subscription-only execution. Claude must be signed in through claude.ai and
+  Codex through ChatGPT. API-key environment variables are removed and
+  non-subscription sessions are rejected to avoid metered API charges.
+- Validated evidence cards. File references are resolved inside the active
+  context folder, include nearby source lines, and can open in VS Code, Cursor,
+  or the default app.
+- A bounded, expiring local answer cache keyed by document version, model,
+  context folder, selection, and page.
+- Persistent SQLite history in WAL mode with schema versioning.
+- A dedicated, searchable History workspace with native provider, model,
+  document, date, and action filters. Saved entries can be asked again with the
+  current model, edited before asking, or restored as a visible conversation.
+- Settings for window glass, provider, model, reasoning effort, response detail, caching, history, timeouts,
+  private URL access, and trusted context roots.
+- Diagnostics for both CLI installations, both subscription sessions, the
+  selected model, database, default folder, and an optional live provider probe.
+- Native **File ▸ Open Document…**, file-association support, and a macOS
+  **Services ▸ Ask Selection with Ask Widget** action.
+- Browser-style **Command-Plus**, **Command-Minus**, and **Command-0** zoom,
+  also available from the View menu.
+- **Open in Claude/Codex** for continuing with the selected provider in a dedicated terminal session. Hold
+  Option to copy the prepared handoff prompt instead.
+
+## Install the macOS app
+
+Requirements for building: macOS 13 or newer, Xcode command-line tools, and
+Python 3.11 or newer. The built app needs at least one supported CLI installed:
+Claude Code signed into claude.ai, or Codex signed in with ChatGPT.
 
 ```bash
-cd ~/Projects/ask-widget
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-> On Python 3.14, `uvicorn[standard]`'s native extras (httptools/uvloop) may need
-> source builds. The base install above uses plain `uvicorn`, which is enough.
-> For the faster event loop: `pip install -e '.[fast]'` (only if wheels exist).
-
-## Run
-
-```bash
-./run.sh --folder ~/Projects/zora --port 8899   # binds 127.0.0.1 only
-# or:  python -m ask_widget --folder ~/Projects/zora --port 8899
-```
-
-## Run it as a Mac app
-
-A native launcher (`launcher/`) wraps the whole thing as **Ask Widget.app** — open
-it like any app; it starts the server and shows the launcher in a window.
-
-```bash
-./launcher/build-app.sh        # compiles the Swift launcher + installs to /Applications
+git clone https://github.com/cxrobx/ask-widget.git
+cd ask-widget
+./launcher/build-app.sh
 open -a "Ask Widget"
 ```
 
-The app (Swift + WKWebView, pattern from `resume-platform/launcher-swift`):
-- starts `~/Projects/ask-widget/.venv/bin/python -m ask_widget` via a login shell
-  (so the spawned server finds the `claude` binary on PATH), reusing an
-  already-running server if one is up;
-- shows the launcher in a window; **File ▸ Open Document…** and the launcher's
-  **Choose…** buttons use a real macOS `NSOpenPanel` (a native folder/file picker —
-  only available inside the app, since browsers hide absolute paths);
-- **View ▸ Open in Default Browser** hands the current page to your browser as a
-  fallback.
+The build installs `/Applications/Ask Widget.app`, refreshes macOS Services, and
+also produces:
 
-The widget is verified to work in WebKit (WKWebView), not just Chromium.
-
-## Open ANY HTML — no editing, no file:// (the `/view` launcher)
-
-The widget has to be **loaded by the page and same-origin with the server**. That's
-a problem for two common cases:
-
-- a **remote https page** you don't host (you can't add the `<script>`, and an
-  https page can't load `http://localhost/ask.js` — mixed content), and
-- a **local file opened via `file://`** (browsers block its `fetch` POST and
-  partition `localStorage`; relative assets like `../.assets/style.css` 404).
-
-So the server can re-serve any document **from localhost** with the widget already
-injected and its assets rewired. Just open the launcher:
-
-```
-http://localhost:8899/
+```text
+launcher/build/Ask-Widget-0.5.0-macOS.zip
+launcher/build/Ask-Widget-0.5.0-macOS.zip.sha256
+launcher/build/Open-in-Ask-Widget.alfredworkflow
 ```
 
-Paste a URL **or** a local file path + a context folder, hit **Open**. Or go direct:
+Use `./launcher/build-app.sh --no-install` to build without replacing the
+installed app. The prior app is staged as a backup during installation and is
+restored if the replacement fails.
 
+The launcher:
+
+- accepts only an Ask Widget service with the expected service identity and
+  protocol version;
+- starts the bundled service when no compatible service is running;
+- stops its owned service on normal quit and uses a parent-process watcher for
+  crash/force-quit cleanup;
+- waits up to 20 seconds for a healthy service and offers Retry, Open Log, and
+  Quit on failure;
+- writes service output to
+  `~/Library/Logs/Ask Widget/ask-widget.log` and rotates it at 2 MB;
+- discovers Claude and Codex through the login shell and common GUI-safe paths,
+  including NVM-installed Codex binaries;
+- provides **Ask Widget ▸ Check for Updates…** using published GitHub releases.
+
+## Run from a checkout
+
+`run.sh` creates or repairs a project-local virtual environment using the exact
+versions in `requirements-runtime.lock`.
+
+```bash
+./run.sh --folder ~/Projects/my-project --port 8899
+open http://127.0.0.1:8899/
 ```
-http://localhost:8899/view?src=<url-or-path>&folder=<context-folder>
-# e.g. a local file (fully self-contained — assets served from disk via /_fs):
-http://localhost:8899/view?src=/Users/you/Meetings/review.html&folder=/Users/you/Projects/clientX
-# e.g. a hosted share (assets pulled from the original site):
-http://localhost:8899/view?src=https://example.com/share/abc123
+
+Set `ASK_WIDGET_VENV` to keep the runtime environment elsewhere. Source code is
+loaded directly from `src/`, so normal edits do not trigger a reinstall.
+
+## Use the reader
+
+Open the app and choose a local document or paste an HTTPS URL. For a local
+document, choose the context folder containing the source material the selected provider is
+allowed to inspect.
+
+Then:
+
+1. Select a passage.
+2. Right-click the selection.
+3. Choose **ELI5**, **Prove it**, or **Ask a question…**.
+4. Review the streamed response, tool activity, and evidence cards.
+5. Ask a follow-up, open a citation, copy the answer, view prior answers for the
+   selection, or hand the conversation to the selected provider in a terminal.
+
+**Prove it** asks the selected provider to verify the passage against the selected folder and
+return a Supported, Partially supported, Not supported, or No evidence verdict.
+
+The macOS Selection Service provides the same workflow outside the reader:
+select text in another app, open its Services menu, and choose **Ask Selection
+with Ask Widget**. Ask Widget opens a temporary reading page and selects the
+shared passage automatically.
+
+### Supported documents
+
+| Source | Behavior |
+|---|---|
+| Local HTML/HTM | Re-served from localhost with authored scripts and buttons enabled; referenced local assets receive an expiring document capability. |
+| Markdown | Rendered offline by the built-in HTML-escaping renderer. |
+| Plain text | Displayed in a selectable reading view. |
+| PDF | Extracts selectable text per page with `pypdf`; page-aware citations are preserved. |
+| HTTP/HTTPS HTML | Fetched with redirect, content-type, size, and private-network checks. |
+
+PDFs that contain only scanned images need OCR before Ask Widget can select or
+reason over their text.
+
+### Open from Finder or Alfred
+
+Once the app is installed, a supported document can be opened through Finder's
+**Open With ▸ Ask Widget** menu. Ask Widget also provides **Services ▸ Open in
+Ask Widget** for HTML, Markdown, text, and PDF files. If the Service is hidden,
+enable it under **System Settings ▸ Keyboard ▸ Keyboard Shortcuts ▸ Services ▸
+Files and Folders**.
+
+For a first-class Alfred action, double-click
+`launcher/build/Open-in-Ask-Widget.alfredworkflow` and approve the import. Then
+select a supported file in Alfred, open Universal Actions (right arrow by
+default), and choose **Open in Ask Widget**.
+
+### Opening a document directly
+
+```text
+http://127.0.0.1:8899/view?src=/absolute/path/notes.md&folder=/absolute/path/project
+http://127.0.0.1:8899/view?src=https://example.com/article
 ```
 
-What `/view` does: rewrites `<link>/<script>/<img>` asset refs to absolute (local →
-a read-only `/_fs/<path>` route, remote → the original site), strips `<base>`/CSP
-that would break same-origin anchors or block the widget, injects the widget, and
-(if you pass `&folder=`) pre-seeds the context folder. The page ends up same-origin
-with the server, so no mixed content and no `file://` fragility. **Prefer a local
-path when you have the file** — it's fully self-contained (assets from disk, works
-offline); a remote `src` may drop the odd access-protected asset.
+The reader makes the page same-origin with the local service, rewrites referenced
+assets, removes the source page's CSP, and injects the widget. Trusted local HTML
+retains authored scripts and inline handlers under a local-only connection policy;
+remote HTML has its scripts removed. This avoids `file://` fetch and storage
+restrictions while keeping downloaded web pages inert.
 
-## Or embed it yourself
+Because local HTML runs with the local reader origin, open interactive HTML only
+when you trust its contents, just as you would before running a local script.
 
-In a local HTML file you control, before `</body>`:
+For a trusted page you control, the original standalone embed still works:
 
 ```html
-<script src="http://localhost:8899/ask.js"></script>
+<script src="http://127.0.0.1:8899/ask.js"></script>
 ```
 
-(then serve that file over http — see below — not `file://`).
+Serve the page over HTTP rather than `file://` for predictable browser behavior.
 
-**Serve the page over http**, not `file://`:
+## Library, storage, and settings
 
-```bash
-cd /folder/with/your.html && python3 -m http.server 9000
-# open http://localhost:9000/your.html
+The app stores its database at:
+
+```text
+~/Library/Application Support/Ask Widget/ask-widget.db
 ```
 
-`file://` works for loading the script, but browsers may block its `fetch` POST
-to localhost and partition `localStorage`. The widget shows a hint when it
-detects `file://`.
+Saved data includes settings, trusted roots, recent documents, reading
+positions, requests, answers, citations, tool traces, errors, timing, and links
+between original questions, reruns, edits, and continuations. Open **History**
+to search or reuse them. Turn off **Save reading history** in Settings to stop
+persisting new conversations.
+Browser/WKWebView answer-cache entries live in local storage and obey the cache
+TTL and maximum-entry settings.
 
-### Try the bundled demo
-
-A ready-made test page lives at `examples/testdoc.html` (it already includes the
-`<script>` line). Run the server pointed at this project, then serve the example:
-
-```bash
-./run.sh --folder ~/Projects/ask-widget --port 8899        # terminal 1
-cd examples && python3 -m http.server 9000                 # terminal 2
-# open http://localhost:9000/testdoc.html
-```
-
-It contains a deliberately false claim ("binds to `0.0.0.0`") so **Prove it**
-can grep this repo's real source and return *Not supported* with file citations.
-See `docs/screenshots/` for what each action looks like.
-
-## Using it
-
-- **Highlight** text, then **right-click** → a small menu appears with
-  **ELI5 / Prove it / Ask a question…**. (No selection → your browser's normal
-  right-click menu.)
-- **ELI5** — plain-language explanation of the passage.
-- **Prove it** — Claude greps the context folder for evidence and returns a
-  verdict (Supported / Partially / Not supported / No evidence) with file-path
-  citations. Great for fact-checking a doc against its own source.
-- **Ask a question…** — free-form question about the passage.
-- **Open in Claude** (button in the answer panel) — hands the passage + question +
-  answer off to a **dedicated `claude` session in a terminal**, `cd`'d into the
-  context folder (so it opens with that folder's `CLAUDE.md` + file access). Opens
-  Ghostty if installed, else Terminal. **Hold ⌥ Option** and the button becomes
-  **Copy Claude prompt** — it copies the seed prompt to the clipboard instead of
-  launching, so you can paste it into a session you open yourself. (Same pattern as
-  cxmail's "Open in Claude".)
-- The **folder pill** (top-right) shows the active context folder. Click it to
-  switch folders or pick a recent one. The choice persists in `localStorage` and
-  is sent with every request.
-
-## CLI flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--folder DIR` | `~/Projects` | Default context folder Claude reads. |
-| `--port N` | `8899` | Server port. |
-| `--host H` | `127.0.0.1` | Bind host. Keep it loopback. |
-| `--model M` | `sonnet` | Passed to `claude --model`. |
-| `--allow-root DIR` | — | Extra allowed root (repeatable). Default root: `~/Projects`. |
-| `--allow-any` | off | Loud escape hatch: allow any directory (disables the folder allowlist). |
-
-The macOS launcher app also reads optional extra roots from
-`~/.config/ask-widget/allow-roots` (one path per line, `~` allowed, `#` comments)
-and passes each as `--allow-root`.
+Additional trusted roots can be managed in Settings. The launcher also reads
+`~/.config/ask-widget/allow-roots` at startup for compatibility; use one path per
+line, with `~` expansion and `#` comments supported.
 
 ## Security model
 
-The server spawns a `claude` process and reads folders, so it defends against
-drive-by pages and DNS-rebinding. All checks are on `POST /ask`:
+Ask Widget can invoke Claude or Codex against local files, so the local HTTP boundary is
+deliberately narrow:
 
-1. **Loopback bind** — `127.0.0.1` only.
-2. **Host header check** — must be `127.0.0.1:<port>`/`localhost:<port>` (blocks
-   DNS-rebinding, where a malicious domain resolves to 127.0.0.1).
-3. **Origin allowlist** — `null` (file://), `http(s)://localhost[:*]`,
-   `http(s)://127.0.0.1[:*]`. Not `*`. (`*` stays only on `GET /ask.js` so the
-   `<script>` tag can load anywhere.)
-4. **Per-server token** — a random secret baked into `ask.js` at serve time and
-   required in the `/ask` body. Defense-in-depth behind Origin + Host.
-5. **Folder allowlist** — the requested folder is `resolve()`d (symlinks
-   followed) and must be `is_relative_to` an allowed root.
-6. **Read-only tools** — `--allowedTools Read Grep Glob` +
-   `--disallowedTools Bash Edit Write NotebookEdit` (disallow wins).
+1. The service binds to `127.0.0.1` by default.
+2. Host headers must be `127.0.0.1:<port>` or `localhost:<port>` to block DNS
+   rebinding.
+3. Browser origins are limited to local origins and `file://`'s `null` origin.
+4. A random per-process token is embedded in `ask.js` and required by all
+   mutations and provider actions.
+5. Context folders are resolved through symlinks and must remain under a trusted
+   root unless the explicit `--allow-any` escape hatch is used.
+6. Claude is restricted to Read, Grep, and Glob. Codex runs headlessly with a
+   read-only sandbox, no approvals, no user rules, and optional tool/plugin
+   features disabled.
+7. Remote fetches reject credentials, non-HTML content, responses over 12 MB,
+   and private, loopback, link-local, reserved, or multicast addresses unless
+   private URLs are explicitly enabled.
+8. Local document assets use unguessable capabilities that expire after eight
+   hours and are bounded to the 32 most recently opened documents. JSON and
+   source-map assets are never served.
+9. Remote HTML scripts and inline handlers are removed. Trusted local HTML may
+   run its authored scripts, but script connections stay restricted to the local
+   service; plugins and base-URL changes remain blocked.
+10. File citations are displayed only after canonicalizing them and proving they
+    exist inside the active context folder.
 
-Every refusal comes back as `event: error` on a 200 SSE stream so the widget can
-show it inline.
+Both executables are launched directly, not through an interactive shell.
+Before launch, Anthropic/OpenAI API-key and alternate-provider environment
+variables are removed so the verified subscription session is used.
 
-### `/view` and `/_fs` (the launcher)
+## CLI options
 
-Re-serving a document same-origin is powerful, so `/view` is hardened against
-opening a hostile URL (an adversarial review found — and this closes — a
-secret-exfiltration chain here):
+| Flag | Default | Purpose |
+|---|---|---|
+| `--folder DIR` | `~/Projects` | Default context folder. |
+| `--port N` | `8899` | Local service port. |
+| `--host H` | `127.0.0.1` | Bind address; keep this loopback. |
+| `--model M` | `sonnet` | Initial Claude model before saved settings override it. |
+| `--allow-root DIR` | — | Add a trusted context root; repeatable. |
+| `--allow-any` | off | Allow any readable directory. This disables the root boundary. |
+| `--data-dir DIR` | app support | Override database location for development/tests. |
 
-- **The viewed document's own `<script>` tags are stripped**, and `/view` sets a
-  `Content-Security-Policy` (`script-src 'self'; connect-src 'self'`). So a page
-  you open via `/view` can't run its own JS to
-  read `/_fs` or drive `/ask`. (Trade-off: a doc loses its own interactivity —
-  e.g. an auto-generated table of contents — when viewed this way. To keep a
-  trusted local doc's scripts, embed `ask.js` in it directly instead.)
-- **`/_fs` only serves the exact asset files a local document referenced** — it is
-  not a general home-directory reader. A page opened from a remote URL registers
-  no local files, so it can't pull `~/.claude.json` / `~/.docker/config.json`.
-  `.json`/`.map` are not served at all.
-- `/view` and `/_fs` enforce the same **Host-header check** as `/ask`, and local
-  `/view` only opens `.html`/`.htm` files.
+## Development and verification
 
-> The shell `claude` is a zsh function that injects `--dangerously-skip-permissions`.
-> The server calls the **bare binary** (no function), so it runs with the
-> read-only tool lock above. Test read-only behavior with `command claude`, not
-> the shell `claude`.
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-test.lock
+PYTHONPATH=src .venv/bin/python -W error -m unittest discover -s tests -v
 
-## Notes & limits
+.venv/bin/python -m pip install -r requirements-browser.lock
+.venv/bin/python -m playwright install chromium
+PYTHONPATH=src .venv/bin/python -m unittest tests.browser_smoke -v
 
-- **Stateless** — no `--session-id` / `--resume` in v1. A follow-up "Ask" is a
-  fresh call; to continue a thread, the previous answer would need to be resent
-  as part of the context (not yet wired in the UI). This sidesteps plex-agent's
-  "Session ID already in use" lock.
-- **Markdown is rendered by a built-in renderer** (no CDN, works offline). It
-  escapes all text first and then only adds its own tags, so "Prove it" reflecting
-  raw file contents into the page is XSS-safe by construction — no DOMPurify needed.
-- **Concurrency** — each `/ask` is its own `claude` process; an in-process
-  semaphore caps it at 3 and returns a friendly `event: error` on overflow.
-- **Latency** — first token ~2-3s; the panel shows "Thinking…" then tool pills.
-  A 120s timeout bounds the worst case.
+swiftc -typecheck -framework Cocoa -framework WebKit \
+  -framework UniformTypeIdentifiers launcher/AskWidget.swift
+plutil -lint launcher/Info.plist
 
-## Layout
-
+./launcher/build-app.sh --no-install
+./scripts/smoke-bundle.sh
 ```
+
+CI runs the Python suite on Python 3.11 and 3.14, type-checks the Swift launcher,
+validates the plist, builds the frozen service, and smoke-tests its health and
+configuration contracts.
+
+For a distributable release, provide a Developer ID identity and optional
+notarytool keychain profile:
+
+```bash
+ASK_WIDGET_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
+ASK_WIDGET_NOTARY_PROFILE="ask-widget-notary" \
+./launcher/build-app.sh --no-install
+```
+
+Without those variables, the script creates a verified ad-hoc-signed local
+build.
+
+## Project layout
+
+```text
 ask-widget/
-├── pyproject.toml
-├── run.sh
-├── README.md
+├── launcher/                 native Swift app and release build
+├── scripts/                  bundled-service smoke test
 ├── src/ask_widget/
-│   ├── __main__.py       # argparse + uvicorn.run
-│   ├── app.py            # FastAPI routes + Origin/Host/token/folder security
-│   ├── claude_runner.py  # subprocess spawn + stream-json → SSE parser
-│   ├── prompts.py        # 3 prompt templates + per-action system prompts
-│   └── config.py         # frozen AppConfig + folder allowlist
-└── static/ask.js         # the entire widget (one file)
+│   ├── app.py                HTTP API, capabilities, persistence orchestration
+│   ├── claude_runner.py      Claude process lifecycle and SSE translation
+│   ├── codex_runner.py       Codex headless JSONL lifecycle and SSE translation
+│   ├── citations.py          evidence validation and source opening
+│   ├── diagnostics.py        provider/runtime/database diagnostics
+│   ├── launcher_ui.py        library, settings, and diagnostics UI
+│   ├── providers.py          subscription auth and live model discovery
+│   ├── runner.py             subscription-only provider dispatch
+│   ├── storage.py            SQLite schema and queries
+│   └── viewer.py             secure HTML/Markdown/text/PDF readers
+├── static/ask.js             selection UI and streamed answer panel
+├── tests/                    API, security, storage, viewer, and runner tests
+└── requirements-*.lock       exact runtime, build, and test environments
 ```

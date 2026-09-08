@@ -3,8 +3,9 @@
  * Drop this on any local HTML page:
  *   <script src="http://localhost:8899/ask.js"></script>
  *
- * Highlight text, right-click -> ELI5 / Prove it / Ask a question. Each answer
- * streams from a `claude` CLI call on the local server with full context of a
+ * Highlight text, then use the nearby Ask button or right-click for ELI5 /
+ * Prove it / Ask a question. Each answer
+ * streams from a subscription-backed provider CLI on the local server with full context of a
  * folder you point it at. Single self-contained file (no CDN/deps): it injects
  * its own CSS, renders Markdown with a built-in renderer, and builds all DOM
  * under <body>.
@@ -30,51 +31,59 @@
   var folder = null;
   var defaultFolder = null;
   var recentFolders = [];
+  var serverConfig = { version: 'unknown', provider: 'claude', model: 'sonnet', reasoning_effort: 'medium', cache_ttl_hours: 168, cache_max_entries: 100 };
+  var appearanceTheme = 'system';
   var sel = null;              // { text, context, rect }
   var abort = null;            // AbortController for the active stream
   var activeAction = null;     // 'eli5' | 'prove' | 'ask'
   var userPinned = false;      // user dragged/resized the panel → stop auto-positioning
   var isFileProto = window.location.protocol === 'file:';
-  var lastAnswer = '', lastAction = null, lastQuestion = '';   // for "Open in Claude"
+  var lastAnswer = '', lastAction = null, lastQuestion = '';   // for provider handoff
   var transcript = [];         // completed turns: { role:'user'|'assistant', text }
   var liveEl = null;           // the .askw-a element receiving the current stream
   var streaming = false;       // a /ask stream is in flight (defer live-reload while true)
+  var currentRequestId = null, lastRequestBody = null, lastCacheKey = null;
+  var currentRequestMode = 'generated', historyOrigin = null;
+  var requestCitations = [], requestTrace = [];
   // ---- live reload (only on /view pages, which seed askw-src) ----
   var reloadSrc = null, reloadSig = null, reloadSeen = null, reloadPending = false;
 
   // ---- DOM refs ----
-  var menuEl, askWrap, askInput;
-  var panelEl, panelTitle, panelSel, panelTools, panelBody, claudeBtn;
+  var triggerEl, menuEl, askWrap, askInput;
+  var panelEl, panelTitle, panelSel, panelTools, panelBody, claudeBtn, stopBtn, retryBtn, historyBtn;
   var followWrap, followInput, followGo;
   var pillEl, pillLabel, pickerEl, toastEl;
 
   // ============================================================ styles
   var CSS = [
-    '.askw-root{all:revert;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1c1917;line-height:1.5;}',
+    '.askw-root{all:revert;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",sans-serif;color:#0d0d0d;line-height:1.5;-webkit-font-smoothing:antialiased;--askw-accent:#3a83f7;--askw-accent-hover:#2c67c5;--askw-line:rgba(0,0,0,.10);--askw-soft:rgba(0,0,0,.055);}',
     '.askw-root *{box-sizing:border-box;}',
-    '.askw-menu{position:fixed;z-index:2147483600;display:none;min-width:190px;background:#fff;border:1px solid #e7e5e4;border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px;font-size:13px;}',
-    '.askw-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;cursor:pointer;color:#292524;user-select:none;}',
-    '.askw-item:hover{background:#f5f5f4;}',
+    '.askw-menu{position:fixed;z-index:2147483600;display:none;min-width:190px;background:rgba(255,255,255,.82);border:1px solid var(--askw-line);border-radius:11px;box-shadow:0 20px 55px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.65);backdrop-filter:blur(24px) saturate(1.35);-webkit-backdrop-filter:blur(24px) saturate(1.35);padding:6px;font-size:13px;}',
+    '.askw-trigger{position:fixed;z-index:2147483598;display:none;align-items:center;gap:5px;padding:5px 10px;border:1px solid rgba(255,255,255,.28);border-radius:999px;background:var(--askw-accent);color:#fff;box-shadow:0 10px 28px rgba(0,0,0,.20);font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;cursor:pointer;}',
+    '.askw-trigger:hover{background:var(--askw-accent-hover);}',
+    '.askw-item{display:flex;width:100%;align-items:center;gap:8px;padding:8px 10px;border:0;border-radius:7px;background:transparent;font:inherit;text-align:left;cursor:pointer;color:#0d0d0d;user-select:none;}',
+    '.askw-item:hover{background:rgba(13,13,13,.07);}',
+    '.askw-trigger:focus-visible,.askw-item:focus-visible,.askw-pill:focus-visible,.askw-x:focus-visible,.askw-follow-go:focus-visible,.askw-foot button:focus-visible,.askw-ask-go:focus-visible,.askw-picker button:focus-visible{outline:2px solid var(--askw-accent);outline-offset:2px;}',
     '.askw-item .askw-ico{width:16px;text-align:center;opacity:.75;}',
-    '.askw-ask-wrap{display:none;padding:6px 6px 4px;border-top:1px solid #f0efed;margin-top:4px;}',
+    '.askw-ask-wrap{display:none;padding:6px 6px 4px;border-top:1px solid var(--askw-soft);margin-top:4px;}',
     '.askw-ask-wrap.open{display:block;}',
-    '.askw-ask-input{width:100%;min-height:54px;resize:vertical;border:1px solid #d6d3d1;border-radius:7px;padding:7px 9px;font:inherit;font-size:13px;color:#1c1917;outline:none;}',
-    '.askw-ask-input:focus{border-color:#c2410c;}',
-    '.askw-ask-go{margin-top:6px;float:right;background:#c2410c;color:#fff;border:none;border-radius:7px;padding:6px 14px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;}',
+    '.askw-ask-input{width:100%;min-height:54px;resize:vertical;border:1px solid var(--askw-line);border-radius:7px;background:#fff;padding:7px 9px;font:inherit;font-size:13px;color:#0d0d0d;outline:none;}',
+    '.askw-ask-input:focus{border-color:var(--askw-accent);box-shadow:0 0 0 2px rgba(58,131,247,.18);}',
+    '.askw-ask-go{margin-top:6px;float:right;background:var(--askw-accent);color:#fff;border:none;border-radius:7px;padding:6px 14px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;}',
     '.askw-ask-go:disabled{opacity:.45;cursor:not-allowed;}',
-    '.askw-panel{position:fixed;z-index:2147483601;display:none;width:' + PANEL_W + 'px;height:auto;min-width:300px;min-height:180px;max-width:96vw;max-height:92vh;background:#fffdfb;border:1px solid #e7e5e4;border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.22);overflow:hidden;flex-direction:column;resize:both;}',
+    '.askw-panel{position:fixed;z-index:2147483601;display:none;width:' + PANEL_W + 'px;height:auto;min-width:300px;min-height:180px;max-width:96vw;max-height:92vh;background:rgba(252,252,252,.88);border:1px solid var(--askw-line);border-radius:15px;box-shadow:0 26px 70px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.72);backdrop-filter:blur(28px) saturate(1.28);-webkit-backdrop-filter:blur(28px) saturate(1.28);overflow:hidden;flex-direction:column;resize:both;}',
     '.askw-panel.open{display:flex;}',
-    '.askw-head{padding:13px 40px 11px 15px;border-bottom:1px solid #f0efed;position:relative;flex:0 0 auto;cursor:move;user-select:none;}',
-    '.askw-eyebrow{font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:#c2410c;margin:0 0 3px;}',
-    '.askw-selq{font-size:12.5px;color:#57534e;margin:0;max-height:46px;overflow:hidden;}',
+    '.askw-head{padding:13px 40px 11px 15px;border-bottom:1px solid var(--askw-soft);background:rgba(255,255,255,.28);position:relative;flex:0 0 auto;cursor:move;user-select:none;}',
+    '.askw-eyebrow{font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--askw-accent);margin:0 0 3px;}',
+    '.askw-selq{font-size:12.5px;color:#5d5d5d;margin:0;max-height:46px;overflow:hidden;}',
     '.askw-x{position:absolute;top:9px;right:9px;width:26px;height:26px;border:none;background:transparent;color:#a8a29e;font-size:17px;line-height:1;border-radius:6px;cursor:pointer;}',
-    '.askw-x:hover{background:#f5f5f4;color:#44403c;}',
+    '.askw-x:hover{background:rgba(13,13,13,.07);color:#0d0d0d;}',
     '.askw-tools{display:flex;flex-wrap:wrap;gap:6px;padding:9px 15px 0;flex:0 0 auto;}',
-    '.askw-pillt{display:inline-flex;align-items:center;gap:5px;background:rgba(194,65,12,.09);color:#9a3412;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:999px;}',
-    '.askw-dot{width:6px;height:6px;border-radius:50%;background:#ea580c;animation:askw-pulse 1.1s infinite;}',
+    '.askw-pillt{display:inline-flex;align-items:center;gap:5px;background:rgba(58,131,247,.11);color:#2c67c5;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:999px;}',
+    '.askw-dot{width:6px;height:6px;border-radius:50%;background:var(--askw-accent);animation:askw-pulse 1.1s infinite;}',
     '@keyframes askw-pulse{0%,100%{opacity:.35}50%{opacity:1}}',
-    '.askw-body{padding:12px 15px 15px;overflow-y:auto;font-size:14px;line-height:1.55;color:#292524;flex:1 1 auto;min-height:0;}',
-    '.askw-q{margin:15px 0 9px;padding:7px 11px;background:#faf7f4;border:1px solid #f1e7dd;border-radius:9px;font-size:13px;color:#57534e;white-space:pre-wrap;}',
+    '.askw-body{padding:12px 15px 15px;overflow-y:auto;font-size:14px;line-height:1.55;color:#0d0d0d;flex:1 1 auto;min-height:0;}',
+    '.askw-q{margin:15px 0 9px;padding:7px 11px;background:rgba(255,255,255,.56);border:1px solid var(--askw-soft);border-radius:9px;font-size:13px;color:#5d5d5d;white-space:pre-wrap;}',
     '.askw-q:first-child{margin-top:1px;}',
     '.askw-a{font-size:14px;}',
     '.askw-body p{margin:0 0 9px;}.askw-body p:last-child{margin-bottom:0;}',
@@ -83,38 +92,66 @@
     '.askw-body pre{background:#1c1917;color:#fafaf9;border-radius:8px;padding:11px 13px;overflow-x:auto;font-size:12.5px;}',
     '.askw-body pre code{background:transparent;color:inherit;padding:0;}',
     '.askw-body h1,.askw-body h2,.askw-body h3{font-size:14.5px;margin:12px 0 6px;font-weight:700;}',
-    '.askw-body a{color:#c2410c;}',
+    '.askw-body a{color:var(--askw-accent);}',
     '.askw-fallback{white-space:pre-wrap;}',
     '.askw-think{display:flex;align-items:center;gap:8px;color:#78716c;font-size:13px;}',
     '.askw-err{color:#b91c1c;font-size:13px;}',
-    '.askw-foot{display:flex;justify-content:flex-end;gap:8px;padding:8px 13px;border-top:1px solid #f0efed;flex:0 0 auto;}',
-    '.askw-foot button{background:#f5f5f4;border:1px solid #e7e5e4;border-radius:7px;padding:5px 11px;font:inherit;font-size:12px;color:#44403c;cursor:pointer;}',
-    '.askw-foot button:hover{background:#eceae8;}',
-    '.askw-foot .askw-claude{background:#c2410c;border-color:#c2410c;color:#fff;margin-right:auto;}',
-    '.askw-foot .askw-claude:hover{background:#9a3412;}',
+    '.askw-request-meta{color:#a8a29e;font-size:10px;margin:6px 0 0;}',
+    '.askw-origin{margin:8px 0;padding:6px 9px;border-radius:7px;background:rgba(58,131,247,.09);color:#2c67c5;font-size:10.5px;font-weight:600;}',
+    '.askw-history-entry{margin:0 0 13px;padding:11px;border:1px solid var(--askw-line);border-radius:10px;background:rgba(255,255,255,.28);}',
+    '.askw-history-entry .askw-q{margin-top:0}.askw-history-meta{margin:8px 0 0;color:#a8a29e;font-size:10px}.askw-history-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.askw-history-actions button{border:1px solid var(--askw-line);border-radius:7px;background:rgba(255,255,255,.76);color:#5d5d5d;padding:5px 8px;font:inherit;font-size:10.5px;cursor:pointer}.askw-history-actions button:first-child{background:var(--askw-accent);border-color:var(--askw-accent);color:#fff}',
+    '.askw-citations{margin:14px 0 2px;padding-top:10px;border-top:1px solid var(--askw-soft);}',
+    '.askw-citations-title{margin:0 0 7px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#78716c;}',
+    '.askw-citation{display:block;width:100%;margin:5px 0;padding:7px 9px;border:1px solid var(--askw-line);border-radius:7px;background:rgba(255,255,255,.62);color:#2c67c5;text-align:left;font:inherit;font-size:11.5px;cursor:pointer;}',
+    '.askw-citation:hover{background:#fff}.askw-citation pre{display:none;margin:7px 0 0;white-space:pre-wrap;color:#5d5d5d;background:#f7f7f7;padding:7px;font-size:10px}.askw-citation.expanded pre{display:block}',
+    '.askw-foot{display:flex;justify-content:flex-end;gap:8px;padding:8px 13px;border-top:1px solid var(--askw-soft);background:rgba(255,255,255,.22);flex:0 0 auto;}',
+    '.askw-foot button{background:rgba(255,255,255,.78);border:1px solid var(--askw-line);border-radius:7px;padding:5px 11px;font:inherit;font-size:12px;color:#5d5d5d;cursor:pointer;}',
+    '.askw-foot button:hover{background:#fff;color:#0d0d0d;}',
+    '.askw-foot .askw-claude{background:var(--askw-accent);border-color:var(--askw-accent);color:#fff;margin-right:auto;}',
+    '.askw-foot .askw-claude:hover{background:var(--askw-accent-hover);}',
     '.askw-foot .askw-claude:disabled{opacity:.55;cursor:default;}',
-    '.askw-followup{display:none;align-items:flex-end;gap:7px;padding:9px 13px;border-top:1px solid #f0efed;flex:0 0 auto;}',
-    '.askw-follow-input{flex:1 1 auto;resize:none;max-height:96px;min-height:34px;border:1px solid #d6d3d1;border-radius:9px;padding:7px 10px;font:inherit;font-size:13px;color:#1c1917;outline:none;line-height:1.4;}',
-    '.askw-follow-input:focus{border-color:#c2410c;}',
+    '.askw-foot .askw-stop{display:none;color:#b91c1c}.askw-foot .askw-retry{display:none;color:#2c67c5}',
+    '.askw-followup{display:none;align-items:flex-end;gap:7px;padding:9px 13px;border-top:1px solid var(--askw-soft);background:rgba(255,255,255,.2);flex:0 0 auto;}',
+    '.askw-follow-input{flex:1 1 auto;resize:none;max-height:96px;min-height:34px;border:1px solid var(--askw-line);border-radius:9px;background:#fff;padding:7px 10px;font:inherit;font-size:13px;color:#0d0d0d;outline:none;line-height:1.4;}',
+    '.askw-follow-input:focus{border-color:var(--askw-accent);box-shadow:0 0 0 2px rgba(58,131,247,.18);}',
     '.askw-follow-input:disabled{opacity:.55;background:#fafaf9;}',
-    '.askw-follow-go{flex:0 0 auto;width:34px;height:34px;background:#c2410c;color:#fff;border:none;border-radius:9px;font-size:15px;line-height:1;cursor:pointer;}',
-    '.askw-follow-go:hover{background:#9a3412;}',
+    '.askw-follow-go{flex:0 0 auto;width:34px;height:34px;background:var(--askw-accent);color:#fff;border:none;border-radius:9px;font-size:15px;line-height:1;cursor:pointer;}',
+    '.askw-follow-go:hover{background:var(--askw-accent-hover);}',
     '.askw-follow-go:disabled{opacity:.4;cursor:not-allowed;}',
-    '.askw-toast{position:fixed;bottom:24px;left:50%;z-index:2147483603;background:#1c1917;color:#fafaf9;padding:9px 16px;border-radius:10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.3);opacity:0;pointer-events:none;transform:translateX(-50%) translateY(8px);transition:opacity .15s,transform .15s;}',
+    '.askw-toast{position:fixed;bottom:24px;left:50%;z-index:2147483603;background:rgba(28,28,28,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:#fff;padding:9px 16px;border:1px solid rgba(255,255,255,.1);border-radius:10px;font-size:13px;box-shadow:0 12px 34px rgba(0,0,0,.28);opacity:0;pointer-events:none;transform:translateX(-50%) translateY(8px);transition:opacity .15s,transform .15s;}',
     '.askw-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}',
-    '.askw-pill{position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;gap:6px;max-width:240px;background:rgba(255,253,251,.95);border:1px solid #e7e5e4;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.12);padding:5px 11px;font-size:11.5px;color:#57534e;cursor:pointer;}',
-    '.askw-pill .askw-ico{color:#c2410c;}',
-    '.askw-pill b{color:#1c1917;font-weight:600;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-    '.askw-picker{position:fixed;top:42px;right:12px;z-index:2147483602;display:none;width:300px;background:#fff;border:1px solid #e7e5e4;border-radius:12px;box-shadow:0 14px 38px rgba(0,0,0,.2);padding:10px;font-size:12.5px;}',
+    '.askw-pill{position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;gap:6px;max-width:240px;background:rgba(255,255,255,.78);border:1px solid var(--askw-line);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.13),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);padding:5px 11px;font-size:11.5px;color:#5d5d5d;cursor:pointer;}',
+    '.askw-pill .askw-ico{color:var(--askw-accent);}',
+    '.askw-pill b{color:#0d0d0d;font-weight:600;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.askw-picker{position:fixed;top:42px;right:12px;z-index:2147483602;display:none;width:300px;background:rgba(255,255,255,.86);border:1px solid var(--askw-line);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.19),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(24px) saturate(1.32);-webkit-backdrop-filter:blur(24px) saturate(1.32);padding:10px;font-size:12.5px;}',
     '.askw-picker.open{display:block;}',
     '.askw-picker label{display:block;font-weight:600;color:#44403c;margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;}',
-    '.askw-picker input{width:100%;border:1px solid #d6d3d1;border-radius:7px;padding:7px 9px;font:inherit;font-size:12.5px;outline:none;}',
-    '.askw-picker input:focus{border-color:#c2410c;}',
+    '.askw-picker input{width:100%;border:1px solid var(--askw-line);border-radius:7px;background:#fff;color:#0d0d0d;padding:7px 9px;font:inherit;font-size:12.5px;outline:none;}',
+    '.askw-picker input:focus{border-color:var(--askw-accent);box-shadow:0 0 0 2px rgba(58,131,247,.18);}',
+    '.askw-picker-row{display:flex;gap:6px}.askw-picker-browse{display:none;white-space:nowrap;border:1px solid #d6d3d1;border-radius:7px;background:#fff;padding:0 9px;font:inherit;font-size:11px}.askw-native .askw-picker-browse{display:block}',
     '.askw-recent{margin-top:8px;max-height:160px;overflow-y:auto;}',
-    '.askw-recent-item{padding:6px 8px;border-radius:6px;cursor:pointer;color:#44403c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-    '.askw-recent-item:hover{background:#f5f5f4;}',
+    '.askw-recent-item{display:block;width:100%;padding:6px 8px;border:0;border-radius:6px;background:transparent;font:inherit;text-align:left;cursor:pointer;color:#44403c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.askw-recent-item:hover{background:rgba(13,13,13,.07);}',
     '.askw-hint{margin-top:8px;color:#a16207;font-size:11px;line-height:1.4;}',
-    '.askw-picker-save{margin-top:8px;width:100%;background:#c2410c;color:#fff;border:none;border-radius:7px;padding:7px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;}'
+    '.askw-picker-save{margin-top:8px;width:100%;background:var(--askw-accent);color:#fff;border:none;border-radius:7px;padding:7px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;}',
+    'html[data-askw-color="dark"] .askw-root{color:#fff;--askw-line:rgba(255,255,255,.15);--askw-soft:rgba(255,255,255,.07);}',
+    'html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:rgba(35,35,35,.84);box-shadow:0 26px 70px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.10);}',
+    'html[data-askw-color="dark"] .askw-pill{background:rgba(35,35,35,.78);box-shadow:0 12px 34px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.10);}',
+    'html[data-askw-color="dark"] .askw-item,html[data-askw-color="dark"] .askw-body,html[data-askw-color="dark"] .askw-pill b{color:#fff;}',
+    'html[data-askw-color="dark"] .askw-selq,html[data-askw-color="dark"] .askw-q,html[data-askw-color="dark"] .askw-foot button,html[data-askw-color="dark"] .askw-pill,html[data-askw-color="dark"] .askw-picker label,html[data-askw-color="dark"] .askw-recent-item{color:#cdcdcd;}',
+    'html[data-askw-color="dark"] .askw-head,html[data-askw-color="dark"] .askw-foot,html[data-askw-color="dark"] .askw-followup{background:rgba(15,15,15,.22);}',
+    'html[data-askw-color="dark"] .askw-item:hover,html[data-askw-color="dark"] .askw-x:hover,html[data-askw-color="dark"] .askw-recent-item:hover{background:rgba(255,255,255,.10);color:#fff;}',
+    'html[data-askw-color="dark"] .askw-ask-input,html[data-askw-color="dark"] .askw-follow-input,html[data-askw-color="dark"] .askw-picker input,html[data-askw-color="dark"] .askw-picker-browse{background:rgba(45,45,45,.92);border-color:var(--askw-line);color:#fff;}',
+    'html[data-askw-color="dark"] .askw-q,html[data-askw-color="dark"] .askw-citation,html[data-askw-color="dark"] .askw-foot button{background:rgba(45,45,45,.72);}',
+    'html[data-askw-color="dark"] .askw-history-entry{background:rgba(45,45,45,.42)}html[data-askw-color="dark"] .askw-history-actions button{background:rgba(45,45,45,.78);color:#cdcdcd}',
+    'html[data-askw-color="dark"] .askw-foot button:hover,html[data-askw-color="dark"] .askw-citation:hover{background:rgba(58,58,58,.94);color:#fff;}',
+    'html[data-askw-color="dark"] .askw-body code{background:rgba(255,255,255,.09);}',
+    'html[data-askw-color="dark"] .askw-citation pre{background:#181818;color:#cdcdcd;}',
+    'html[data-askw-color="dark"] .askw-follow-input:disabled{background:#242424;}',
+    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-menu,.askw-panel,.askw-picker,.askw-pill{background:#fff}}',
+    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker,html[data-askw-color="dark"] .askw-pill{background:#242424}}',
+    '@media(prefers-reduced-transparency:reduce){.askw-menu,.askw-panel,.askw-picker,.askw-pill{background:rgba(255,255,255,.98);backdrop-filter:none;-webkit-backdrop-filter:none}html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker,html[data-askw-color="dark"] .askw-pill{background:rgba(36,36,36,.98)}}',
+    '@media(prefers-reduced-motion:reduce){.askw-dot{animation:none}.askw-toast{transition:none}}'
   ].join('\n');
 
   function injectStyle() {
@@ -217,24 +254,49 @@
     if (!text) return null;
     var range = s.getRangeAt(0);
     if (isOurs(range.commonAncestorContainer)) return null;
+    var selectedNode = range.commonAncestorContainer;
+    if (selectedNode && selectedNode.nodeType === 3) selectedNode = selectedNode.parentElement;
+    var pageEl = selectedNode && selectedNode.closest ? selectedNode.closest('[data-askw-page]') : null;
     return {
       text: text.slice(0, MAX_SEL),
       context: surroundingContext(range),
-      rect: range.getBoundingClientRect()
+      rect: range.getBoundingClientRect(),
+      page: pageEl ? Number(pageEl.getAttribute('data-askw-page')) || null : null
     };
   }
 
   // ============================================================ build DOM
   function build() {
+    // --- automatic selection affordance ---
+    triggerEl = document.createElement('button');
+    triggerEl.type = 'button';
+    triggerEl.className = 'askw-root askw-trigger';
+    triggerEl.setAttribute('aria-label', 'Ask about the selected text');
+    triggerEl.setAttribute('aria-hidden', 'true');
+    triggerEl.title = 'Ask about this selection (Command or Control + Shift + A)';
+    triggerEl.innerHTML = '<span aria-hidden="true">✦</span> Ask';
+    document.body.appendChild(triggerEl);
+    triggerEl.addEventListener('click', function () {
+      var captured = captureFromSelection();
+      if (captured) sel = captured;
+      if (!sel) return;
+      var rect = triggerEl.getBoundingClientRect();
+      showMenu(rect.left, rect.bottom + 6);
+    });
+
     // --- context menu ---
     menuEl = document.createElement('div');
     menuEl.className = 'askw-root askw-menu';
+    menuEl.setAttribute('role', 'dialog');
+    menuEl.setAttribute('aria-label', 'Ask about selected text');
+    menuEl.setAttribute('aria-modal', 'false');
+    menuEl.setAttribute('aria-hidden', 'true');
     menuEl.innerHTML =
-      '<div class="askw-item" data-act="eli5"><span class="askw-ico">○</span>ELI5</div>' +
-      '<div class="askw-item" data-act="prove"><span class="askw-ico">✓</span>Prove it</div>' +
-      '<div class="askw-item" data-act="ask"><span class="askw-ico">…</span>Ask a question…</div>' +
-      '<div class="askw-ask-wrap"><textarea class="askw-ask-input" placeholder="Ask about the highlighted text…"></textarea>' +
-      '<button class="askw-ask-go">Go</button><div style="clear:both"></div></div>';
+      '<button type="button" class="askw-item" data-act="eli5"><span class="askw-ico" aria-hidden="true">○</span>ELI5</button>' +
+      '<button type="button" class="askw-item" data-act="prove"><span class="askw-ico" aria-hidden="true">✓</span>Prove it</button>' +
+      '<button type="button" class="askw-item" data-act="ask"><span class="askw-ico" aria-hidden="true">…</span>Ask a question…</button>' +
+      '<div class="askw-ask-wrap"><textarea class="askw-ask-input" aria-label="Question about the highlighted text" placeholder="Ask about the highlighted text…"></textarea>' +
+      '<button type="button" class="askw-ask-go">Go</button><div style="clear:both"></div></div>';
     document.body.appendChild(menuEl);
     askWrap = menuEl.querySelector('.askw-ask-wrap');
     askInput = menuEl.querySelector('.askw-ask-input');
@@ -251,6 +313,21 @@
         }
       });
     });
+    menuEl.addEventListener('keydown', function (e) {
+      var items = Array.prototype.slice.call(menuEl.querySelectorAll('.askw-item'));
+      var index = items.indexOf(document.activeElement);
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation(); hideMenu();
+        if (sel) { showTrigger(sel); triggerEl.focus(); }
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        if (e.key === 'Home') index = 0;
+        else if (e.key === 'End') index = items.length - 1;
+        else if (e.key === 'ArrowDown') index = (index + 1 + items.length) % items.length;
+        else index = (index - 1 + items.length) % items.length;
+        items[index].focus();
+      }
+    });
     askGo.addEventListener('click', submitAsk);
     askInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAsk(); }
@@ -259,14 +336,18 @@
     // --- answer panel ---
     panelEl = document.createElement('div');
     panelEl.className = 'askw-root askw-panel';
+    panelEl.setAttribute('role', 'dialog');
+    panelEl.setAttribute('aria-label', 'Ask Widget answer');
+    panelEl.setAttribute('aria-modal', 'false');
+    panelEl.setAttribute('aria-busy', 'false');
     panelEl.innerHTML =
       '<div class="askw-head"><p class="askw-eyebrow"></p><p class="askw-selq"></p>' +
-      '<button class="askw-x" title="Close">×</button></div>' +
-      '<div class="askw-tools"></div>' +
-      '<div class="askw-body"></div>' +
-      '<div class="askw-followup"><textarea class="askw-follow-input" rows="1" placeholder="Ask a follow-up…"></textarea>' +
-      '<button class="askw-follow-go" title="Send (Enter)">↑</button></div>' +
-      '<div class="askw-foot"><button class="askw-claude" title="Open a dedicated Claude session in this folder — hold ⌥ Option to copy the prompt instead">Open in Claude</button><button class="askw-copy">Copy</button></div>';
+      '<button type="button" class="askw-x" title="Close" aria-label="Close answer">×</button></div>' +
+      '<div class="askw-tools" aria-live="polite"></div>' +
+      '<div class="askw-body" aria-live="polite" aria-relevant="additions text"></div>' +
+      '<div class="askw-followup"><textarea class="askw-follow-input" aria-label="Follow-up question" rows="1" placeholder="Ask a follow-up…"></textarea>' +
+      '<button type="button" class="askw-follow-go" title="Send (Enter)" aria-label="Send follow-up">↑</button></div>' +
+      '<div class="askw-foot"><button class="askw-claude" title="Open a dedicated provider session in this folder — hold ⌥ Option to copy the prompt instead">Open session</button><button class="askw-history">History</button><button class="askw-stop">Stop</button><button class="askw-retry">Retry</button><button class="askw-copy">Copy</button></div>';
     document.body.appendChild(panelEl);
     panelTitle = panelEl.querySelector('.askw-eyebrow');
     panelSel = panelEl.querySelector('.askw-selq');
@@ -276,12 +357,18 @@
     followInput = panelEl.querySelector('.askw-follow-input');
     followGo = panelEl.querySelector('.askw-follow-go');
     claudeBtn = panelEl.querySelector('.askw-claude');
+    historyBtn = panelEl.querySelector('.askw-history');
+    stopBtn = panelEl.querySelector('.askw-stop');
+    retryBtn = panelEl.querySelector('.askw-retry');
     panelEl.querySelector('.askw-x').addEventListener('click', closePanel);
     panelEl.querySelector('.askw-copy').addEventListener('click', function () {
       var t = panelBody.innerText || '';
       if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function () {});
     });
-    claudeBtn.addEventListener('click', function (e) { openInClaude(e.altKey); });
+    claudeBtn.addEventListener('click', function (e) { openInProvider(e.altKey); });
+    historyBtn.addEventListener('click', loadSelectionHistory);
+    stopBtn.addEventListener('click', stopRequest);
+    retryBtn.addEventListener('click', retryRequest);
     followGo.addEventListener('click', submitFollowup);
     followInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitFollowup(); }
@@ -290,39 +377,83 @@
     makeDragResize(panelEl, panelEl.querySelector('.askw-head'));
 
     // --- folder pill + picker ---
-    pillEl = document.createElement('div');
+    pillEl = document.createElement('button');
+    pillEl.type = 'button';
     pillEl.className = 'askw-root askw-pill';
-    pillEl.innerHTML = '<span class="askw-ico">◈</span><b class="askw-pill-label">…</b>';
+    pillEl.innerHTML = '<span class="askw-ico" aria-hidden="true">◈</span><b class="askw-pill-label">…</b>';
     pillLabel = pillEl.querySelector('.askw-pill-label');
-    pillEl.title = 'Context folder Claude reads — click to change';
+    pillEl.title = 'Context folder the selected provider reads — click to change';
+    pillEl.setAttribute('aria-haspopup', 'dialog');
+    pillEl.setAttribute('aria-expanded', 'false');
     document.body.appendChild(pillEl);
     pillEl.addEventListener('click', togglePicker);
 
     pickerEl = document.createElement('div');
     pickerEl.className = 'askw-root askw-picker';
+    pickerEl.setAttribute('role', 'dialog');
+    pickerEl.setAttribute('aria-label', 'Choose context folder');
+    pickerEl.setAttribute('aria-hidden', 'true');
     pickerEl.innerHTML =
-      '<label>Context folder</label><input class="askw-picker-input" spellcheck="false" />' +
-      '<button class="askw-picker-save">Use this folder</button>' +
+      '<label for="askw-folder-input">Context folder</label><div class="askw-picker-row"><input id="askw-folder-input" class="askw-picker-input" spellcheck="false" /><button type="button" class="askw-picker-browse">Choose…</button></div>' +
+      '<div class="askw-hint">Only files inside this folder are available to the selected provider as supporting evidence.</div>' +
+      '<button type="button" class="askw-picker-save">Use this folder</button>' +
       '<div class="askw-recent"></div>' +
       (isFileProto ? '<div class="askw-hint">You opened this over file:// — if requests fail, serve the page over http (e.g. <code>python3 -m http.server</code>).</div>' : '');
     document.body.appendChild(pickerEl);
     pickerEl.querySelector('.askw-picker-save').addEventListener('click', function () {
       var v = pickerEl.querySelector('.askw-picker-input').value.trim();
-      if (v) { setFolder(v); closePicker(); }
+      if (v) setFolder(v);
     });
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.askwPick) {
+      pickerEl.classList.add('askw-native');
+      pickerEl.querySelector('.askw-picker-browse').addEventListener('click', async function () {
+        try {
+          var input = pickerEl.querySelector('.askw-picker-input');
+          var chosen = await window.webkit.messageHandlers.askwPick.postMessage({ kind: 'folder', initial: input.value });
+          if (chosen) input.value = chosen;
+        } catch (e) { toast('Folder picker failed.'); }
+      });
+    }
   }
 
   // ============================================================ menu
+  function showTrigger(captured) {
+    if (!triggerEl || !captured || panelEl.classList.contains('open')) return;
+    sel = captured;
+    triggerEl.style.display = 'flex';
+    triggerEl.setAttribute('aria-hidden', 'false');
+    var rect = captured.rect;
+    var width = triggerEl.offsetWidth || 58;
+    var height = triggerEl.offsetHeight || 28;
+    var left = rect.left + rect.width / 2 - width / 2;
+    var top = rect.bottom + 7;
+    if (top + height > window.innerHeight - 8) top = rect.top - height - 7;
+    triggerEl.style.left = Math.max(8, Math.min(left, window.innerWidth - width - 8)) + 'px';
+    triggerEl.style.top = Math.max(8, top) + 'px';
+  }
+  function hideTrigger() {
+    if (!triggerEl) return;
+    triggerEl.style.display = 'none';
+    triggerEl.setAttribute('aria-hidden', 'true');
+  }
   function showMenu(x, y) {
+    hideTrigger();
     askWrap.classList.remove('open');
     askInput.value = '';
     menuEl.style.display = 'block';
+    menuEl.setAttribute('aria-hidden', 'false');
     var mw = menuEl.offsetWidth || 190;
     var mh = menuEl.offsetHeight || 130;
     menuEl.style.left = Math.max(6, Math.min(x, window.innerWidth - mw - 8)) + 'px';
     menuEl.style.top = Math.max(6, Math.min(y, window.innerHeight - mh - 8)) + 'px';
+    var firstItem = menuEl.querySelector('.askw-item');
+    if (firstItem) firstItem.focus();
   }
-  function hideMenu() { if (menuEl) menuEl.style.display = 'none'; }
+  function hideMenu() {
+    if (!menuEl) return;
+    menuEl.style.display = 'none';
+    menuEl.setAttribute('aria-hidden', 'true');
+  }
 
   function submitAsk() {
     var q = askInput.value.trim();
@@ -339,16 +470,23 @@
     panelSel.textContent = sel ? ('“' + sel.text.slice(0, 160) + (sel.text.length > 160 ? '…' : '') + '”') : '';
     panelTools.innerHTML = '';
     panelBody.innerHTML = '';
+    stopBtn.style.display = 'none';
+    retryBtn.style.display = 'none';
     hideFollowup();
     panelEl.classList.add('open');
     if (!userPinned) positionPanel();
+    panelEl.querySelector('.askw-x').focus();
   }
   function closePanel() {
     panelEl.classList.remove('open');
+    panelEl.setAttribute('aria-busy', 'false');
     activeAction = null;
     if (abort) { abort.abort(); abort = null; }
     streaming = false;
+    stopBtn.style.display = 'none';
+    retryBtn.style.display = 'none';
     resetConversation();
+    historyOrigin = null;
     hideFollowup();
     maybeApplyReload();
   }
@@ -363,6 +501,67 @@
       if (t.role === 'user') { el.className = 'askw-q'; el.textContent = t.text; }
       else { el.className = 'askw-a'; renderMarkdown(el, t.text); }
       panelBody.appendChild(el);
+    });
+  }
+
+  function historyModeLabel(mode) {
+    return ({ generated: 'Generated', rerun: 'Asked again', edited: 'Edited & asked', continue: 'Continued' })[mode] || 'Generated';
+  }
+
+  function setSelectionFromHistory(item) {
+    var x = Math.max(20, window.innerWidth / 2 - 1);
+    var y = Math.max(70, Math.min(window.innerHeight / 3, window.innerHeight - 220));
+    sel = {
+      text: item.selection || '',
+      context: item.context || item.selection || '',
+      page: item.document_page || null,
+      rect: { left: x, right: x + 2, top: y, bottom: y + 2, width: 2, height: 2 }
+    };
+    if (item.folder) commitFolder(item.folder);
+  }
+
+  function restoreHistory(item, mode) {
+    setSelectionFromHistory(item);
+    historyOrigin = { request_id: item.request_id, mode: mode };
+    lastAction = item.action || 'ask';
+    lastQuestion = item.question || '';
+    lastAnswer = item.answer || '';
+    openPanel(item.action || 'ask');
+    resetConversation();
+
+    if (mode === 'edited') {
+      panelTitle.textContent = 'Edit & ask';
+      var note = document.createElement('div');
+      note.className = 'askw-origin';
+      note.textContent = 'Editing a saved question · the next answer will use your current ' + providerLabel() + ' model';
+      panelBody.appendChild(note);
+      showFollowup(true);
+      followInput.value = item.question || (item.action === 'eli5' ? 'Explain this passage simply.' : item.action === 'prove' ? 'What evidence supports this passage?' : '');
+      autosizeFollow();
+      followInput.focus();
+      return;
+    }
+
+    if (item.question) transcript.push({ role: 'user', text: item.question });
+    transcript.push({ role: 'assistant', text: item.answer || item.error || 'No saved answer.' });
+    renderConversation();
+    var origin = document.createElement('div');
+    origin.className = 'askw-origin';
+    origin.textContent = historyModeLabel(item.request_mode) + ' · ' + (item.provider || 'claude') + ' · ' + item.model;
+    panelBody.appendChild(origin);
+    if (item.citations && item.citations.length) renderCitations(item.citations);
+    panelTitle.textContent = mode === 'continue' ? 'Continue saved answer' : 'Saved answer';
+    showFollowup(true);
+    autoscroll();
+  }
+
+  function askAgainHistory(item) {
+    setSelectionFromHistory(item);
+    historyOrigin = null;
+    start(item.action || 'ask', item.question || '', {
+      bypass_cache: true,
+      request_mode: 'rerun',
+      parent_request_id: item.request_id
     });
   }
   // Append a fresh answer block (showing "Thinking…") for the stream to fill.
@@ -405,6 +604,10 @@
     top = Math.max(m, Math.min(top, vh - h - m));
     panelEl.style.left = left + 'px';
     panelEl.style.top = top + 'px';
+    // The answer can grow dramatically after this initial placement. Cap its
+    // material sheet to the remaining viewport so the footer/Stop button never
+    // streams below the screen; the flex body becomes the scroll container.
+    panelEl.style.maxHeight = Math.max(180, vh - top - m) + 'px';
   }
   function autoscroll() { panelBody.scrollTop = panelBody.scrollHeight; }
 
@@ -423,6 +626,7 @@
         ny = Math.max(4, Math.min(ny, window.innerHeight - 44));
         panel.style.left = nx + 'px';
         panel.style.top = ny + 'px';
+        panel.style.maxHeight = Math.max(180, window.innerHeight - ny - 4) + 'px';
       }
       function up() { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); }
       document.addEventListener('mousemove', mv);
@@ -442,42 +646,49 @@
   }
 
   function toast(msg) {
-    if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'askw-root askw-toast'; document.body.appendChild(toastEl); }
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'askw-root askw-toast';
+      toastEl.setAttribute('role', 'status');
+      toastEl.setAttribute('aria-live', 'polite');
+      document.body.appendChild(toastEl);
+    }
     toastEl.textContent = msg;
     toastEl.classList.add('show');
     clearTimeout(toastEl._t);
     toastEl._t = setTimeout(function () { toastEl.classList.remove('show'); }, 2400);
   }
 
-  function setClaudeLabel(opt) {
-    if (claudeBtn && !claudeBtn.disabled) claudeBtn.textContent = opt ? 'Copy Claude prompt' : 'Open in Claude';
+  function providerLabel() { return serverConfig.provider === 'codex' ? 'Codex' : 'Claude'; }
+  function setProviderLabel(opt) {
+    if (claudeBtn && !claudeBtn.disabled) claudeBtn.textContent = opt ? 'Copy ' + providerLabel() + ' prompt' : 'Open in ' + providerLabel();
   }
 
-  // Hand off to a dedicated `claude` session in the context folder. With Option
+  // Hand off to a dedicated provider session in the context folder. With Option
   // held (copy=true), copy the seed prompt instead of launching a terminal.
-  function openInClaude(copy) {
+  function openInProvider(copy) {
     if (!sel || !lastAction) { toast('Ask something first.'); return; }
     claudeBtn.disabled = true;
     claudeBtn.textContent = copy ? 'Copying…' : 'Opening…';
-    fetch(SERVER + '/open-in-claude', {
+    fetch(SERVER + '/open-in-provider', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         folder: folder, action: lastAction, selection: sel.text,
-        question: lastQuestion, answer: lastAnswer, mode: copy ? 'copy' : 'open', token: TOKEN
+        question: lastQuestion, answer: lastAnswer, provider: serverConfig.provider, mode: copy ? 'copy' : 'open', token: TOKEN
       })
     }).then(function (r) { return r.json(); }).then(function (d) {
-      claudeBtn.disabled = false; setClaudeLabel(false);
-      if (!d || !d.ok) { toast((d && d.error) || 'Open in Claude failed.'); return; }
+      claudeBtn.disabled = false; setProviderLabel(false);
+      if (!d || !d.ok) { toast((d && d.error) || 'Open in ' + providerLabel() + ' failed.'); return; }
       if (copy) {
         if (navigator.clipboard && d.prompt) {
-          navigator.clipboard.writeText(d.prompt).then(function () { toast('Claude prompt copied'); }).catch(function () { toast('Copy failed'); });
+          navigator.clipboard.writeText(d.prompt).then(function () { toast(providerLabel() + ' prompt copied'); }).catch(function () { toast('Copy failed'); });
         } else { toast('Copy failed'); }
       } else {
-        toast('Opening a Claude session…');
+        toast('Opening a ' + providerLabel() + ' session…');
       }
     }).catch(function () {
-      claudeBtn.disabled = false; setClaudeLabel(false);
+      claudeBtn.disabled = false; setProviderLabel(false);
       toast('Could not reach the Ask server.');
     });
   }
@@ -507,20 +718,52 @@
     for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36);
   }
-  function cacheKey(action) { return 'askw:' + action + ':' + (folder || '') + ':' + djb2(sel ? sel.text : ''); }
-  function cacheGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function cacheSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function metaValue(name) {
+    var m = document.querySelector('meta[name="' + name + '"]');
+    return m ? (m.getAttribute('content') || '').trim() : '';
+  }
+  function documentSource() { return metaValue('askw-src') || location.href.split('#')[0]; }
+  function documentIdentity() {
+    return [documentSource(), document.title || '', serverConfig.version, serverConfig.provider, serverConfig.model, serverConfig.reasoning_effort].join('|');
+  }
+  function cacheKey(action) {
+    return 'askw:cache:' + djb2([
+      action, folder || '', documentIdentity(), sel ? sel.text : '', sel ? sel.context : '', sel ? sel.page || '' : ''
+    ].join('|'));
+  }
+  function cacheGet(k) {
+    try {
+      var item = JSON.parse(localStorage.getItem(k) || 'null');
+      if (!item || typeof item.answer !== 'string') return null;
+      var ttl = Number(serverConfig.cache_ttl_hours || 0) * 3600000;
+      if (!ttl || Date.now() - Number(item.created_at || 0) > ttl) { localStorage.removeItem(k); return null; }
+      return item;
+    } catch (e) { return null; }
+  }
+  function cacheSet(k, v) {
+    try {
+      var max = Number(serverConfig.cache_max_entries || 0);
+      if (!max) return;
+      var index = JSON.parse(localStorage.getItem('askw:cache-index') || '[]');
+      index = index.filter(function (item) { return item.key !== k; });
+      index.unshift({ key: k, created_at: Date.now() });
+      while (index.length > max) { var old = index.pop(); localStorage.removeItem(old.key); }
+      localStorage.setItem(k, JSON.stringify({ answer: v, created_at: Date.now(), version: serverConfig.version }));
+      localStorage.setItem('askw:cache-index', JSON.stringify(index));
+    } catch (e) {}
+  }
 
   // ============================================================ streaming
   // A top-level action (ELI5 / Prove it / Ask) opens the panel and starts a new
   // conversation. Follow-ups reuse the same panel + selection via submitFollowup.
-  function start(action, question) {
+  function start(action, question, options) {
+    options = options || {};
     hideMenu();
     if (!sel) return;
     lastAction = action; lastQuestion = question || ''; lastAnswer = '';
 
     var ck = action !== 'ask' ? cacheKey(action) : null;
-    if (ck) {
+    if (ck && !options.bypass_cache) {
       if (activeAction === action) {
         try { localStorage.removeItem(ck); } catch (e) {}   // re-click = refresh
       } else {
@@ -528,9 +771,13 @@
         if (cached) {
           openPanel(action);
           resetConversation();
-          transcript.push({ role: 'assistant', text: cached });
-          lastAnswer = cached;
+          transcript.push({ role: 'assistant', text: cached.answer });
+          lastAnswer = cached.answer;
           renderConversation();
+          var cacheNote = document.createElement('div');
+          cacheNote.className = 'askw-origin';
+          cacheNote.textContent = 'Cached locally · ' + new Date(Number(cached.created_at || Date.now())).toLocaleString() + ' · click the same action again to refresh';
+          panelBody.appendChild(cacheNote);
           showFollowup(true);
           return;
         }
@@ -542,14 +789,20 @@
     if (action === 'ask' && question) transcript.push({ role: 'user', text: question });
     renderConversation();
 
-    streamAnswer({
+    var request = {
       action: action,
       selection: sel.text,
       context: sel.context,
       question: question || '',
+      document_source: documentSource(),
+      document_title: document.title || '',
+      document_page: sel.page || null,
       folder: folder,
       token: TOKEN
-    }, ck);
+    };
+    if (options.request_mode) request.request_mode = options.request_mode;
+    if (options.parent_request_id) request.parent_request_id = options.parent_request_id;
+    streamAnswer(request, ck);
   }
 
   // Ask a follow-up about the same selection, continuing the panel's thread.
@@ -563,17 +816,28 @@
     transcript.push({ role: 'user', text: q });
     renderConversation();
 
-    // Send every completed turn before this question so Claude has the thread.
+    // Send every completed turn before this question so the selected model has the thread.
     var history = transcript.slice(0, -1).map(function (t) { return { role: t.role, text: t.text }; });
-    streamAnswer({
+    var request = {
       action: 'ask',
       selection: sel.text,
       context: sel.context,
       question: q,
       history: history,
+      document_source: documentSource(),
+      document_title: document.title || '',
+      document_page: sel.page || null,
       folder: folder,
       token: TOKEN
-    }, null);
+    };
+    if (historyOrigin) {
+      request.request_mode = historyOrigin.mode === 'edited' ? 'edited' : 'continue';
+      request.parent_request_id = historyOrigin.request_id;
+    } else {
+      request.request_mode = 'continue';
+      if (currentRequestId) request.parent_request_id = currentRequestId;
+    }
+    streamAnswer(request, null);
   }
 
   // Shared stream pump: fills the live answer block, commits it to the transcript
@@ -582,12 +846,59 @@
     if (abort) abort.abort();
     abort = new AbortController();
     var myAbort = abort;
+    lastRequestBody = JSON.parse(JSON.stringify(reqBody));
+    lastCacheKey = ck;
+    currentRequestId = null;
+    currentRequestMode = reqBody.request_mode || 'generated';
+    requestCitations = [];
+    requestTrace = [];
     streaming = true;
+    panelEl.setAttribute('aria-busy', 'true');
     clearTools();
     appendLive();
     showFollowup(false);
+    stopBtn.style.display = 'block';
+    retryBtn.style.display = 'none';
 
-    var acc = '';
+    var acc = '', hadError = false, doneMeta = null;
+
+    function handleFrame(frame) {
+      var evt = '', data = {};
+      frame.split('\n').forEach(function (line) {
+        if (line.indexOf('event: ') === 0) evt = line.slice(7).trim();
+        else if (line.indexOf('data: ') === 0) {
+          try { data = JSON.parse(line.slice(6)); } catch (e) { data = {}; }
+        }
+      });
+      if (evt === 'meta') {
+        currentRequestId = data.request_id || null;
+        if (data.provider) serverConfig.provider = data.provider;
+        if (data.model) serverConfig.model = data.model;
+        if (data.effort) serverConfig.reasoning_effort = data.effort;
+        if (data.request_mode) currentRequestMode = data.request_mode;
+        setProviderLabel(false);
+      } else if (evt === 'token') {
+        acc += data.text || '';
+        renderMarkdown(liveEl, acc);
+        autoscroll();
+      } else if (evt === 'tool_status') {
+        updateTool(data);
+      } else if (evt === 'tool_trace') {
+        requestTrace.push(data);
+      } else if (evt === 'status') {
+        if (!acc && liveEl) liveEl.innerHTML = '<div class="askw-think"><span class="askw-dot"></span>' + esc(data.message || providerLabel() + ' is working…') + '</div>';
+      } else if (evt === 'citations') {
+        requestCitations = Array.isArray(data.items) ? data.items : [];
+      } else if (evt === 'error') {
+        hadError = true;
+        liveError(data.message || 'An error occurred.');
+        retryBtn.style.display = data.retryable === false ? 'none' : 'block';
+        acc = '';
+      } else if (evt === 'done') {
+        doneMeta = data;
+      }
+    }
+
     fetch(SERVER + '/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -601,52 +912,43 @@
 
       function pump() {
         return reader.read().then(function (r) {
-          if (r.done) { finish(acc, ck); return; }
-          buffer += decoder.decode(r.value, { stream: true });
-          var lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          var evt = '';
-          for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            if (line.indexOf('event: ') === 0) {
-              evt = line.slice(7).trim();
-            } else if (line.indexOf('data: ') === 0 && evt) {
-              var data;
-              try { data = JSON.parse(line.slice(6)); } catch (e) { evt = ''; continue; }
-              if (evt === 'token') {
-                acc += data.text;
-                renderMarkdown(liveEl, acc);
-                autoscroll();
-              } else if (evt === 'tool_status') {
-                updateTool(data);
-              } else if (evt === 'error') {
-                liveError(data.message || 'An error occurred.');
-                acc = '';   // don't cache or commit an error
-              } else if (evt === 'done') {
-                /* terminal; finish() runs on stream close */
-              }
-              evt = '';
-            }
+          if (r.done) {
+            if (buffer.trim()) handleFrame(buffer);
+            if (myAbort === abort) finish(acc, ck, hadError, doneMeta);
+            return;
           }
+          buffer += decoder.decode(r.value, { stream: true });
+          var frames = buffer.split(/\n\n/);
+          buffer = frames.pop() || '';
+          frames.forEach(handleFrame);
           return pump();
         });
       }
       return pump();
     }).catch(function (err) {
       if (err && err.name === 'AbortError') return;
+      if (myAbort !== abort) return;
       liveError('Could not reach the Ask server at ' + SERVER + '. Is it running? (' + (err && err.message || err) + ')');
+      retryBtn.style.display = 'block';
       finishMeta();
     });
   }
 
-  function finish(acc, ck) {
+  function finish(acc, ck, hadError, meta) {
     clearTools();
     if (acc) {
       transcript.push({ role: 'assistant', text: acc });
       lastAnswer = acc;
       if (ck) cacheSet(ck, acc);
-    } else if (liveEl && liveEl.querySelector('.askw-think')) {
+    } else if (!hadError && liveEl && liveEl.querySelector('.askw-think')) {
       liveEl.innerHTML = '<div class="askw-err">No response received.</div>';
+      retryBtn.style.display = 'block';
+    }
+    if (requestCitations.length) renderCitations(requestCitations);
+    if (meta && liveEl) {
+      var detail = document.createElement('p'); detail.className = 'askw-request-meta';
+      detail.textContent = [historyModeLabel(currentRequestMode), providerLabel(), serverConfig.model, serverConfig.reasoning_effort, meta.elapsed_ms ? (meta.elapsed_ms / 1000).toFixed(1) + 's' : '', currentRequestId ? currentRequestId.slice(0, 8) : ''].filter(Boolean).join(' · ');
+      liveEl.appendChild(detail);
     }
     finishMeta();
   }
@@ -654,28 +956,111 @@
   function finishMeta() {
     liveEl = null;
     streaming = false;
+    panelEl.setAttribute('aria-busy', 'false');
+    stopBtn.style.display = 'none';
+    abort = null;
+    if (currentRequestId) historyOrigin = { request_id: currentRequestId, mode: 'continue' };
+    showFollowup(true);
+    if (!userPinned) positionPanel();
+    maybeApplyReload();
+  }
+
+  function stopRequest() {
+    if (!abort) return;
+    var active = abort;
+    abort = null;
+    active.abort();
+    clearTools();
+    liveError('Stopped.');
+    streaming = false;
+    panelEl.setAttribute('aria-busy', 'false');
+    stopBtn.style.display = 'none';
+    retryBtn.style.display = 'block';
     showFollowup(true);
     maybeApplyReload();
   }
 
+  function retryRequest() {
+    if (!lastRequestBody) return;
+    retryBtn.style.display = 'none';
+    streamAnswer(JSON.parse(JSON.stringify(lastRequestBody)), lastCacheKey);
+  }
+
+  function renderCitations(items) {
+    var box = document.createElement('div'); box.className = 'askw-citations';
+    box.innerHTML = '<p class="askw-citations-title">Evidence</p>';
+    items.forEach(function (item) {
+      var button = document.createElement('button'); button.className = 'askw-citation';
+      button.title = item.snippet ? 'Click to preview, then click again to open' : 'Open source';
+      button.innerHTML = '<strong>' + esc(item.label || item.path) + '</strong>' + (item.snippet ? '<pre>' + esc(item.snippet) + '</pre>' : '');
+      button.addEventListener('click', function () {
+        if (item.snippet && !button.classList.contains('expanded')) { button.classList.add('expanded'); return; }
+        fetch(SERVER + '/api/open-source', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: TOKEN, path: item.path, line: item.line, page: item.page, folder: folder })
+        }).then(function (r) { return r.json(); }).then(function (d) { if (!d.ok) toast(d.error || 'Could not open source'); }).catch(function () { toast('Could not open source'); });
+      });
+      box.appendChild(button);
+    });
+    panelBody.appendChild(box);
+  }
+
+  function loadSelectionHistory() {
+    if (!sel) return;
+    fetch(SERVER + '/api/history?source=' + encodeURIComponent(documentSource()) + '&selection=' + encodeURIComponent(sel.text) + '&limit=10')
+      .then(function (r) { return r.json(); }).then(function (d) {
+        var items = d.conversations || [];
+        if (!items.length) { toast('No saved answers for this passage yet.'); return; }
+        panelTitle.textContent = 'Saved history';
+        panelBody.innerHTML = '';
+        items.forEach(function (item) {
+          var entry = document.createElement('section'); entry.className = 'askw-history-entry';
+          var q = document.createElement('div'); q.className = 'askw-q'; q.textContent = item.question || item.action;
+          var a = document.createElement('div'); a.className = 'askw-a'; renderMarkdown(a, item.answer || item.error || 'No answer');
+          var meta = document.createElement('div'); meta.className = 'askw-history-meta';
+          meta.textContent = historyModeLabel(item.request_mode) + ' · ' + (item.provider || 'claude') + ' · ' + item.model + (item.effort ? ' · ' + item.effort : '') + ' · ' + new Date(item.started_at * 1000).toLocaleString();
+          var actions = document.createElement('div'); actions.className = 'askw-history-actions';
+          var again = document.createElement('button'); again.textContent = 'Ask again'; again.onclick = function () { askAgainHistory(item); };
+          var edit = document.createElement('button'); edit.textContent = 'Edit & ask'; edit.onclick = function () { restoreHistory(item, 'edited'); };
+          var resume = document.createElement('button'); resume.textContent = 'Continue'; resume.onclick = function () { restoreHistory(item, 'continue'); };
+          actions.appendChild(again); actions.appendChild(edit); actions.appendChild(resume);
+          entry.appendChild(q); entry.appendChild(a); entry.appendChild(meta); entry.appendChild(actions);
+          panelBody.appendChild(entry);
+        });
+        toast(items.length + ' saved answer' + (items.length === 1 ? '' : 's'));
+      }).catch(function () { toast('Could not load history.'); });
+  }
+
   // ============================================================ folder
-  function setFolder(f) {
+  function commitFolder(f) {
     folder = f;
     try { localStorage.setItem('askw:folder', f); } catch (e) {}
     if (recentFolders.indexOf(f) === -1) recentFolders.unshift(f);
     updatePill();
     renderRecent();
   }
-  function updatePill() { if (pillLabel) pillLabel.textContent = basename(folder); }
+  function setFolder(f) {
+    fetch(SERVER + '/api/folder?path=' + encodeURIComponent(f)).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { toast(d.error || 'Folder is not allowed.'); return; }
+      commitFolder(d.path);
+      closePicker();
+    }).catch(function () { toast('Could not validate that folder.'); });
+  }
+  function updatePill() {
+    if (!pillLabel) return;
+    pillLabel.textContent = basename(folder);
+    pillEl.setAttribute('aria-label', 'Context folder: ' + (folder || 'none') + '. Activate to change.');
+  }
   function renderRecent() {
     var box = pickerEl.querySelector('.askw-recent');
     box.innerHTML = '';
     recentFolders.slice(0, 8).forEach(function (f) {
-      var d = document.createElement('div');
+      var d = document.createElement('button');
+      d.type = 'button';
       d.className = 'askw-recent-item';
       d.textContent = f;
       d.title = f;
-      d.addEventListener('click', function () { setFolder(f); closePicker(); });
+      d.addEventListener('click', function () { setFolder(f); });
       box.appendChild(d);
     });
   }
@@ -684,12 +1069,27 @@
     pickerEl.querySelector('.askw-picker-input').value = folder || '';
     renderRecent();
     pickerEl.classList.add('open');
+    pickerEl.setAttribute('aria-hidden', 'false');
+    pillEl.setAttribute('aria-expanded', 'true');
+    pickerEl.querySelector('.askw-picker-input').focus();
   }
-  function closePicker() { pickerEl.classList.remove('open'); }
+  function closePicker() {
+    pickerEl.classList.remove('open');
+    pickerEl.setAttribute('aria-hidden', 'true');
+    pillEl.setAttribute('aria-expanded', 'false');
+  }
 
   function metaFolder() {
-    var m = document.querySelector('meta[name="askw-folder"]');
-    return m ? (m.getAttribute('content') || '').trim() : '';
+    return metaValue('askw-folder');
+  }
+
+  function applyAppearance(raw) {
+    appearanceTheme = raw === 'dark' || raw === 'light' ? raw : 'system';
+    var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var effective = appearanceTheme === 'dark' || (appearanceTheme === 'system' && systemDark) ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-askw-color', effective);
+    var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.askwAppearance;
+    if (bridge) Promise.resolve(bridge.postMessage({ theme: appearanceTheme })).catch(function () {});
   }
 
   function initFolder() {
@@ -704,7 +1104,10 @@
     }
     updatePill();
 
-    fetch(SERVER + '/config').then(function (r) { return r.json(); }).then(function (cfg) {
+    return fetch(SERVER + '/config').then(function (r) { return r.json(); }).then(function (cfg) {
+      serverConfig = cfg || serverConfig;
+      setProviderLabel(false);
+      applyAppearance(cfg.appearance_theme);
       defaultFolder = cfg.default_folder;
       recentFolders = (cfg.recent_folders || []).slice();
       if (!folder) folder = defaultFolder;
@@ -720,8 +1123,7 @@
   // busy (a stream in flight, or the answer panel open) so we never yank content
   // mid-answer; the deferred reload fires when things go idle.
   function metaSrc() {
-    var m = document.querySelector('meta[name="askw-src"]');
-    return m ? (m.getAttribute('content') || '').trim() : '';
+    return metaValue('askw-src');
   }
   function reloadIdle() {
     return !streaming && !(panelEl && panelEl.classList.contains('open'));
@@ -734,8 +1136,9 @@
     if (reloadPending && reloadIdle()) { reloadPending = false; doReload(); }
   }
   function checkDoc() {
-    if (!reloadSrc) return;
-    fetch(SERVER + '/_mtime?src=' + encodeURIComponent(reloadSrc), { cache: 'no-store' })
+    var docCap = metaValue('askw-doc-token');
+    if (!reloadSrc || !docCap || document.hidden) return;
+    fetch(SERVER + '/_mtime?src=' + encodeURIComponent(reloadSrc) + '&cap=' + encodeURIComponent(docCap), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d || !d.ok || !d.sig) return;
@@ -751,7 +1154,7 @@
   }
   function initLiveReload() {
     reloadSrc = metaSrc();
-    if (!reloadSrc) return;   // not a local /view page → no live reload
+    if (!reloadSrc || !metaValue('askw-doc-token')) return;   // not a local /view page → no live reload
     // If this load is the result of a reload we triggered, restore the reading
     // position and confirm the refresh landed.
     try {
@@ -763,7 +1166,53 @@
       }
     } catch (e) {}
     checkDoc();   // establish the baseline immediately
-    setInterval(checkDoc, 1000);
+    setInterval(checkDoc, 3000);
+  }
+
+  function initPosition() {
+    var source = documentSource();
+    if (!source) return;
+    fetch(SERVER + '/api/document?source=' + encodeURIComponent(source)).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.document && d.document.scroll_y > 0 && !sessionStorage.getItem('askw:reload')) {
+        requestAnimationFrame(function () { window.scrollTo(0, d.document.scroll_y); });
+      }
+    }).catch(function () {});
+    var timer = null;
+    window.addEventListener('scroll', function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        fetch(SERVER + '/api/position', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: TOKEN, source: source, scroll_y: window.scrollY })
+        }).catch(function () {});
+      }, 700);
+    }, { passive: true });
+  }
+
+  function initAutoSelection() {
+    if (new URLSearchParams(location.search).get('history')) return;
+    if (!metaValue('askw-auto-selection')) return;
+    var target = document.getElementById('askw-quick-selection');
+    if (!target) return;
+    var range = document.createRange(); range.selectNodeContents(target);
+    var selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    sel = captureFromSelection();
+    if (sel) setTimeout(function () { showMenu(Math.max(20, window.innerWidth / 2 - 90), Math.max(80, target.getBoundingClientRect().bottom + 8)); }, 150);
+  }
+
+  function initHistoryReplay() {
+    var params = new URLSearchParams(location.search);
+    var id = params.get('history');
+    if (!id) return;
+    var mode = params.get('history_action') || 'continue';
+    fetch(SERVER + '/api/conversations/' + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok || !d.conversation) throw new Error((d && d.error) || 'Saved answer not found.');
+        if (mode === 'rerun') askAgainHistory(d.conversation);
+        else restoreHistory(d.conversation, mode === 'edited' ? 'edited' : 'continue');
+      })
+      .catch(function (e) { toast(e.message || 'Could not restore saved answer.'); });
   }
 
   // ============================================================ global events
@@ -774,14 +1223,15 @@
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(function () {
         var captured = captureFromSelection();
-        if (captured) sel = captured;
-      }, 300);
+        if (captured) showTrigger(captured);
+        else hideTrigger();
+      }, 120);
     });
 
     document.addEventListener('contextmenu', function (e) {
       if (isOurs(e.target)) return;              // allow native menu inside our UI
       var captured = captureFromSelection();
-      if (!captured) { hideMenu(); return; }     // no selection -> native menu
+      if (!captured) { hideMenu(); hideTrigger(); return; } // no selection -> native menu
       sel = captured;
       e.preventDefault();
       showMenu(e.clientX, e.clientY);
@@ -790,20 +1240,43 @@
     document.addEventListener('mousedown', function (e) {
       if (isOurs(e.target)) return;
       hideMenu();
+      hideTrigger();
       closePicker();
     });
 
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Alt') { setClaudeLabel(true); return; }
+      if (e.key === 'Alt') { setProviderLabel(true); return; }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+        var captured = captureFromSelection();
+        if (captured) {
+          e.preventDefault();
+          sel = captured;
+          showMenu(captured.rect.left + captured.rect.width / 2 - 95, captured.rect.bottom + 8);
+        }
+        return;
+      }
       if (e.key !== 'Escape') return;
       if (menuEl.style.display === 'block') { hideMenu(); }
-      else if (pickerEl.classList.contains('open')) { closePicker(); }
+      else if (triggerEl.style.display === 'flex') { hideTrigger(); }
+      else if (pickerEl.classList.contains('open')) { closePicker(); pillEl.focus(); }
       else if (panelEl.classList.contains('open')) { closePanel(); }
     });
-    document.addEventListener('keyup', function (e) { if (e.key === 'Alt') setClaudeLabel(false); });
-    window.addEventListener('blur', function () { setClaudeLabel(false); });
+    document.addEventListener('keyup', function (e) {
+      if (e.key === 'Alt') { setProviderLabel(false); return; }
+      if (e.shiftKey || e.key === 'Shift') {
+        var captured = captureFromSelection();
+        if (captured) showTrigger(captured);
+      }
+    });
+    document.addEventListener('selectionchange', function () {
+      var selection = window.getSelection();
+      if (!selection || selection.isCollapsed) hideTrigger();
+    });
+    window.addEventListener('blur', function () { setProviderLabel(false); hideTrigger(); });
+    window.addEventListener('scroll', hideTrigger, { passive: true });
 
     window.addEventListener('resize', function () {
+      hideTrigger();
       if (panelEl.classList.contains('open') && !userPinned) positionPanel();
     });
   }
@@ -811,10 +1284,16 @@
   // ============================================================ boot
   function boot() {
     injectStyle();
+    applyAppearance('system');
+    if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      if (appearanceTheme === 'system') applyAppearance('system');
+    });
     build();
     wire();
-    initFolder();
+    initFolder().then(initHistoryReplay);
     initLiveReload();
+    initPosition();
+    initAutoSelection();
   }
   if (document.body) boot();
   else document.addEventListener('DOMContentLoaded', boot);
