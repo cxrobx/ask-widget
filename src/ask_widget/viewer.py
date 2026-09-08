@@ -19,14 +19,21 @@ from __future__ import annotations
 
 import html as _html
 import ipaddress
+import os
 import re
 import socket
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
+from markdown_it.common import normalize_url as _normalize_url
+from markdown_it.token import Token
+
+if TYPE_CHECKING:  # vault.py imports from this module; keep the runtime import one-way
+    from .vault import VaultIndex
 
 # Match a <link|script|img|source ...> tag's first href/src value. The quote class
 # is symmetric (group 2 = opening quote, back-referenced as the closing quote) so
@@ -90,6 +97,50 @@ class LoadedDocument:
     title: str
     kind: str
     page_count: int | None = None
+
+
+@dataclass
+class RenderContext:
+    """What the Markdown renderer needs to turn links into reader URLs.
+
+    ``doc_path`` is the **lexical** path of the document (a note under a
+    symlinked vault folder keeps its vault-visible path here); ``vault`` is set
+    only when the document lives inside the configured vault.
+    """
+
+    doc_path: Path
+    folder: str | None = None
+    vault: "VaultIndex | None" = None
+
+    def view_url(self, target: Path | str) -> str:
+        params = {"src": str(target)}
+        if self.folder:
+            params["folder"] = self.folder
+        # Encode exactly once; a literal ``%`` in a filename round-trips as ``%25``.
+        return "/view?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote, safe="/")
+
+    def rewrite_href(self, href: str) -> str:
+        """Point a relative/absolute/file: link at a local document to /view."""
+        if not href or href.startswith("#"):
+            return href
+        parsed = urllib.parse.urlparse(href)
+        if parsed.scheme and parsed.scheme.lower() != "file":
+            return href
+        raw = urllib.parse.unquote(parsed.path)
+        if not raw:
+            return href
+        if Path(raw).suffix.lower() not in LOCAL_DOCUMENT_EXTENSIONS:
+            return href
+        if raw.startswith("/"):
+            target = Path(os.path.normpath(raw))
+            if not target.is_file():
+                return href
+        else:
+            target = Path(os.path.normpath(str(self.doc_path.parent / raw)))
+        url = self.view_url(target)
+        if parsed.fragment:
+            url += "#" + parsed.fragment
+        return url
 
 
 def is_remote(src: str) -> bool:
@@ -166,23 +217,260 @@ def read_local(path: Path) -> str:
         raise ViewerError(f"Could not read {path}: {exc}") from exc
 
 
-_MARKDOWN = MarkdownIt(
-    "commonmark",
-    {
-        "html": False,
-        "linkify": False,
-        "typographer": False,
-    },
-).enable("table")
+# MARK: - Markdown: frontmatter, wikilinks, link rewriting
+
+# Obsidian-style YAML frontmatter: an opening ``---`` on the very first line and
+# a closing ``---``/``...`` line. Only matched at offset 0.
+_FRONTMATTER_RE = re.compile(
+    r"^---[ \t]*\r?\n(?:(.*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)", re.DOTALL
+)
+_YAML_KEY_RE = re.compile(r"^([A-Za-z0-9_][\w .\-/]*?)\s*:(?:\s+(.*))?$")
+_FLOW_ITEM_RE = re.compile(r'"[^"]*"|\'[^\']*\'|[^,]+')
+_TAG_KEYS = {"tags", "tag"}
+MAX_FRONTMATTER_LINES = 60
 
 
-def _markdown_html(raw: str, title: str) -> str:
+def _yaml_shaped(block: str) -> bool:
+    """Every top-level line is ``key:`` or ``- item``; indented lines are free."""
+    saw_key = False
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line[:1] in (" ", "\t"):
+            continue
+        if stripped.startswith("- ") or stripped == "-":
+            continue
+        if _YAML_KEY_RE.match(line):
+            saw_key = True
+            continue
+        return False
+    return saw_key
+
+
+def split_frontmatter(raw: str) -> tuple[str | None, str]:
+    """Return ``(frontmatter_block, body)``; block is None when there is none.
+
+    A leading ``---`` that is not followed by a YAML-shaped block and a closing
+    fence is an ordinary horizontal rule and never swallows content.
+    """
+    match = _FRONTMATTER_RE.match(raw)
+    if not match:
+        return None, raw
+    block = match.group(1) or ""
+    if block.strip() and not _yaml_shaped(block):
+        return None, raw
+    return block, raw[match.end():]
+
+
+def _unquote_scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def parse_flat_frontmatter(block: str) -> dict[str, str | list[str]] | None:
+    """Parse ``key: value`` / flow lists / block lists. ``None`` when nested."""
+    lines = block.splitlines()
+    if len(lines) > MAX_FRONTMATTER_LINES:
+        return None
+    fields: dict[str, str | list[str]] = {}
+    list_key: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- ") or stripped == "-":
+            if list_key is None:
+                return None
+            item = _unquote_scalar(stripped[1:])
+            existing = fields[list_key]
+            assert isinstance(existing, list)
+            if item:
+                existing.append(item)
+            continue
+        if line[:1] in (" ", "\t"):
+            return None  # nested mapping or multi-line scalar
+        match = _YAML_KEY_RE.match(line)
+        if not match:
+            return None
+        key = match.group(1).strip()
+        value = (match.group(2) or "").strip()
+        if not value:
+            fields[key] = []
+            list_key = key
+            continue
+        list_key = None
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            fields[key] = [
+                _unquote_scalar(item) for item in _FLOW_ITEM_RE.findall(inner) if item.strip()
+            ] if inner else []
+        else:
+            fields[key] = _unquote_scalar(value)
+    return fields
+
+
+def _render_properties(block: str, md: MarkdownIt, env: dict[str, Any]) -> str:
+    fields = parse_flat_frontmatter(block)
+    if fields is None:
+        return (
+            '<details class="askw-properties"><summary>Properties</summary>'
+            f"<pre>{_html.escape(block.strip())}</pre></details>"
+        )
+    if not fields:
+        return ""
+
+    def inline(text: str) -> str:
+        return md.renderInline(text, env)
+
+    rows: list[str] = []
+    for key, value in fields.items():
+        if isinstance(value, list):
+            if not value:
+                cell = '<span class="askw-empty">—</span>'
+            elif key.casefold() in _TAG_KEYS:
+                cell = "".join(
+                    f'<span class="askw-tag">#{_html.escape(item.lstrip("#"))}</span>' for item in value
+                )
+            else:
+                cell = ", ".join(inline(item) for item in value)
+        elif key.casefold() in _TAG_KEYS:
+            cell = "".join(
+                f'<span class="askw-tag">#{_html.escape(item.strip().lstrip("#"))}</span>'
+                for item in re.split(r"[,\s]+", value)
+                if item.strip()
+            )
+        else:
+            cell = inline(value) if value else '<span class="askw-empty">—</span>'
+        rows.append(f"<dt>{_html.escape(key)}</dt><dd>{cell}</dd>")
+    return (
+        f'<details class="askw-properties"><summary>Properties · {len(rows)}</summary>'
+        f"<dl>{''.join(rows)}</dl></details>"
+    )
+
+
+def _validate_link(url: str) -> bool:
+    # markdown-it rejects ``file:`` outright; the reader turns those into /view
+    # links, so allow the scheme while keeping javascript:/vbscript:/data: out.
+    if url.strip().lower().startswith("file:"):
+        return True
+    return _normalize_url.validateLink(url)
+
+
+def _wikilink_rule(state: Any, silent: bool) -> bool:
+    """``[[Note]]``, ``[[Note|Alias]]``, ``[[Note#Heading]]``, ``![[image.png]]``."""
+    ctx = (state.env or {}).get("askw") if state.env is not None else None
+    if ctx is None or ctx.vault is None:
+        return False  # non-vault markdown keeps the literal text
+    src: str = state.src
+    pos: int = state.pos
+    embed = False
+    if src.startswith("![[", pos):
+        embed = True
+        start = pos + 3
+    elif src.startswith("[[", pos):
+        start = pos + 2
+    else:
+        return False
+    end = src.find("]]", start, state.posMax)
+    if end < 0:
+        return False
+    inner = src[start:end]
+    if not inner.strip() or "\n" in inner or "[[" in inner:
+        return False
+    if silent:
+        return True
+    target, _, alias = inner.partition("|")
+    target = target.strip()
+    alias = alias.strip()
+    base, _, heading = target.partition("#")
+    base = base.strip()
+    label = alias or target
+    vault = ctx.vault
+    resolved = None
+    if base:
+        resolved = vault.resolve_embed(base, source=ctx.doc_path) if embed else vault.resolve_wikilink(base, source=ctx.doc_path)
+
+    from .vault import IMAGE_EXTENSIONS  # local import keeps module dependency one-way
+
+    if resolved is not None and embed and resolved.path.suffix.lower() in IMAGE_EXTENSIONS:
+        token = state.push("image", "img", 0)
+        token.attrSet("src", urllib.parse.quote(str(resolved.path)))
+        if alias.isdigit():
+            token.attrSet("width", alias)
+        child = Token("text", "", 0)
+        child.content = "" if alias.isdigit() else (alias or resolved.name)
+        token.children = [child]
+    elif resolved is not None and resolved.path.suffix.lower() in LOCAL_DOCUMENT_EXTENSIONS:
+        token = state.push("link_open", "a", 1)
+        href = ctx.view_url(resolved.path)
+        if heading and not embed:
+            href += "#" + urllib.parse.quote(heading.strip())
+        token.attrSet("href", href)
+        token.attrSet("class", "askw-wikilink askw-embed" if embed else "askw-wikilink")
+        token.attrSet("title", resolved.rel)
+        token.meta["askw_local"] = True
+        text = state.push("text", "", 0)
+        text.content = label if (alias or not embed) else resolved.name
+        state.push("link_close", "a", -1)
+    else:
+        token = state.push("wikilink_missing_open", "span", 1)
+        token.attrSet("class", "askw-wikilink-missing")
+        token.attrSet(
+            "title",
+            "Unsupported embed" if resolved is not None else f"No note named “{base or target}”",
+        )
+        text = state.push("text", "", 0)
+        text.content = label
+        state.push("wikilink_missing_close", "span", -1)
+    state.pos = end + 2
+    return True
+
+
+def _render_link_open(self: Any, tokens: Any, idx: int, options: Any, env: Any) -> str:
+    token = tokens[idx]
+    ctx = (env or {}).get("askw") if env is not None else None
+    href = token.attrGet("href")
+    if isinstance(href, str) and ctx is not None and not token.meta.get("askw_local"):
+        href = ctx.rewrite_href(href)
+        token.attrSet("href", href)
+    token.attrSet("rel", "noreferrer noopener")
+    if isinstance(href, str) and href.lower().startswith(("http://", "https://")):
+        token.attrSet("target", "_top")  # leave the reader frame; a no-op at top level
+    return self.renderToken(tokens, idx, options, env)
+
+
+def _build_markdown() -> MarkdownIt:
     # markdown-it escapes raw HTML and rejects unsafe URL schemes under the
     # CommonMark preset. Tables are the one GitHub-style extension readers need
     # most often; everything remains local and deterministic.
-    rendered = _MARKDOWN.render(raw)
-    rendered = rendered.replace('<a href="', '<a rel="noreferrer noopener" href="')
-    return _reading_shell(title, rendered, kind="markdown")
+    md = MarkdownIt(
+        "commonmark",
+        {
+            "html": False,
+            "linkify": False,
+            "typographer": False,
+        },
+    ).enable("table")
+    md.validateLink = _validate_link  # type: ignore[method-assign]
+    # Before ``link`` so ``[[Note]]`` is never mistaken for a reference link.
+    # ``backticks`` runs earlier, so wikilinks inside code spans stay literal.
+    md.inline.ruler.before("link", "wikilink", _wikilink_rule)
+    md.add_render_rule("link_open", _render_link_open)
+    return md
+
+
+_MARKDOWN = _build_markdown()
+
+
+def _markdown_html(raw: str, title: str, *, ctx: RenderContext) -> str:
+    block, body = split_frontmatter(raw)
+    env: dict[str, Any] = {"askw": ctx}
+    properties = _render_properties(block, _MARKDOWN, env) if block is not None else ""
+    rendered = _MARKDOWN.render(body, env)
+    return _reading_shell(title, properties + rendered, kind="markdown")
 
 
 def _reading_shell(title: str, body: str, *, kind: str) -> str:
@@ -200,6 +488,10 @@ table{{width:100%;margin:1.4em 0;border-collapse:collapse;font-size:.92em}} th,t
 hr{{border:0;border-top:1px solid rgb(var(--reader-line)/.14);margin:2em 0}} img{{max-width:100%;height:auto}}
 .askw-pdf-page{{position:relative;margin:0 0 32px;padding:36px 44px;border:1px solid rgb(var(--reader-line)/.11);background:rgb(var(--reader-pane)/.64);box-shadow:0 8px 24px rgb(0 0 0/.07);backdrop-filter:blur(12px)}}
 .askw-page-label{{margin:0 0 24px;color:rgb(var(--reader-faint));font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}}
+.askw-properties{{margin:0 0 1.6em;padding:9px 14px;border:1px solid rgb(var(--reader-line)/.12);border-radius:10px;background:rgb(var(--reader-code)/.5);font-size:.88em}} .askw-properties summary{{cursor:pointer;color:rgb(var(--reader-muted));font-weight:600;letter-spacing:.02em}}
+.askw-properties dl{{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;margin:10px 0 2px}} .askw-properties dt{{color:rgb(var(--reader-muted));font-weight:600}} .askw-properties dd{{margin:0;overflow-wrap:anywhere}} .askw-properties pre{{margin:8px 0 0}} .askw-empty{{color:rgb(var(--reader-faint))}}
+.askw-tag{{display:inline-block;margin:0 4px 2px 0;padding:1px 8px;border-radius:999px;background:rgb(var(--reader-accent)/.12);color:rgb(var(--reader-accent));font-size:.85em}}
+.askw-wikilink-missing{{border-bottom:1px dotted rgb(var(--reader-faint));color:rgb(var(--reader-muted));cursor:help}} a.askw-embed{{display:inline-block;padding:1px 8px;border:1px dashed rgb(var(--reader-line)/.25);border-radius:6px;text-decoration:none}} a.askw-embed::before{{content:"⧉ ";opacity:.6}}
 @media(prefers-color-scheme:dark){{:root{{--reader-bg:24 24 24;--reader-pane:31 31 31;--reader-ink:245 245 245;--reader-muted:205 205 205;--reader-faint:143 143 143;--reader-line:255 255 255;--reader-code:48 48 48}} body{{background:rgb(var(--reader-bg)/.70)}} main{{background:rgb(var(--reader-pane)/.78);box-shadow:0 18px 60px rgb(0 0 0/.28)}}}}
 @media(max-width:720px){{main{{padding:36px 24px}}}}
 @media(prefers-reduced-transparency:reduce){{body,main,.askw-pdf-page{{backdrop-filter:none}} body{{background:rgb(var(--reader-bg))}} main{{background:rgb(var(--reader-pane))}}}}
@@ -238,7 +530,19 @@ def _pdf_html(path: Path) -> LoadedDocument:
     )
 
 
-def load_local_document(path: Path) -> LoadedDocument:
+def load_local_document(
+    path: Path,
+    *,
+    display_path: Path | None = None,
+    folder: str | None = None,
+    vault: "VaultIndex | None" = None,
+) -> LoadedDocument:
+    """Load a local document for the reader.
+
+    ``path`` is read from disk; ``display_path`` (default ``path``) is the lexical
+    path relative links and wikilinks resolve against — they differ for a note
+    under a symlinked vault folder.
+    """
     suffix = path.suffix.lower()
     if suffix not in LOCAL_DOCUMENT_EXTENSIONS:
         raise ViewerError("Supported local documents: HTML, Markdown, text, and PDF.")
@@ -250,9 +554,16 @@ def load_local_document(path: Path) -> LoadedDocument:
         title = _html.unescape(re.sub(r"<[^>]+>", "", match.group(1))).strip() if match else path.stem
         return LoadedDocument(raw, title or path.stem, "html")
     if suffix in {".md", ".markdown"}:
-        heading = re.search(r"^#\s+(.+)$", raw, re.MULTILINE)
-        title = heading.group(1).strip() if heading else path.stem
-        return LoadedDocument(_markdown_html(raw, title), title, "markdown")
+        block, body = split_frontmatter(raw)
+        heading = re.search(r"^#\s+(.+)$", body, re.MULTILINE)
+        title = heading.group(1).strip() if heading else ""
+        if not title and block:
+            fields = parse_flat_frontmatter(block) or {}
+            front_title = fields.get("title")
+            title = front_title.strip() if isinstance(front_title, str) else ""
+        title = title or path.stem
+        ctx = RenderContext(doc_path=display_path or path, folder=folder, vault=vault)
+        return LoadedDocument(_markdown_html(raw, title, ctx=ctx), title, "markdown")
     title = path.stem
     body = f"<h1>{_html.escape(title)}</h1><pre>{_html.escape(raw)}</pre>"
     return LoadedDocument(_reading_shell(title, body, kind="text"), title, "text")
@@ -269,7 +580,7 @@ def _rewrite_asset(
     # Local: resolve against the document's on-disk directory, register the exact
     # file in `sink` (the /_fs allowlist), and rewrite to a /_fs URL.
     assert doc_dir is not None
-    target = (doc_dir / ref).resolve()
+    target = (doc_dir / urllib.parse.unquote(ref)).resolve()
     sink.add(str(target))
     return fs_prefix + urllib.parse.quote(str(target))
 

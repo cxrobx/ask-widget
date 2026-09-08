@@ -3,11 +3,20 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import quote
 
 from reportlab.pdfgen import canvas
 
 from ask_widget.citations import extract_citations
-from ask_widget.viewer import ViewerError, load_local_document, prepare_html, validate_remote_url
+from ask_widget.vault import VaultIndex
+from ask_widget.viewer import (
+    ViewerError,
+    load_local_document,
+    parse_flat_frontmatter,
+    prepare_html,
+    split_frontmatter,
+    validate_remote_url,
+)
 
 
 class ViewerAndCitationTests(unittest.TestCase):
@@ -38,6 +47,124 @@ class ViewerAndCitationTests(unittest.TestCase):
             self.assertNotIn('href="javascript:', loaded.html)
             self.assertIn("prefers-color-scheme:dark", loaded.html)
             self.assertIn("backdrop-filter:blur(22px)", loaded.html)
+
+    def test_frontmatter_becomes_a_properties_block(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "note.md"
+            path.write_text(
+                "---\n"
+                "title: \"Quoted title\"\n"
+                "tags: [career, 'ai-lab']\n"
+                "aliases:\n"
+                "  - Trusted Counselor\n"
+                "  - TC\n"
+                "status:\n"
+                "created: 2026-07-02\n"
+                "# a comment\n"
+                "---\n\n"
+                "# Real heading\n\nBody text.\n",
+                encoding="utf-8",
+            )
+            loaded = load_local_document(path)
+            self.assertEqual(loaded.title, "Real heading")
+            self.assertIn('<details class="askw-properties"><summary>Properties · 5</summary>', loaded.html)
+            self.assertIn('<span class="askw-tag">#career</span><span class="askw-tag">#ai-lab</span>', loaded.html)
+            self.assertIn("<dd>Trusted Counselor, TC</dd>", loaded.html)
+            self.assertIn('<dt>status</dt><dd><span class="askw-empty">—</span></dd>', loaded.html)
+            self.assertIn("<dd>Quoted title</dd>", loaded.html)
+            self.assertNotIn("<hr", loaded.html)
+            self.assertNotIn("created: 2026", loaded.html)
+
+            path.write_text("---\ntitle: From frontmatter\n---\n\nNo heading here.\n", encoding="utf-8")
+            self.assertEqual(load_local_document(path).title, "From frontmatter")
+
+            path.write_text("---\nnested:\n  deep: value\n---\n\n# Nested\n", encoding="utf-8")
+            nested = load_local_document(path)
+            self.assertIn('<details class="askw-properties"><summary>Properties</summary><pre>', nested.html)
+            self.assertIn("deep: value", nested.html)
+            self.assertEqual(nested.title, "Nested")
+
+            path.write_text("---\n\nJust a rule, then prose\n\n---\n\nmore\n", encoding="utf-8")
+            rule = load_local_document(path)
+            self.assertEqual(rule.html.count("<hr />"), 2)
+            self.assertIn("Just a rule, then prose", rule.html)
+            self.assertEqual(split_frontmatter("---\n---\nbody")[0], "")
+            self.assertIsNone(parse_flat_frontmatter("a:\n  b: c"))
+
+    def test_relative_document_links_rewrite_to_the_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "notes").mkdir()
+            path = root / "notes" / "Index.md"
+            path.write_text(
+                "[x](How%20to.md) [y](../B.md#sec) [site](https://example.com/a.md) "
+                "[img](notes.png) [f](file:///tmp/nope.md) [same](#local)\n",
+                encoding="utf-8",
+            )
+            loaded = load_local_document(path, folder=str(root))
+            self.assertIn(
+                f'href="/view?src={quote(str(root / "notes" / "How to.md"))}&amp;folder={quote(str(root))}"',
+                loaded.html,
+            )
+            self.assertIn(f'href="/view?src={quote(str(root / "B.md"))}&amp;folder={quote(str(root))}#sec"', loaded.html)
+            self.assertIn('href="https://example.com/a.md" rel="noreferrer noopener" target="_top"', loaded.html)
+            self.assertIn('href="notes.png"', loaded.html)
+            self.assertIn('href="file:///tmp/nope.md"', loaded.html)  # absent file stays untouched
+            self.assertIn('href="#local"', loaded.html)
+
+    def test_wikilinks_render_only_in_vault_context(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            vault = Path(raw) / "vault"
+            (vault / "Other" / "Attachments").mkdir(parents=True)
+            alpha = vault / "Alpha.md"
+            alpha.write_text(
+                "[[Beta]] and [[Beta|the alias]] and [[Beta#Part]] and `[[Beta]]` and [[Nowhere]] "
+                "![[Pasted image.png]] ![[Beta]] ![[song.mp3]]\n",
+                encoding="utf-8",
+            )
+            (vault / "Beta.md").write_text("# Beta\n", encoding="utf-8")
+            (vault / "Other" / "Attachments" / "Pasted image.png").write_bytes(b"png")
+            (vault / "song.mp3").write_bytes(b"mp3")
+            index = VaultIndex.build(vault)
+            loaded = load_local_document(alpha, folder=str(vault), vault=index)
+            beta = quote(str(vault / "Beta.md"))
+            self.assertIn(f'<a href="/view?src={beta}&amp;folder={quote(str(vault))}" class="askw-wikilink" title="Beta.md" rel="noreferrer noopener">Beta</a>', loaded.html)
+            self.assertIn('class="askw-wikilink" title="Beta.md" rel="noreferrer noopener">the alias</a>', loaded.html)
+            self.assertIn(f'href="/view?src={beta}&amp;folder={quote(str(vault))}#Part"', loaded.html)
+            self.assertIn("<code>[[Beta]]</code>", loaded.html)
+            self.assertIn('<span class="askw-wikilink-missing" title="No note named “Nowhere”">Nowhere</span>', loaded.html)
+            self.assertIn(f'<img src="{quote(str(vault / "Other" / "Attachments" / "Pasted image.png"))}" alt="Pasted image.png" />', loaded.html)
+            self.assertIn('class="askw-wikilink askw-embed" title="Beta.md" rel="noreferrer noopener">Beta.md</a>', loaded.html)
+            self.assertIn('<span class="askw-wikilink-missing" title="Unsupported embed">song.mp3</span>', loaded.html)
+
+            plain = load_local_document(alpha, folder=str(vault))
+            self.assertIn("[[Beta]] and [[Beta|the alias]]", plain.html)
+            self.assertNotIn('class="askw-wikilink', plain.html)
+
+            html, assets = prepare_html(
+                str(alpha),
+                html_text=loaded.html,
+                server_origin="http://127.0.0.1:8899",
+                folder=str(vault),
+                asset_token="cap",
+            )
+            self.assertIn("/_fs/cap/", html)
+            self.assertEqual(assets, {str((vault / "Other" / "Attachments" / "Pasted image.png").resolve())})
+
+    def test_percent_encoded_relative_images_are_registered(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            image = root / "Pasted image.png"
+            image.write_bytes(b"png")
+            html, assets = prepare_html(
+                str(root / "doc.html"),
+                html_text='<html><body><img src="Pasted%20image.png"></body></html>',
+                server_origin="http://127.0.0.1:8899",
+                folder=str(root),
+                asset_token="cap",
+            )
+            self.assertEqual(assets, {str(image.resolve())})
+            self.assertIn("/_fs/cap" + quote(str(image.resolve())), html)
 
     def test_pdf_reader_preserves_page_numbers(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
