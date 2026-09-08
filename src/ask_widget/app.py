@@ -43,7 +43,8 @@ from .launcher_ui import launcher_page
 from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
 from .providers import find_claude, find_codex, provider_catalogs, provider_status
 from .storage import Storage
-from . import handoff, viewer
+from .vault_ui import vault_page
+from . import handoff, vault, viewer
 from . import __version__
 
 logger = logging.getLogger("ask_widget.app")
@@ -160,6 +161,27 @@ def _resolve_folder(app: FastAPI, raw: str | None) -> Path | None:
     return None
 
 
+def _vault_root(app: FastAPI) -> Path | None:
+    """The configured vault folder (lexical, normalized) or None when unset/missing."""
+    config: AppConfig = app.state.config
+    raw = str(app.state.storage.settings(model_default=config.model).get("vault_root") or "").strip()
+    if not raw:
+        return None
+    root = vault.normalize(Path(raw).expanduser())
+    try:
+        return root if root.is_absolute() and root.is_dir() else None
+    except OSError:
+        return None
+
+
+def _register_vault_root(app: FastAPI) -> None:
+    # The vault is browsed through /view with folder=<vault>, so it must also be
+    # an allowed context root or the reader's folder seed silently falls back.
+    root = _vault_root(app)
+    if root is not None:
+        app.state.storage.add_root(root)
+
+
 def _decode_sse(chunk: str) -> tuple[str | None, dict]:
     event = None
     payload: dict = {}
@@ -208,6 +230,8 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.config = config
     app.state.storage = storage
     app.state.storage.sync_builtin_roots(config.allowed_roots)
+    app.state.vault = vault.VaultCache(ttl=5.0)
+    _register_vault_root(app)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENT)
     app.state.recent_folders = [str(config.default_folder)]
     # Per-document expiring capabilities replace the old process-wide asset set.
@@ -320,6 +344,8 @@ def create_app(config: AppConfig) -> FastAPI:
         # must match, or the injected ask.js would be cross-origin).
         origin = str(request.base_url).rstrip("/")
         settings = app.state.storage.settings(model_default=config.model)
+        seed_path = _resolve_folder(app, folder) if folder else config.default_folder
+        seed = str(seed_path) if seed_path else None
         try:
             if viewer.is_remote(src):
                 html_text = await asyncio.to_thread(
@@ -352,8 +378,22 @@ def create_app(config: AppConfig) -> FastAPI:
                         ),
                         status_code=400,
                     )
+                # ``lexical`` is the path as the user sees it (a note under a
+                # symlinked vault folder stays vault-visible); ``path`` is the
+                # realpath used for history, positions, and live reload.
+                lexical = vault.normalize(candidate)
                 path = candidate.resolve()
-                loaded = await asyncio.to_thread(viewer.load_local_document, path)
+                root = _vault_root(app)
+                index = None
+                if root is not None and vault.is_inside(lexical, root):
+                    index = await asyncio.to_thread(app.state.vault.get, root)
+                loaded = await asyncio.to_thread(
+                    viewer.load_local_document,
+                    path,
+                    display_path=lexical,
+                    folder=seed,
+                    vault=index,
+                )
                 html_text = loaded.html
                 doc_src = str(path)
                 title = loaded.title
@@ -361,8 +401,6 @@ def create_app(config: AppConfig) -> FastAPI:
                 page_count = loaded.page_count
         except viewer.ViewerError as exc:
             return HTMLResponse(_error_page(str(exc)), status_code=400)
-        seed_path = _resolve_folder(app, folder) if folder else config.default_folder
-        seed = str(seed_path) if seed_path else None
         capability = secrets.token_urlsafe(18)
         interactive_local_html = kind == "html" and not viewer.is_remote(doc_src)
         out, assets = viewer.prepare_html(
@@ -399,6 +437,29 @@ def create_app(config: AppConfig) -> FastAPI:
         )
         csp = f"{script_src}; connect-src 'self'; object-src 'none'; base-uri 'none'"
         return HTMLResponse(out, headers={"Content-Security-Policy": csp})
+
+    @app.get("/vault", response_class=HTMLResponse)
+    async def vault_view(
+        request: Request,
+        src: str | None = None,
+        history: str | None = None,
+        history_action: str | None = None,
+    ):
+        if not _host_allowed(request.headers.get("host", ""), config.port):
+            return HTMLResponse(_error_page("Refused: host not allowed."), status_code=403)
+        settings = app.state.storage.settings(model_default=config.model)
+        root = _vault_root(app)
+        reader_query = None
+        if src and root is not None:
+            params = {"src": src, "folder": str(root)}
+            if history:
+                params["history"] = history
+            if history_action:
+                params["history_action"] = history_action
+            reader_query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote, safe="/")
+        return HTMLResponse(
+            vault_page(config, settings, root=root, src=src if root is not None else None, reader_query=reader_query)
+        )
 
     @app.get("/_fs/{capability}/{path:path}")
     async def fs_asset(request: Request, capability: str, path: str):
@@ -533,6 +594,53 @@ def create_app(config: AppConfig) -> FastAPI:
             headers=_cors_headers(request.headers.get("origin")),
         )
 
+    @app.get("/api/vault/tree")
+    async def vault_tree_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        cors = _cors_headers(request.headers.get("origin"))
+        root = _vault_root(app)
+        if root is None:
+            return JSONResponse(
+                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=cors
+            )
+        index = await asyncio.to_thread(app.state.vault.get, root)
+        return JSONResponse(
+            {
+                "ok": True,
+                "root": str(root),
+                "built_at": index.built_at,
+                "files": len(index.notes),
+                "truncated": index.truncated,
+                "tree": index.tree_json(),
+            },
+            headers=cors,
+        )
+
+    @app.get("/api/vault/search")
+    async def vault_search_api(request: Request, q: str = "", limit: int = 50):
+        if denied := api_forbidden(request):
+            return denied
+        cors = _cors_headers(request.headers.get("origin"))
+        root = _vault_root(app)
+        if root is None:
+            return JSONResponse(
+                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=cors
+            )
+        q = q[:200]
+        limit = max(1, min(limit, 200))
+        index = await asyncio.to_thread(app.state.vault.get, root)
+        items, truncated = index.search(q, limit=limit)
+        return JSONResponse(
+            {
+                "ok": True,
+                "q": q,
+                "items": [{"name": item.name, "path": str(item.path), "folder": item.folder} for item in items],
+                "truncated": truncated,
+            },
+            headers=cors,
+        )
+
     @app.get("/api/settings")
     async def settings_api(request: Request):
         if denied := api_forbidden(request):
@@ -619,6 +727,9 @@ def create_app(config: AppConfig) -> FastAPI:
             )
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        if "vault_root" in patch and settings.get("vault_root"):
+            app.state.storage.add_root(Path(str(settings["vault_root"])))
+        app.state.vault.invalidate()
         return {"ok": True, "settings": settings}
 
     @app.post("/api/roots")

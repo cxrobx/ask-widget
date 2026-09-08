@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +12,24 @@ from fastapi.testclient import TestClient
 from ask_widget.app import create_app
 from ask_widget.claude_runner import _sse
 from ask_widget.config import AppConfig
+from ask_widget.storage import Storage
+
+
+def make_vault(base: Path) -> tuple[Path, Path]:
+    vault = base / "vault"
+    outside = base / "outside"
+    (vault / "notes").mkdir(parents=True)
+    (vault / ".obsidian").mkdir()
+    outside.mkdir()
+    (vault / "notes" / "Alpha.md").write_text(
+        "---\ntags: [career]\n---\n\n# Alpha\n\nSee [[Beta]] and [[Nowhere]].\n", encoding="utf-8"
+    )
+    (vault / "Beta.md").write_text("# Beta\n", encoding="utf-8")
+    (vault / ".obsidian" / "workspace.md").write_text("# Hidden\n", encoding="utf-8")
+    (outside / "L.md").write_text("# Linked\n\n[[M]]\n", encoding="utf-8")
+    (outside / "M.md").write_text("# M\n", encoding="utf-8")
+    (vault / "linked").symlink_to(outside, target_is_directory=True)
+    return vault, outside
 
 
 class ApiTests(unittest.TestCase):
@@ -237,3 +256,123 @@ class ApiTests(unittest.TestCase):
         exported = self.client.get("/api/export", params={"src": str(self.document)})
         self.assertEqual(exported.status_code, 200)
         self.assertIn("Guide", exported.text)
+
+
+class VaultApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.root = self.base / "context"
+        self.root.mkdir()
+        self.vault, self.outside = make_vault(self.base)
+        self.config = AppConfig(
+            default_folder=self.root,
+            allowed_roots=(self.root,),
+            port=8899,
+            data_dir=self.base / "data",
+        )
+        self.app = create_app(self.config)
+        self.client_context = TestClient(self.app, base_url="http://127.0.0.1:8899")
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        self.temp.cleanup()
+
+    def set_vault(self, value: str):
+        return self.client.post(
+            "/api/settings", json={"token": self.config.token, "settings": {"vault_root": value}}
+        )
+
+    def test_saving_vault_root_registers_an_allowed_root(self) -> None:
+        self.assertEqual(self.set_vault(str(self.vault)).status_code, 200)
+        roots = [item["path"] for item in self.client.get("/api/settings").json()["roots"]]
+        self.assertIn(str(self.vault.resolve()), roots)
+        self.assertEqual(self.client.get("/api/settings").json()["settings"]["vault_root"], str(self.vault))
+        invalid = self.set_vault(str(self.base / "missing"))
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("does not exist", invalid.json()["error"])
+
+    def test_tree_and_search_are_scoped_and_guarded(self) -> None:
+        self.set_vault(str(self.vault))
+        tree = self.client.get("/api/vault/tree").json()
+        self.assertTrue(tree["ok"])
+        self.assertEqual(tree["root"], str(self.vault))
+        self.assertEqual(tree["files"], 4)
+        names = [child["name"] for child in tree["tree"]["children"]]
+        self.assertEqual(names, ["linked", "notes", "Beta.md"])
+        self.assertNotIn(".obsidian", names)
+        linked = next(child for child in tree["tree"]["children"] if child["name"] == "linked")
+        self.assertTrue(linked["symlink"])
+        self.assertEqual(linked["children"][0]["path"], str(self.vault / "linked" / "L.md"))
+        self.assertNotIn(str(self.outside), str(tree))
+
+        search = self.client.get("/api/vault/search", params={"q": "al"}).json()
+        self.assertEqual([item["name"] for item in search["items"]], ["Alpha.md"])
+        self.assertEqual(search["items"][0]["folder"], "notes")
+        self.assertEqual(self.client.get("/api/vault/search", params={"q": ""}).json()["items"], [])
+
+        forbidden = self.client.get("/api/vault/tree", headers={"origin": "https://attacker.example"})
+        self.assertEqual(forbidden.status_code, 403)
+
+        self.set_vault("")
+        unset = self.client.get("/api/vault/tree")
+        self.assertEqual(unset.status_code, 400)
+        self.assertEqual(unset.json()["error"], "No vault folder is configured.")
+        self.assertEqual(self.client.get("/api/vault/search", params={"q": "al"}).status_code, 400)
+
+    def test_vault_page_embeds_the_reader_iframe(self) -> None:
+        self.set_vault(str(self.vault))
+        note = self.vault / "notes" / "Alpha.md"
+        page = self.client.get("/vault", params={"src": str(note), "history": "abc", "history_action": "rerun"})
+        self.assertEqual(page.status_code, 200)
+        expected = urllib.parse.urlencode(
+            {"src": str(note), "folder": str(self.vault), "history": "abc", "history_action": "rerun"},
+            quote_via=urllib.parse.quote,
+            safe="/",
+        )
+        self.assertIn(f'<iframe id=reader name=reader src="/view?{expected.replace("&", "&amp;")}"', page.text)
+        self.assertIn("<title>Alpha.md — Vault</title>", page.text)
+        self.assertIn('data-href=/vault>Vault</button>', self.client.get("/").text)
+        self.assertIn("id=vault-form", self.client.get("/").text)
+        blank = self.client.get("/vault")
+        self.assertIn('src="about:blank"', blank.text)
+        self.assertEqual(
+            self.client.get("/vault", headers={"host": "attacker.example"}).status_code, 403
+        )
+
+    def test_symlinked_vault_note_keeps_vault_visible_links(self) -> None:
+        self.set_vault(str(self.vault))
+        note = self.vault / "linked" / "L.md"
+        page = self.client.get("/view", params={"src": str(note), "folder": str(self.vault)})
+        self.assertEqual(page.status_code, 200)
+        sibling = urllib.parse.quote(str(self.vault / "linked" / "M.md"))
+        # The folder seed is the resolved context folder (as ask.js expects);
+        # the link target stays the vault-visible path through the symlink.
+        self.assertIn(
+            f'href="/view?src={sibling}&amp;folder={urllib.parse.quote(str(self.vault.resolve()))}"', page.text
+        )
+        self.assertIn(
+            f'<meta name="askw-src" content="{(self.outside / "L.md").resolve()}">', page.text
+        )
+        self.assertNotIn(str(self.outside.resolve() / "M.md"), page.text)
+
+        alpha = self.client.get("/view", params={"src": str(self.vault / "notes" / "Alpha.md")})
+        self.assertIn('class="askw-properties"', alpha.text)
+        self.assertIn('class="askw-wikilink-missing"', alpha.text)
+        self.assertIn(urllib.parse.quote(str(self.vault / "Beta.md")), alpha.text)
+
+        outside_note = self.client.get("/view", params={"src": str(self.outside / "L.md")})
+        self.assertIn("[[M]]", outside_note.text)  # outside the vault: literal wikilink
+
+    def test_startup_registers_the_configured_vault_root(self) -> None:
+        data = self.base / "seeded"
+        store = Storage(data)
+        store.update_settings({"vault_root": str(self.vault)}, model_default="sonnet")
+        store.close()
+        app = create_app(
+            AppConfig(default_folder=self.root, allowed_roots=(self.root,), port=8899, data_dir=data)
+        )
+        roots = [item["path"] for item in app.state.storage.roots()]
+        self.assertIn(str(self.vault.resolve()), roots)
+        app.state.storage.close()

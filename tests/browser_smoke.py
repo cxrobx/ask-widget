@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from ask_widget.app import create_app
 from ask_widget.config import AppConfig
+from ask_widget.storage import Storage
 
 
 class BrowserSmokeTests(unittest.TestCase):
@@ -155,7 +156,8 @@ class BrowserSmokeTests(unittest.TestCase):
             nav_widths = page.locator("nav button").evaluate_all(
                 "buttons => buttons.map(button => button.getBoundingClientRect().width)"
             )
-            self.assertTrue(all(width < 190 for width in nav_widths), nav_widths)
+            self.assertEqual(len(nav_widths), 5)
+            self.assertTrue(all(width < 160 for width in nav_widths), nav_widths)
             self.assertLess(page.locator("aside").evaluate("aside => aside.offsetHeight"), 160)
 
             query = urllib.parse.urlencode(
@@ -194,6 +196,79 @@ class BrowserSmokeTests(unittest.TestCase):
             page.get_by_role("button", name="ELII", exact=True).click()
             self.assertEqual(page.locator("html").get_attribute("data-level"), "elii")
             self.assertEqual(page.locator("#state").inner_text(), "elii")
+
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+        self.assertEqual(console_errors, [])
+
+    def test_vault_shell_navigates_reader_iframe(self) -> None:
+        vault = self.root / "vault"
+        (vault / "notes").mkdir(parents=True)
+        alpha = vault / "notes" / "Alpha.md"
+        alpha.write_text(
+            "---\ntags: [career, ai]\nstatus: active\n---\n\n# Alpha\n\n"
+            "Read [[Beta]] next, or [[Nowhere]] which does not exist.\n\n"
+            "A passage worth selecting for a question.\n",
+            encoding="utf-8",
+        )
+        (vault / "Beta.md").write_text("# Beta\n\nBack to [[Alpha]].\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        storage.add_root(vault)
+
+        console_errors: list[str] = []
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            page.on(
+                "console",
+                lambda message: console_errors.append(message.text)
+                if message.type == "error"
+                else None,
+            )
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+            page.goto(
+                f"{self.base_url}/vault?src={urllib.parse.quote(str(alpha))}",
+                wait_until="networkidle",
+            )
+            reader = page.frame_locator("iframe[name=reader]")
+            self.assertEqual(reader.locator("h1").inner_text(), "Alpha")
+            reader.locator(".askw-properties").wait_for(state="visible")
+            self.assertIn("Properties · 2", reader.locator(".askw-properties summary").inner_text())
+            self.assertEqual(reader.locator(".askw-wikilink-missing").inner_text(), "Nowhere")
+            active = page.locator("#tree a.active")
+            active.wait_for()
+            self.assertTrue(active.get_attribute("data-path").endswith("Alpha.md"))
+            self.assertEqual(page.locator("#vault-count").inner_text(), "2 notes")
+            self.assertTrue(page.locator("#reader-empty").evaluate("el => el.hidden"))
+
+            reader.get_by_role("link", name="Beta", exact=True).click()
+            page.wait_for_function(
+                "() => new URLSearchParams(document.querySelector('iframe[name=reader]').contentWindow.location.search).get('src')?.endsWith('Beta.md')"
+            )
+            page.wait_for_function("() => location.href.includes('Beta.md')")
+            self.assertEqual(reader.locator("h1").inner_text(), "Beta")
+            page.locator("#tree a.active[data-path$='Beta.md']").wait_for()
+            self.assertEqual(page.locator("#tree a.active").count(), 1)
+            self.assertIn("Beta.md", page.url)
+            self.assertIn("Beta", page.title())
+
+            page.locator("#vault-filter").fill("alp")
+            page.locator("#tree .results a.file").wait_for()
+            self.assertEqual(page.locator("#tree .results a.file").count(), 1)
+            page.locator("#tree .results a.file").click()
+            page.wait_for_function("() => location.href.includes('Alpha.md')")
+            page.locator("#vault-filter").fill("")
+            page.locator("#tree details").first.wait_for()
+
+            passage = reader.locator("main p").last
+            passage.select_text()
+            passage.dispatch_event("mouseup", {"button": 0})
+            trigger = reader.get_by_role("button", name="Ask about the selected text")
+            trigger.wait_for(state="visible")
 
             browser.close()
 
