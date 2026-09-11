@@ -12,6 +12,11 @@ script only builds the tree, keeps the highlight in sync with whatever the
 reader currently shows, drives the filter box, the rows' right-click menu
 (``static/app-menu.js``: Reveal in Finder, and ⌥ Copy Path), and (HTML) the
 add panel.
+
+Switching vaults happens in place, never by loading the other vault's page: a
+load blanks the glass window for a frame and leaves the tree reading "Loading…"
+until it is fetched again, so the whole sidebar flickered. The page carries both
+vaults' chrome and keeps both trees, and ``switchVault`` swaps one for the other.
 """
 
 from __future__ import annotations
@@ -31,6 +36,12 @@ PIN_ICON = (
     'stroke-linejoin="round" aria-hidden="true"><path class="pin-head" d="M6.75 2.25v3.5L4.75 8.5h6.5l-2-2.75v-3.5z"/>'
     '<path d="M5.75 2.25h4.5M8 8.5v5.25"/></svg>'
 )
+
+# What each vault calls itself in the shell. Both ride along in the page, so a switch swaps them in place.
+VAULT_LABELS = {
+    "notes": {"name": "Vault", "unit": "note", "units": "notes", "empty": "Pick a note from the tree."},
+    "html": {"name": "Artifacts", "unit": "page", "units": "pages", "empty": "Pick a page from the sidebar."},
+}
 
 # The tree's glyphs: a folder that opens with its <details>, and the hover card's rows.
 _SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"{cls}>{body}</svg>'
@@ -70,6 +81,7 @@ def vault_page(
     sidebar_state = json.dumps({"revision": sidebar.get("revision", ""), "folders": sidebar.get("folders", [])}).replace("<", "\\u003c")
     body_class = f"kind-{kind}" + (" obsidian-tree" if sidebar_css else "")
     html_kind = kind == "html"
+    labels = VAULT_LABELS["html" if html_kind else "notes"]
     version = html.escape(__version__)
     shared_style = theme_style(settings)
     glass_js = glass_script(settings)
@@ -77,37 +89,37 @@ def vault_page(
     initial_src = json.dumps(src or "")
     root_json = json.dumps(str(root) if root else "")
     token = json.dumps(config.token)
-    vault_name = "Artifacts" if html_kind else "Vault"
+    vault_name = labels["name"]
     title = html.escape(f"{Path(src).name} — {vault_name}" if src else vault_name)
     notes_active = "" if html_kind else " class=active aria-current=page"
     html_active = " class=active aria-current=page" if html_kind else ""
+    # The + and its panel ship with both vaults (CSS shows them only in Artifacts), so a switch needs no reload.
     add_toggle = (
         '<button id=add-toggle class=add-toggle type=button title="Add pages or a folder" '
         'aria-controls=add-panel aria-expanded=false>+</button>'
-        if html_kind
-        else ""
     )
-    add_panel = (
-        """<div id=add-panel class=add-panel hidden><label for=add-dest>Add to</label><select id=add-dest></select>
+    add_panel = """<div id=add-panel class=add-panel hidden><label for=add-dest>Add to</label><select id=add-dest></select>
 <div class=add-row><button type=button class="secondary pick" id=add-pick-files>HTML files…</button><button type=button class="secondary pick" id=add-pick-folder>Folder…</button></div>
 <div class=add-row><input id=add-path placeholder="Paste a path or file:// URL" spellcheck=false autocomplete=off><button type=button class=secondary id=add-path-go>Link</button></div>
 <div class=add-row><input id=add-folder-name placeholder="New folder name" spellcheck=false autocomplete=off><button type=button class=secondary id=add-mkdir>Create</button></div>
 <p id=add-status class=field-help>Links point at the originals; nothing is moved or copied.</p></div>"""
-        if html_kind
-        else ""
-    )
-    empty_hint = "Pick a page from the sidebar." if html_kind else "Pick a note from the tree."
-    units = "pages" if html_kind else "notes"
+    empty_hint = labels["empty"]
+    units = labels["units"]
     return f"""<!doctype html><html data-theme="{theme}"><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>{title}</title>
 <style>
 {shared_style}
 html,body{{height:100%;overflow:hidden}} button,input,select{{font:inherit}}
-.shell{{grid-template-columns:260px minmax(0,1fr);height:100vh;min-height:0}}
+.shell{{grid-template-columns:260px minmax(0,1fr);height:100vh;min-height:0;transition:grid-template-columns .15s cubic-bezier(.2,.8,.2,1)}}
 aside{{display:flex;flex-direction:column;height:100vh;padding:20px 12px 14px;overflow:hidden}} body.native aside{{padding-top:48px}}
 .brand{{margin:0 8px 12px}} .brand-name{{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .add-toggle{{display:grid;place-items:center;width:24px;height:24px;padding:0;border:1px solid var(--line-soft);border-radius:7px;background:rgb(var(--ink)/.055);color:rgb(var(--secondary));font-size:16px;line-height:1}} .add-toggle:hover,.add-toggle[aria-expanded=true]{{background:rgb(var(--ink)/.1);color:rgb(var(--ink))}}
-.vault-switch{{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin:0 0 10px;padding:2px;border-radius:8px;background:rgb(var(--ink)/.06)}} .vault-switch a{{padding:4px 0;border-radius:6px;color:rgb(var(--secondary));font-size:12px;font-weight:600;text-align:center;text-decoration:none}} .vault-switch a:hover{{color:rgb(var(--ink))}} .vault-switch a.active{{background:rgb(var(--bg-elevated)/.92);color:rgb(var(--ink));box-shadow:0 1px 2px rgb(0 0 0/.12)}}
+.vault-switch{{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:2px;margin:0 0 10px;padding:2px;border-radius:8px;background:rgb(var(--ink)/.06)}} .vault-switch a{{position:relative;padding:4px 0;border-radius:6px;color:rgb(var(--secondary));font-size:12px;font-weight:600;text-align:center;text-decoration:none;transition:color .15s}} .vault-switch a:hover,.vault-switch a.active{{color:rgb(var(--ink))}}
+/* Switching vaults: the pill is one piece that slides to the active vault (a column wide: half the padding box, less
+   3 px), the sidebar's width glides with it (.shell above, the floating panel below), and the + comes and goes. */
+.vault-switch::before{{content:"";position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 3px);border-radius:6px;background:rgb(var(--bg-elevated)/.92);box-shadow:0 1px 2px rgb(0 0 0/.12);transition:transform .15s cubic-bezier(.2,.8,.2,1)}} body.kind-html .vault-switch::before{{transform:translateX(calc(100% + 2px))}}
+body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
+@media(prefers-reduced-motion:reduce){{.shell,.vault-switch::before,.vault-switch a{{transition:none}}}}
 .add-panel{{margin:0 0 10px;padding:10px;border:1px solid var(--line-soft);border-radius:10px;background:rgb(var(--bg-surface)/var(--surface-alpha))}} .add-panel label{{display:block;margin:0 0 4px;color:rgb(var(--secondary));font-size:11px;font-weight:650}} .add-panel select{{width:100%;margin:0 0 8px}}
 .add-row{{display:flex;gap:6px;margin:0 0 6px}} .add-row button{{flex:1;padding:5px 8px;border-radius:7px;font-size:12px;font-weight:600;white-space:nowrap}} .add-row input{{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:rgb(var(--bg-input)/.88);color:rgb(var(--ink));font-size:12px}} .add-row input+button{{flex:none}}
 .secondary{{border:1px solid var(--line-soft);background:rgb(var(--ink)/.055);color:rgb(var(--ink))}} .secondary:hover{{border-color:var(--line);background:rgb(var(--ink)/.09)}} .pick{{display:none}} body.native .pick{{display:block}}
@@ -151,29 +163,31 @@ body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-side
 @media(prefers-reduced-transparency:reduce){{body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
 /* Motion: out with an ease-out slide; away with a quicker ease-in one, hidden only once it is off. Reduce Motion fades in place. */
-body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.side-unpinned.side-out #vault-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.side-still #vault-side{{transition:none!important}}
+body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.side-unpinned.side-out #vault-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s,width .15s cubic-bezier(.2,.8,.2,1)}} body.side-still #vault-side{{transition:none!important}}
 @media(prefers-reduced-motion:reduce){{body.side-unpinned #vault-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.side-unpinned.side-out #vault-side{{opacity:1;transition:opacity .15s linear,visibility 0s}}}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
 </style><style id=sidebar-theme>{sidebar_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
-<nav class=vault-switch aria-label="Vaults"><a href="/vault"{notes_active}>Notes</a><a href="/vault?vault=html"{html_active}>Artifacts</a></nav>
+<nav class=vault-switch aria-label="Vaults"><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
 <nav id=tree aria-label="{vault_name} {units}"><div class=none>Loading…</div></nav>
 <div class=aside-foot><a href="/">← Launcher</a> · <span id=vault-count>v{version}</span></div></aside>
-<main id=reader-pane><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
+<main id=reader-pane><div id=reader-empty><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
 <iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe></main></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 <script src=/app-menu.js></script>
 <script>
-const KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; let ROOT={root_json}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+let KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; let ROOT={root_json}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
 const native=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.askwPick); if(native)document.body.classList.add('native');
 {glass_js}
-const HTML=KIND==='html', KEY='askw:vault:'+(HTML?'html:':''), UNIT=HTML?'page':'note';
+// What each vault calls itself; a switch (switchVault, below) moves KIND and everything that hangs off it in place.
+const VAULTS={json.dumps(VAULT_LABELS)}; let HTML,KEY,UNIT,VAULT;
+function setKind(k){{KIND=k;HTML=k==='html';KEY='askw:vault:'+(HTML?'html:':'');VAULT=VAULTS[k];UNIT=VAULT.unit}} setKind(KIND);
 const tree=$('#tree'),reader=$('#reader'),filter=$('#vault-filter'),empty=$('#reader-empty'); let TREE=null;
 function store(k,v){{try{{localStorage.setItem(k,v)}}catch(e){{}}}} function recall(k){{try{{return localStorage.getItem(k)}}catch(e){{return null}}}}
 // Notes remember which folders are OPEN (default shut, the vault is large); HTML
 // remembers which are CLOSED (default open, so a project reads at a glance).
-const FOLD=new Set(); try{{for(const p of JSON.parse(recall(KEY+(HTML?'closed':'open'))||'[]'))FOLD.add(p)}}catch(e){{}}
+const FOLD=new Set(); function loadFold(){{FOLD.clear();try{{for(const p of JSON.parse(recall(KEY+(HTML?'closed':'open'))||'[]'))FOLD.add(p)}}catch(e){{}}}} loadFold();
 function isOpen(path){{return HTML?!FOLD.has(path):FOLD.has(path)}}
 async function api(url){{const r=await fetch(url);const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.error||`HTTP ${{r.status}}`);return d}}
 function viewHref(path){{return '/view?src='+encodeURIComponent(path)+(ROOT&&!HTML?'&folder='+encodeURIComponent(ROOT):'')}}
@@ -189,7 +203,15 @@ function render(n,crumbs){{return n.kind!=='dir'?fileRow(n,crumbs):(HTML&&!hasPa
 function renderTree(){{if(!TREE)return;hidePeek();NODES.clear();const top=HTML?TREE.children.filter(hasPages):TREE.children;tree.innerHTML=top.length?'<ul class=root>'+top.map(c=>render(c,[])).join('')+'</ul>':`<div class=none>${{HTML?'No artifacts yet. Use + to link pages or a folder of them.':'No notes found.'}}</div>`;tree.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{{const shut=!d.open;if(HTML?shut:!shut)FOLD.add(d.dataset.path);else FOLD.delete(d.dataset.path);store(KEY+(HTML?'closed':'open'),JSON.stringify([...FOLD]))}}));highlight(currentSrc());applyTints();if(HTML)fillDestinations()}}
 function currentSrc(){{try{{const l=reader.contentWindow.location;if(!l||!l.href||l.href==='about:blank')return '';return new URLSearchParams(l.search).get('src')||''}}catch(e){{return ''}}}}
 function highlight(src){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:'nearest'}})}}
-async function loadTree(){{try{{const d=await api('/api/vault/tree?vault='+KIND);ROOT=d.root;TREE=d.tree;$('#vault-count').textContent=d.files+' '+UNIT+(d.files===1?'':'s')+(d.missing?' · '+d.missing+' missing':'')+(d.truncated?' (truncated)':'');renderTree()}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}} <a href="/#settings">Open Settings</a></div>`;$('#vault-count').textContent=HTML?'no Artifacts folder':'no vault'}}}}
+// Both vaults' trees are kept (TREES), so a switch shows the other at once; each is fetched again behind it, and the
+// list is redrawn only if that brought something new.
+const TREES={{}};
+async function fetchTree(k){{try{{TREES[k]=await api('/api/vault/tree?vault='+k)}}catch(e){{TREES[k]={{error:e.message}}}}return TREES[k]}}
+function showTree(){{const d=TREES[KIND];if(!d)return;if(d.error){{TREE=null;ROOT='';tree.innerHTML=`<div class=none>${{esc(d.error)}} <a href="/#settings">Open Settings</a></div>`;$('#vault-count').textContent=HTML?'no Artifacts folder':'no vault';return}}ROOT=d.root;TREE=d.tree;$('#vault-count').textContent=d.files+' '+UNIT+(d.files===1?'':'s')+(d.missing?' · '+d.missing+' missing':'')+(d.truncated?' (truncated)':'');renderTree()}}
+function sameTree(a,b){{return !!a&&!!b&&a.error===b.error&&a.files===b.files&&a.missing===b.missing&&a.truncated===b.truncated&&JSON.stringify(a.tree)===JSON.stringify(b.tree)}}
+async function loadTree(){{const k=KIND,was=TREES[k],d=await fetchTree(k);if(k===KIND&&!sameTree(was,d))showTree()}}
+// The vault a page lives in: the one whose root it sits under (the deeper, should one hold the other); '' for neither.
+function vaultOf(src){{let best='',depth=0;for(const k in TREES){{const r=TREES[k].root;if(r&&r.length>depth&&src.startsWith(r+'/')){{best=k;depth=r.length}}}}return best}}
 // MARK: sidebar — pinned or unpinned, remembered across both vaults ("collapsed" is the old word for unpinned). Unpinned,
 // it comes out after a beat on the left edge and goes a moment after the pointer leaves, unless it is in use: a row menu
 // open, the + panel open, or typing in one of its fields. ⌘\\ pins and unpins, also while focus is inside the reader.
@@ -203,9 +225,11 @@ function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.sh
 pin.onclick=()=>setPinned(!pinned()); document.addEventListener('keydown',sideKey);
 edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),40)}}); edge.addEventListener('mouseleave',e=>{{if(side.contains(e.relatedTarget))return;clearTimeout(sideTimer);if(document.body.classList.contains('side-out'))sideLater()}});
 side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}); side.addEventListener('mouseleave',()=>{{sideOver=false;sideLater()}}); side.addEventListener('focusout',()=>{{if(!sideOver)sideLater()}});
-reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'Artifacts':'Vault');store(KEY+'last',src)}});
+// History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
+function traversed(){{try{{const n=reader.contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
+reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}const src=currentSrc();empty.hidden=!!src;if(!src)return;const k=vaultOf(src);if(k&&k!==KIND&&traversed())switchVault(k,true);highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+VAULT.name;store(KEY+'last',src)}});
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
-async function applyFilter(){{const q=filter.value.trim();if(q.length<2){{renderTree();return}}try{{const d=await api('/api/vault/search?vault='+KIND+'&q='+encodeURIComponent(q));hidePeek();NODES.clear();d.items.forEach(i=>NODES.set(i.path,{{n:i,crumbs:(i.folder||'').split('/').filter(Boolean)}}));tree.innerHTML='<ul class="root results">'+d.items.map(i=>`<li><a class=file target=reader href="${{esc(viewHref(i.path))}}" data-path="${{esc(i.path)}}"><span class=lbl>${{esc(HTML?(i.title||i.name):label(i))}}</span><small>${{esc(i.folder||'/')}}</small></a></li>`).join('')+(d.items.length?'':`<li class=none>No ${{UNIT}}s match.</li>`)+'</ul>';highlight(currentSrc())}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}}</div>`}}}}
+async function applyFilter(){{const q=filter.value.trim(),k=KIND;if(q.length<2){{renderTree();return}}try{{const d=await api('/api/vault/search?vault='+k+'&q='+encodeURIComponent(q));if(k!==KIND)return;hidePeek();NODES.clear();d.items.forEach(i=>NODES.set(i.path,{{n:i,crumbs:(i.folder||'').split('/').filter(Boolean)}}));tree.innerHTML='<ul class="root results">'+d.items.map(i=>`<li><a class=file target=reader href="${{esc(viewHref(i.path))}}" data-path="${{esc(i.path)}}"><span class=lbl>${{esc(HTML?(i.title||i.name):label(i))}}</span><small>${{esc(i.folder||'/')}}</small></a></li>`).join('')+(d.items.length?'':`<li class=none>No ${{UNIT}}s match.</li>`)+'</ul>';highlight(currentSrc())}}catch(e){{if(k===KIND)tree.innerHTML=`<div class=none>${{esc(e.message)}}</div>`}}}}
 document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement&&document.activeElement.tagName);if(e.key==='/'&&!typing&&!e.metaKey&&!e.ctrlKey){{e.preventDefault();if(!pinned())sideOut(true);filter.focus();filter.select()}}else if(e.key==='Escape'&&document.activeElement===filter){{filter.value='';applyFilter();filter.blur()}}}});
 // MARK: row menu — the app's rendered menu (static/app-menu.js). The server says what a row really is (its real file, and
 // the link on the way); ⌥ turns each Reveal into a Copy. A mousedown while the answer is in flight means it came too late.
@@ -221,14 +245,14 @@ if(d.link)items.push({{id:'reveal-link',label:'Reveal Link in Finder',alt:{{id:'
 OnyxMenu.open({{items,x,y,label:(d.is_dir?'Folder':HTML?'Page':'Note')+' actions',returnFocus:row,onClose:()=>row.classList.remove('menu-for'),onSelect:id=>rowAction(id,d,row)}});row.classList.add('menu-for')}});
 function copyPath(p){{if(!navigator.clipboard)throw new Error('The clipboard is not available here.');return navigator.clipboard.writeText(p).then(()=>OnyxMenu.toast('Copied '+shortPath(p)))}}
 async function rowAction(id,d,row){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else reader.src=viewHref(d.path)}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:KIND,path:d.path,which:id==='reveal'?'real':'link'}})}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
-// MARK: add panel (Artifacts only)
+// MARK: add panel (Artifacts only; CSS keeps it out of Notes)
 function destinations(){{const out=[{{rel:'',label:'Top level'}}];(function walk(n,depth){{for(const c of n.children||[]){{if(c.kind==='dir'&&!c.linked){{out.push({{rel:c.rel,label:'\\u00a0'.repeat(depth*3)+c.name}});walk(c,depth+1)}}}}}})(TREE||{{children:[]}},0);return out}}
 function fillDestinations(){{const sel=$('#add-dest');if(!sel)return;const keep=sel.value||recall(KEY+'dest')||'';const opts=destinations();sel.innerHTML=opts.map(o=>`<option value="${{esc(o.rel)}}">${{esc(o.label)}}</option>`).join('');sel.value=opts.some(o=>o.rel===keep)?keep:''}}
 function addStatus(text,tone){{const el=$('#add-status');if(!el)return;el.textContent=text;el.className='field-help'+(tone?' '+tone:'')}}
 async function postJSON(url,body){{const r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{token:TOKEN,...body}})}});const d=await r.json().catch(()=>({{ok:false,error:'HTTP '+r.status}}));if(!r.ok||d.ok===false)throw new Error(d.error||'HTTP '+r.status);return d}}
 function shortPath(p){{return String(p).replace(/^\\/Users\\/[^/]+/,'~')}}
 async function linkTargets(targets){{targets=(targets||[]).filter(Boolean);if(!targets.length)return;addStatus('Linking…');try{{const d=await postJSON('/api/vault/html/link',{{parent:$('#add-dest').value,targets}});let msg='Linked '+d.linked.length+(d.linked.length===1?' item':' items');if(d.context_roots.length)msg+=' · answers can now cite '+d.context_roots.map(shortPath).join(', ');if(d.errors.length)msg+=' · skipped: '+d.errors.join('; ');addStatus(msg,d.errors.length?'bad':'ok');$('#add-path').value='';await loadTree()}}catch(e){{addStatus(e.message,'bad')}}}}
-if(HTML){{const toggle=$('#add-toggle'),panel=$('#add-panel');toggle.onclick=()=>{{panel.hidden=!panel.hidden;toggle.setAttribute('aria-expanded',String(!panel.hidden));if(!panel.hidden)fillDestinations()}};
+{{const toggle=$('#add-toggle'),panel=$('#add-panel');toggle.onclick=()=>{{panel.hidden=!panel.hidden;toggle.setAttribute('aria-expanded',String(!panel.hidden));if(!panel.hidden)fillDestinations()}};
 $('#add-dest').onchange=e=>store(KEY+'dest',e.target.value);
 $('#add-pick-files').onclick=async()=>{{try{{const picked=await window.webkit.messageHandlers.askwPick.postMessage({{kind:'html',initial:''}});await linkTargets(Array.isArray(picked)?picked:[picked])}}catch(e){{addStatus(e.message,'bad')}}}};
 $('#add-pick-folder').onclick=async()=>{{try{{const picked=await window.webkit.messageHandlers.askwPick.postMessage({{kind:'folder',initial:'',prompt:'Link Folder',message:'Choose a folder of HTML pages to link into Artifacts'}});await linkTargets([picked])}}catch(e){{addStatus(e.message,'bad')}}}};
@@ -252,7 +276,7 @@ function updated(ts){{const a=ago(ts);return !a?'':/\\d[mhdw]$/.test(a)?'Updated
 function kindOf(n){{if(HTML)return 'HTML page';const x=(n.ext||(/\\.[^.]+$/.exec(n.name||'')||[''])[0]).replace('.','').toUpperCase();return /^(MD|MARKDOWN)$/.test(x)?'Markdown note':x?x+' file':'Note'}}
 function showPeek(row){{const e=NODES.get(row.dataset.path);if(!e||(window.OnyxMenu&&OnyxMenu.isOpen()))return;const n=e.n;
 if(peekRow&&peekRow!==row)peekRow.removeAttribute('aria-describedby');peekRow=row;row.setAttribute('aria-describedby','peek');
-const where=e.crumbs.length?e.crumbs.join(' › '):{json.dumps(vault_name)},what=n.missing?'Link target is missing: '+shortPath(n.target||n.name):[kindOf(n),updated(n.mtime)].filter(Boolean).join(' · ');
+const where=e.crumbs.length?e.crumbs.join(' › '):VAULT.name,what=n.missing?'Link target is missing: '+shortPath(n.target||n.name):[kindOf(n),updated(n.mtime)].filter(Boolean).join(' · ');
 peek.innerHTML=`<p class=peek-title>${{esc(label(n))}}</p>${{n.summary?`<p class=peek-sum>${{esc(n.summary)}}</p>`:''}}<p class=peek-row>${{ICON.folder}}<span>${{esc(where)}}</span></p><p class=peek-row>${{n.missing?ICON.link:ICON.doc}}<span>${{esc(what)}}</span></p>`;
 peek.hidden=false;const r=row.getBoundingClientRect(),side=$('#vault-side').getBoundingClientRect(),w=peek.offsetWidth,h=peek.offsetHeight,beside=side.right+10+w<=innerWidth-8;
 peek.style.left=(beside?side.right+10:Math.max(8,Math.min(r.left,innerWidth-w-8)))+'px';peek.style.top=Math.max(8,Math.min(beside?r.top-4:r.bottom+6,innerHeight-h-8))+'px';requestAnimationFrame(()=>peek.classList.add('show'))}}
@@ -262,7 +286,27 @@ tree.addEventListener('mouseover',e=>{{const row=e.target.closest('#tree .file')
 tree.addEventListener('mouseout',e=>{{const row=e.target.closest('#tree .file');if(row&&!row.contains(e.relatedTarget)){{clearTimeout(peekTimer);peekTimer=setTimeout(hidePeek,90)}}}});
 tree.addEventListener('focusin',e=>{{const row=e.target.closest('#tree .file');if(row&&row.matches(':focus-visible'))wantPeek(row,200)}});
 for(const ev of ['focusout','scroll','click','contextmenu'])tree.addEventListener(ev,hidePeek,{{passive:true}}); document.addEventListener('keydown',e=>{{if(e.key==='Escape')hidePeek()}}); window.addEventListener('blur',hidePeek);
+// MARK: switch — Notes ⇄ Artifacts in place. The pill slides and the width glides (CSS, off the body's kind class), the
+// list swaps from TREES with a quick fade and is fetched again behind it, and the reader brings back that vault's last
+// page. `follow` means the reader has already crossed into the other vault (history): then only the sidebar moves.
+// A modified click, or a page without script, still loads the link.
+const switchLinks=[...document.querySelectorAll('.vault-switch a')],treeScroll={{}},stillMotion=matchMedia('(prefers-reduced-motion:reduce)');
+function switchVault(k,follow){{if(!VAULTS[k]||k===KIND)return;
+if(window.OnyxMenu)OnyxMenu.close();menuSeq++;hidePeek();clearTimeout(filterTimer);filter.value='';treeScroll[KIND]=tree.scrollTop;
+setKind(k);loadFold();document.body.classList.remove('kind-notes','kind-html');document.body.classList.add('kind-'+k);
+for(const a of switchLinks){{const on=a.dataset.kind===k;a.classList.toggle('active',on);if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')}}
+$('.brand-name').textContent=VAULT.name;filter.placeholder='Filter '+VAULT.units+'… (press /)';filter.setAttribute('aria-label','Filter '+VAULT.units);tree.setAttribute('aria-label',VAULT.name+' '+VAULT.units);$('#empty-hint').textContent=VAULT.empty;
+$('#add-panel').hidden=true;$('#add-toggle').setAttribute('aria-expanded','false');
+const cached=!!TREES[k];if(cached){{showTree();tree.scrollTop=treeScroll[k]||0;highlight(currentSrc())}}else tree.innerHTML='<div class=none>Loading…</div>';
+if(!stillMotion.matches)tree.animate([{{opacity:.4}},{{opacity:1}}],{{duration:120,easing:'ease-out'}});
+const fresh=loadTree();if(follow)return;
+history.replaceState(null,'','/vault'+(HTML?'?vault=html':''));document.title=VAULT.name;
+(cached?Promise.resolve():fresh).then(()=>{{if(k!==KIND)return;const last=ROOT?recall(KEY+'last'):null;empty.hidden=!!last;if(last)reader.src=viewHref(last);else if(currentSrc())reader.src='about:blank'}})}}
+for(const a of switchLinks)a.addEventListener('click',e=>{{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();switchVault(a.dataset.kind)}});
+// The app menu's Vault / Artifacts items (⌘⇧V / ⌘⇧H) come through here, and load the page when it isn't this one.
+window.onyxVault={{switchTo:k=>{{if(!VAULTS[k])return false;switchVault(k);return true}}}};
 // Put back as it was left without a slide: the page opens with the sidebar already away.
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
-loadTree().then(()=>{{if(!INITIAL_SRC&&ROOT){{const last=recall(KEY+'last');if(last)reader.src=viewHref(last)}}}});
+// The other vault's tree comes in behind this one, so the first switch is as instant as the rest.
+const FIRST=KIND; loadTree().then(()=>{{const other=FIRST==='html'?'notes':'html';if(!TREES[other])fetchTree(other);if(KIND!==FIRST||INITIAL_SRC||!ROOT)return;const last=recall(KEY+'last');if(last)reader.src=viewHref(last)}});
 </script></body></html>"""

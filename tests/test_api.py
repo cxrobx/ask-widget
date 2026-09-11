@@ -453,10 +453,13 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertIn(f'<iframe id=reader name=reader src="/view?{expected}"', shell.text)  # no vault folder
         self.assertIn("<title>index.html — Artifacts</title>", shell.text)
         self.assertIn("<title>Artifacts</title>", self.client.get("/vault", params={"vault": "html"}).text)
-        self.assertIn('const KIND="html"', shell.text)
+        self.assertIn('let KIND="html"', shell.text)
         self.assertIn("id=add-panel", shell.text)
         self.assertIn('<a href="/vault?vault=html" class=active', shell.text)
-        self.assertNotIn("id=add-panel", self.client.get("/vault").text)
+        # One shell for both vaults, so a switch needs no reload: Notes carries the + panel too, shown only in Artifacts.
+        notes = self.client.get("/vault").text
+        self.assertIn('<body class="kind-notes', notes)
+        self.assertIn("body:not(.kind-html) #add-toggle", notes)
         self.assertIn('data-href="/vault?vault=html">Artifacts</button>', self.client.get("/").text)
 
         self.app.state.storage.update_settings({"html_vault_root": ""}, model_default="sonnet")

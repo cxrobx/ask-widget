@@ -1032,10 +1032,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         webView?.load(URLRequest(url: URL(string: "\(baseURL)/")!))
     }
     @objc private func goVault() {
-        webView?.load(URLRequest(url: URL(string: "\(baseURL)/vault")!))
+        switchVault("notes", path: "/vault")
     }
     @objc private func goHTMLVault() {
-        webView?.load(URLRequest(url: URL(string: "\(baseURL)/vault?vault=html")!))
+        switchVault("html", path: "/vault?vault=html")
+    }
+    /// On the vault shell the other vault comes in place, so the sidebar never reloads (a load
+    /// blanks the glass window for a frame); from any other page, or if the shell can't, it loads.
+    private func switchVault(_ kind: String, path: String) {
+        guard let webView else { return }
+        let load = { _ = webView.load(URLRequest(url: URL(string: "\(baseURL)\(path)")!)) }
+        guard webView.url?.path == "/vault" else { load(); return }
+        webView.evaluateJavaScript("!!(window.onyxVault && onyxVault.switchTo('\(kind)'))") { result, _ in
+            if (result as? Bool) != true { load() }
+        }
     }
     @objc private func openInBrowser() {
         NSWorkspace.shared.open(webView?.url ?? URL(string: "\(baseURL)/")!)

@@ -949,6 +949,87 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_vault_switch_swaps_in_place_without_a_reload(self) -> None:
+        # Notes ⇄ Artifacts is one shell: the sidebar stays put (no reload, no "Loading…" between trees), the segment's
+        # pill slides across, the reader brings back each vault's last page, and history that crosses vaults brings the
+        # sidebar along. Both engines: the app is WebKit.
+        notes = self.root / "vault"
+        notes.mkdir()
+        alpha = notes / "Alpha.md"
+        alpha.write_text("# Alpha\n\nA note.\n", encoding="utf-8")
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Pages").mkdir(parents=True)
+        one = artifacts / "Pages" / "one.html"
+        one.write_text("<title>Page one</title><p id=first>First page.</p>", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(notes), "html_vault_root": str(artifacts)}, model_default="sonnet")
+        storage.add_root(notes)
+        kind = lambda k: re.compile(rf"\bkind-{k}\b")  # noqa: E731
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 700})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/vault?src={urllib.parse.quote(str(alpha))}", wait_until="networkidle")
+                    reader = page.frame_locator("iframe[name=reader]")
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    # A marker a reload would wipe, and a watch for the tree ever reading "Loading…".
+                    page.evaluate(
+                        "window.__same = true; window.__loading = 0; const t = document.getElementById('tree');"
+                        " new MutationObserver(() => { if (/Loading/.test(t.textContent)) __loading++ })"
+                        ".observe(t, {childList: true, subtree: true, characterData: true})"
+                    )
+                    switch, pill = page.locator(".vault-switch"), "e => getComputedStyle(e, '::before').transform"
+                    at_notes = switch.evaluate(pill)
+
+                    page.locator(".vault-switch a", has_text="Artifacts").click()
+                    expect(page.locator("body")).to_have_class(kind("html"))
+                    self.assertTrue(page.evaluate("window.__same === true"), "switching vaults reloaded the page")
+                    expect(page.locator(".vault-switch a.active")).to_have_text("Artifacts")
+                    expect(page.locator(".brand-name")).to_have_text("Artifacts")
+                    expect(page.locator("#add-toggle")).to_be_visible()
+                    expect(page.locator("#vault-filter")).to_have_attribute("placeholder", "Filter pages… (press /)")
+                    expect(page.locator("#tree a.file", has_text="Page one")).to_be_visible()
+                    expect(page.locator("#vault-count")).to_have_text("1 page")
+                    expect(page.locator("#reader-empty")).to_contain_text("Pick a page from the sidebar.")  # none read yet
+                    self.assertIn("vault=html", page.url)
+                    self.assertNotEqual(switch.evaluate(pill), at_notes)  # the pill went across
+                    link = page.locator(".vault-switch a.active").bounding_box()["width"]
+                    self.assertAlmostEqual(switch.evaluate("e => parseFloat(getComputedStyle(e, '::before').width)"), link, delta=0.5)
+
+                    page.locator("#tree a.file", has_text="Page one").click()
+                    expect(reader.locator("#first")).to_have_text("First page.")
+                    page.wait_for_function("() => location.search.includes('vault=html') && location.search.includes('src=')")
+
+                    # Back to Notes: its last note comes back, highlighted, and the + goes.
+                    page.locator(".vault-switch a", has_text="Notes").click()
+                    expect(page.locator("body")).to_have_class(kind("notes"))
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(alpha))
+                    expect(page.locator("#add-toggle")).to_be_hidden()
+                    expect(page.locator(".brand-name")).to_have_text("Vault")
+                    self.assertNotIn("vault=html", page.url)
+
+                    # Back in history crosses into Artifacts again, and the sidebar comes with it.
+                    page.evaluate("history.back()")
+                    expect(reader.locator("#first")).to_have_text("First page.")
+                    expect(page.locator("body")).to_have_class(kind("html"))
+                    expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(one))
+
+                    # The app menu's Vault / Artifacts items (⌘⇧V / ⌘⇧H) switch through this, and load when it's absent.
+                    self.assertTrue(page.evaluate("onyxVault.switchTo('notes')"))
+                    expect(page.locator("body")).to_have_class(kind("notes"))
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+
+                    self.assertTrue(page.evaluate("window.__same === true"))
+                    self.assertEqual(page.evaluate("__loading"), 0)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_html_vault_lists_titles_links_pages_and_reads_them(self) -> None:
         html_vault = self.root / "Artifacts"
         topic = self.root / "learnings" / "topic"
