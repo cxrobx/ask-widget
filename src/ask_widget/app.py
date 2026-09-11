@@ -58,6 +58,7 @@ STATIC_DIR = (
     else Path(__file__).resolve().parent.parent.parent / "static"
 )
 ASK_JS = STATIC_DIR / "ask.js"
+MARK_PNG = STATIC_DIR / "onyx-mark.png"
 TOKEN_PLACEHOLDER = "__ASK_TOKEN__"
 PROTOCOL_VERSION = 3
 
@@ -323,6 +324,18 @@ def create_app(config: AppConfig) -> FastAPI:
             media_type="application/javascript",
             headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"},
         )
+
+    @app.get("/onyx-mark.png")
+    async def onyx_mark():
+        # The sidebar logo on the launcher and vault pages.
+        try:
+            return Response(
+                content=MARK_PNG.read_bytes(),
+                media_type="image/png",
+                headers={"Cache-Control": "max-age=86400"},
+            )
+        except FileNotFoundError:
+            return Response(status_code=404)
 
     @app.get("/config")
     async def get_config(request: Request):

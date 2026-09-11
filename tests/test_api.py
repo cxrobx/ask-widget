@@ -53,6 +53,14 @@ class ApiTests(unittest.TestCase):
         self.client_context.__exit__(None, None, None)
         self.temp.cleanup()
 
+    def test_sidebar_logo_is_the_transparent_gem(self) -> None:
+        mark = self.client.get("/onyx-mark.png")
+        self.assertEqual(mark.status_code, 200)
+        self.assertEqual(mark.headers["content-type"], "image/png")
+        self.assertEqual(mark.content[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(mark.content[25], 6)  # IHDR colour type 6: RGBA, so no background
+        self.assertIn('<img class=mark src=/onyx-mark.png alt="">', self.client.get("/").text)
+
     def test_library_settings_and_document_capabilities(self) -> None:
         launcher = self.client.get("/")
         self.assertIn("Window transparency", launcher.text)
