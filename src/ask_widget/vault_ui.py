@@ -138,10 +138,11 @@ main,body.native main{{position:relative;padding:0;overflow:hidden}}
 /* Artifacts are named by sentence-length titles: a wider sidebar, one line each, and the whole title in the hover card. */
 body.kind-html .shell{{grid-template-columns:290px minmax(0,1fr)}}
 /* Sidebar: pinned, it sits in the grid; unpinned, it floats over the reader and comes out when the pointer rests on the
-   left edge (#side-edge, laid over the reader because its iframe would swallow the pointer), as in Zen's compact mode. */
+   left edge, as in Zen's compact mode: #side-edge, 24 px deep so the pointer needn't find a sliver, laid over the reader
+   because its iframe would swallow the pointer (a page's first 24 px are margin; they can't be clicked while unpinned). */
 .side-toggle{{display:grid;place-items:center;flex:none;width:26px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}} .side-toggle:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .side-toggle svg{{width:16px;height:16px}} #side-pin[aria-pressed=true] .pin-head{{fill:currentColor}}
 @media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}}}}
-#side-edge{{position:fixed;top:0;bottom:0;left:0;z-index:39;display:none;width:8px}} body.side-unpinned #side-edge{{display:block}}
+#side-edge{{position:fixed;top:0;bottom:0;left:0;z-index:39;display:none;width:24px}} body.side-unpinned #side-edge{{display:block}}
 body.side-unpinned .shell,body.side-unpinned.kind-html .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
 /* Floating, it is a panel lying on the page: inset, rounded, shadowed, and on a ground thick enough to read over a page's
    text even where the blur is not drawn; the window's glass is too thin (the Obsidian look brings an opaque ground of its own). */

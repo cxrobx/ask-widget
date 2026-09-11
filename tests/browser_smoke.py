@@ -891,6 +891,14 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(side).to_be_visible()
                     page.mouse.move(700, 350)
                     expect(side).to_be_hidden()
+                    # The edge is 24 px deep: 30 px in is just the page; 20 px in brings it out, and it goes again.
+                    page.mouse.move(30, 350)
+                    page.wait_for_timeout(300)
+                    expect(side).to_be_hidden()
+                    page.mouse.move(20, 350)
+                    expect(side).to_be_visible()
+                    page.mouse.move(700, 350)
+                    expect(side).to_be_hidden()
 
                     # In use holds it out: "/" brings it out to type in, Escape lets it go ...
                     page.keyboard.press("/")
