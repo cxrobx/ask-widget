@@ -68,7 +68,7 @@ def vault_page(
     root_json = json.dumps(str(root) if root else "")
     token = json.dumps(config.token)
     vault_name = "Artifacts" if html_kind else "Vault"
-    title = html.escape(Path(src).name if src else vault_name)
+    title = html.escape(f"{Path(src).name} — {vault_name}" if src else vault_name)
     notes_active = "" if html_kind else " class=active aria-current=page"
     html_active = " class=active aria-current=page" if html_kind else ""
     add_toggle = (
@@ -89,7 +89,7 @@ def vault_page(
     empty_hint = "Pick a page from the sidebar." if html_kind else "Pick a note from the tree."
     units = "pages" if html_kind else "notes"
     return f"""<!doctype html><html data-theme="{theme}"><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>{title} — {vault_name}</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>{title}</title>
 <style>
 {shared_style}
 html,body{{height:100%;overflow:hidden}} button,input,select{{font:inherit}}

@@ -341,6 +341,7 @@ class VaultApiTests(unittest.TestCase):
         )
         self.assertIn(f'<iframe id=reader name=reader src="/view?{expected.replace("&", "&amp;")}"', page.text)
         self.assertIn("<title>Alpha.md — Vault</title>", page.text)
+        self.assertIn("<title>Vault</title>", self.client.get("/vault").text)  # no page: the name once
         self.assertIn('data-href=/vault>Vault</button>', self.client.get("/").text)
         self.assertIn("id=vault-form", self.client.get("/").text)
         blank = self.client.get("/vault")
@@ -450,6 +451,8 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertEqual(shell.status_code, 200)
         expected = urllib.parse.urlencode({"src": str(self.page)}, quote_via=urllib.parse.quote, safe="/")
         self.assertIn(f'<iframe id=reader name=reader src="/view?{expected}"', shell.text)  # no vault folder
+        self.assertIn("<title>index.html — Artifacts</title>", shell.text)
+        self.assertIn("<title>Artifacts</title>", self.client.get("/vault", params={"vault": "html"}).text)
         self.assertIn('const KIND="html"', shell.text)
         self.assertIn("id=add-panel", shell.text)
         self.assertIn('<a href="/vault?vault=html" class=active', shell.text)
