@@ -9,7 +9,9 @@ see ``vault.writable_folder``).
 The page is deliberately thin. Files are plain ``<a target=reader>`` links, so
 the named iframe handles navigation and history without any click JS; the
 script only builds the tree, keeps the highlight in sync with whatever the
-reader currently shows, drives the filter box, and (HTML) the add panel.
+reader currently shows, drives the filter box, the rows' right-click menu
+(``static/app-menu.js``: Reveal in Finder, and ⌥ Copy Path), and (HTML) the
+add panel.
 """
 
 from __future__ import annotations
@@ -106,6 +108,8 @@ body.kind-html .shell{{grid-template-columns:290px minmax(0,1fr)}} body.kind-htm
 @media(prefers-reduced-transparency:reduce){{#side-show{{background:rgb(255 255 255/.96);backdrop-filter:none;-webkit-backdrop-filter:none}} body[data-page-tone=dark] #side-show{{background:rgb(36 36 36/.96)}}}}
 body.side-collapsed .shell{{grid-template-columns:minmax(0,1fr)}} body.side-collapsed aside{{display:none}} body.side-collapsed #side-show{{display:grid}}
 @media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}} body.side-collapsed .shell{{grid-template-rows:minmax(0,1fr)}}}}
+/* The row a menu is open for wears a ring, as Finder's does. */
+#tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
 </style></head><body class="kind-{kind}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-hide class=side-toggle type=button title="Hide sidebar (⌘\\)" aria-label="Hide sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button></div>
 <nav class=vault-switch aria-label="Vaults"><a href="/vault"{notes_active}>Notes</a><a href="/vault?vault=html"{html_active}>Artifacts</a></nav>
 {add_panel}
@@ -114,6 +118,7 @@ body.side-collapsed .shell{{grid-template-columns:minmax(0,1fr)}} body.side-coll
 <div class=aside-foot><a href="/">← Launcher</a> · <span id=vault-count>v{version}</span></div></aside>
 <main id=reader-pane><button id=side-show class=side-toggle type=button title="Show sidebar (⌘\\)" aria-label="Show sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
 <iframe id=reader name=reader src="{initial}" title="Reader"></iframe></main></div>
+<script src=/app-menu.js></script>
 <script>
 const KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; let ROOT={root_json}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
 const native=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.askwPick); if(native)document.body.classList.add('native');
@@ -148,6 +153,20 @@ reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener(
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
 async function applyFilter(){{const q=filter.value.trim();if(q.length<2){{renderTree();return}}try{{const d=await api('/api/vault/search?vault='+KIND+'&q='+encodeURIComponent(q));tree.innerHTML='<ul class="root results">'+d.items.map(i=>`<li><a class=file target=reader href="${{esc(viewHref(i.path))}}" data-path="${{esc(i.path)}}" title="${{esc(i.path)}}"><span>${{esc(HTML?(i.title||i.name):label(i))}}</span><small>${{esc(i.folder||'/')}}</small></a></li>`).join('')+(d.items.length?'':`<li class=none>No ${{UNIT}}s match.</li>`)+'</ul>';highlight(currentSrc())}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}}</div>`}}}}
 document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement&&document.activeElement.tagName);if(e.key==='/'&&!typing&&!e.metaKey&&!e.ctrlKey){{e.preventDefault();filter.focus();filter.select()}}else if(e.key==='Escape'&&document.activeElement===filter){{filter.value='';applyFilter();filter.blur()}}}});
+// MARK: row menu — the app's rendered menu (static/app-menu.js). The server says what a row really is (its real file, and
+// the link on the way); ⌥ turns each Reveal into a Copy. A mousedown while the answer is in flight means it came too late.
+let menuSeq=0; document.addEventListener('mousedown',()=>{{menuSeq++}},true);
+tree.addEventListener('contextmenu',async e=>{{const row=e.target.closest('#tree .file, #tree summary');if(!row||!window.OnyxMenu)return;e.preventDefault();
+// WebKit on macOS selects the word under a right-click before this event fires (for Look Up); a row isn't text to select.
+const sel=getSelection();if(sel&&sel.anchorNode&&row.contains(sel.anchorNode))sel.removeAllRanges();const path=row.dataset.path||row.parentElement.dataset.path;if(!path)return;
+let x=e.clientX,y=e.clientY;if(!x&&!y){{const r=row.getBoundingClientRect();x=r.left+16;y=r.bottom}}
+const seq=++menuSeq;let d;try{{d=await api('/api/vault/entry?vault='+KIND+'&path='+encodeURIComponent(path))}}catch(err){{OnyxMenu.toast(err.message,'bad');return}}if(seq!==menuSeq)return;
+const items=[];if(!d.is_dir)items.push({{id:'open',label:'Open',enabled:d.exists}});
+items.push({{id:'reveal',label:'Reveal in Finder',enabled:!!d.real,alt:{{id:'copy',label:'Copy Path'}}}});
+if(d.link)items.push({{id:'reveal-link',label:'Reveal Link in Finder',alt:{{id:'copy-link',label:'Copy Link Path'}}}});
+OnyxMenu.open({{items,x,y,label:(d.is_dir?'Folder':HTML?'Page':'Note')+' actions',returnFocus:row,onClose:()=>row.classList.remove('menu-for'),onSelect:id=>rowAction(id,d,row)}});row.classList.add('menu-for')}});
+function copyPath(p){{if(!navigator.clipboard)throw new Error('The clipboard is not available here.');return navigator.clipboard.writeText(p).then(()=>OnyxMenu.toast('Copied '+shortPath(p)))}}
+async function rowAction(id,d,row){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else reader.src=viewHref(d.path)}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:KIND,path:d.path,which:id==='reveal'?'real':'link'}})}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
 // MARK: add panel (Artifacts only)
 function destinations(){{const out=[{{rel:'',label:'Top level'}}];(function walk(n,depth){{for(const c of n.children||[]){{if(c.kind==='dir'&&!c.linked){{out.push({{rel:c.rel,label:'\\u00a0'.repeat(depth*3)+c.name}});walk(c,depth+1)}}}}}})(TREE||{{children:[]}},0);return out}}
 function fillDestinations(){{const sel=$('#add-dest');if(!sel)return;const keep=sel.value||recall(KEY+'dest')||'';const opts=destinations();sel.innerHTML=opts.map(o=>`<option value="${{esc(o.rel)}}">${{esc(o.label)}}</option>`).join('');sel.value=opts.some(o=>o.rel===keep)?keep:''}}

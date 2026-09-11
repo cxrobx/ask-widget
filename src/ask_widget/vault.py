@@ -33,6 +33,7 @@ import html as html_lib
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -106,6 +107,24 @@ def html_page_meta(path: Path) -> tuple[str, float] | None:
     return title, st.st_mtime
 
 
+def first_link(path: Path | str, root: Path | str) -> Path | None:
+    """The first symlink on ``path`` below ``root``: where the vault hands off.
+
+    Links at or above the root don't count — they are how the vault itself is
+    reached, not something it links to.
+    """
+    lexical = normalize(path)
+    base = normalize(root)
+    if lexical == base or not is_inside(lexical, base):
+        return None
+    current = base
+    for part in lexical.relative_to(base).parts:
+        current = current / part
+        if os.path.islink(current):
+            return current
+    return None
+
+
 def html_context_folder(path: Path | str, root: Path | str) -> Path | None:
     """The real folder a page in Artifacts draws its evidence from.
 
@@ -120,18 +139,50 @@ def html_context_folder(path: Path | str, root: Path | str) -> Path | None:
     base = normalize(root)
     if lexical == base or not is_inside(lexical, base):
         return None
-    parts = lexical.relative_to(base).parts
-    current = base
-    for part in parts:
-        current = current / part
-        if os.path.islink(current):
-            try:
-                target = current.resolve()
-            except (OSError, RuntimeError):
-                return None
-            return target if target.is_dir() else target.parent
-    project = base / parts[0]
+    link = first_link(lexical, base)
+    if link is not None:
+        try:
+            target = link.resolve()
+        except (OSError, RuntimeError):
+            return None
+        return target if target.is_dir() else target.parent
+    project = base / lexical.relative_to(base).parts[0]
     return project.resolve() if project.is_dir() else lexical.parent.resolve()
+
+
+def entry_paths(path: Path | str, root: Path | str) -> dict[str, Any] | None:
+    """What a sidebar row's menu reveals and copies; None outside ``root``.
+
+    ``path`` is the row as the tree shows it. ``real`` is the file it actually
+    is: where Finder lands when it reveals the row (Finder follows links on the
+    way) and what a terminal wants pasted — None when a link on the way is
+    dangling. ``link`` is the first symlink below the root, the one thing
+    Finder can show from the vault's side; None for a row that lives in the
+    vault for real, whose real path is simply its own.
+    """
+    lexical = normalize(path)
+    if lexical == normalize(root) or not is_inside(lexical, root):
+        return None
+    link = first_link(lexical, root)
+    exists = os.path.exists(lexical)
+    real = (os.path.realpath(lexical) if link else str(lexical)) if exists else None
+    return {
+        "path": str(lexical),
+        "is_dir": os.path.isdir(lexical),
+        "exists": exists,
+        "real": real,
+        "link": str(link) if link else None,
+    }
+
+
+def reveal_in_finder(target: Path | str) -> None:
+    """Select ``target`` in a Finder window (``open -R``)."""
+    subprocess.Popen(
+        ["/usr/bin/open", "-R", str(target)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _clean_entry_name(name: str) -> str:

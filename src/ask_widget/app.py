@@ -59,6 +59,7 @@ STATIC_DIR = (
 )
 ASK_JS = STATIC_DIR / "ask.js"
 MARK_PNG = STATIC_DIR / "onyx-mark.png"
+APP_MENU_JS = STATIC_DIR / "app-menu.js"
 TOKEN_PLACEHOLDER = "__ASK_TOKEN__"
 PROTOCOL_VERSION = 3
 
@@ -336,6 +337,15 @@ def create_app(config: AppConfig) -> FastAPI:
             )
         except FileNotFoundError:
             return Response(status_code=404)
+
+    @app.get("/app-menu.js")
+    async def app_menu_js():
+        # The rendered right-click menu the app's own pages share.
+        try:
+            text = APP_MENU_JS.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return Response("// app-menu.js missing", status_code=500, media_type="application/javascript")
+        return Response(content=text, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/config")
     async def get_config(request: Request):
@@ -763,6 +773,52 @@ def create_app(config: AppConfig) -> FastAPI:
             },
             headers=headers,
         )
+
+    # The sidebar's right-click menu: one row's paths to show it by, then a
+    # reveal. The client only ever names a row; the server works out what that
+    # row really is, so neither route can reach a path the tree doesn't list.
+    @app.get("/api/vault/entry")
+    async def vault_entry_api(request: Request, path: str = "", vault_kind: str = Query("notes", alias="vault")):
+        if denied := api_forbidden(request):
+            return denied
+        headers = cors(request.headers.get("origin"))
+        kind = "html" if vault_kind == "html" else "notes"
+        root = _vault_root(app, kind)
+        if root is None:
+            return JSONResponse(
+                {"ok": False, "error": _vault_missing_error(app, kind)}, status_code=400, headers=headers
+            )
+        paths = await asyncio.to_thread(vault.entry_paths, path, root)
+        if paths is None:
+            return JSONResponse({"ok": False, "error": "That is not in the vault."}, status_code=400, headers=headers)
+        return JSONResponse({"ok": True, **paths}, headers=headers)
+
+    @app.post("/api/vault/reveal")
+    async def vault_reveal_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"ok": False, "error": "invalid JSON object"}, status_code=400)
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        kind = "html" if body.get("vault") == "html" else "notes"
+        root = _vault_root(app, kind)
+        if root is None:
+            return JSONResponse({"ok": False, "error": _vault_missing_error(app, kind)}, status_code=400)
+        paths = await asyncio.to_thread(vault.entry_paths, str(body.get("path") or ""), root)
+        if paths is None:
+            return JSONResponse({"ok": False, "error": "That is not in the vault."}, status_code=400)
+        # "link" shows the row from the vault's side; anything else, the real file.
+        target = paths["link"] if body.get("which") == "link" else paths["real"]
+        if not target:
+            missing = "That row is not a link." if body.get("which") == "link" else "Its target is gone."
+            return JSONResponse({"ok": False, "error": missing}, status_code=400)
+        await asyncio.to_thread(vault.reveal_in_finder, target)
+        return JSONResponse({"ok": True, "revealed": target}, headers=cors(request.headers.get("origin")))
 
     async def _html_vault_body(request: Request) -> tuple[dict, Path] | JSONResponse:
         """Shared guard for the two Artifacts write routes: token, JSON, root."""

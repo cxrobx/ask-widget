@@ -270,6 +270,27 @@ class HtmlVaultIndexTests(unittest.TestCase):
         self.assertIsNone(vault_mod.html_context_folder(self.base / "elsewhere.html", self.vault))
         self.assertIsNone(vault_mod.html_context_folder(self.vault, self.vault))
 
+    def test_a_rows_menu_paths_are_its_real_file_and_the_link_on_the_way(self) -> None:
+        who = self.vault / "Architect" / "guides" / "who-holds-the-plan" / "index.html"
+        linked = vault_mod.entry_paths(who, self.vault)
+        self.assertEqual(linked["path"], str(who))  # the row as the tree shows it
+        self.assertEqual(linked["real"], str((self.topic / "guides" / "who-holds-the-plan" / "index.html").resolve()))
+        self.assertEqual(linked["link"], str(self.vault / "Architect"))
+        self.assertEqual((linked["exists"], linked["is_dir"]), (True, False))
+        # On macOS this temp dir sits under /var -> /private/var. A link above the
+        # root is how the vault is reached, so a row that lives in it keeps its own path.
+        own = vault_mod.entry_paths(self.vault / "Scratch" / "zeta.html", self.vault)
+        self.assertEqual((own["real"], own["link"]), (str(self.vault / "Scratch" / "zeta.html"), None))
+        folder = vault_mod.entry_paths(self.vault / "Architect", self.vault)
+        self.assertEqual(
+            (folder["is_dir"], folder["real"], folder["link"]), (True, str(self.topic.resolve()), str(self.vault / "Architect"))
+        )
+        gone = vault_mod.entry_paths(self.vault / "Scratch" / "gone.html", self.vault)
+        self.assertEqual((gone["exists"], gone["real"], gone["link"]), (False, None, str(self.vault / "Scratch" / "gone.html")))
+        self.assertIsNone(vault_mod.entry_paths(self.vault, self.vault))
+        self.assertIsNone(vault_mod.entry_paths(self.vault / ".." / "outside.html", self.vault))
+        self.assertIsNone(vault_mod.entry_paths("Scratch/zeta.html", self.vault))
+
     def test_links_are_created_only_in_the_vaults_own_folders(self) -> None:
         guide = self.topic / "guides" / "debugging-method" / "index.html"
         before = guide.read_bytes()

@@ -48,6 +48,28 @@ private func appearance(forTheme theme: String?) -> NSAppearance? {
     }
 }
 
+/// WebKit's stock right-click menu — "Reload" and "Inspect Element", or "Open
+/// Link in New Window" on a sidebar row — can't be styled, so Onyx draws its own
+/// (static/app-menu.js) and this suppresses the stock one wherever a page did
+/// not claim the event: the cxtasks rule (its gotcha #9). Two places keep it:
+/// editable fields, where cut/copy/paste and spelling live, and a document in
+/// the reader, whose links, media and selected text carry the document's own
+/// actions (Copy Link, Copy Image, Copy). It listens on `window` in the bubble
+/// phase, so every page handler has had its turn first. tests/browser_smoke.py
+/// runs this exact source.
+private let stockMenuGuard = """
+window.addEventListener('contextmenu', (event) => {
+  if (event.defaultPrevented) return;
+  const node = event.target;
+  const el = node instanceof Element ? node : node && node.parentElement;
+  if (el && el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+  const reading = location.pathname === '/view' || location.pathname.startsWith('/_fs/');
+  const selection = getSelection();
+  if (reading && ((el && el.closest('a[href], img, video, audio')) || (selection && !selection.isCollapsed))) return;
+  event.preventDefault();
+});
+"""
+
 // MARK: - Window glass
 
 /// Blur the desktop behind the window with a radius we choose.
@@ -741,6 +763,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
+        ))
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: stockMenuGuard, injectionTime: .atDocumentStart, forMainFrameOnly: false
         ))
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self

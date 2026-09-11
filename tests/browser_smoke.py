@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import socket
 import tempfile
 import threading
@@ -18,6 +19,14 @@ from ask_widget.config import AppConfig
 from ask_widget.launcher_ui import glass_alphas
 from ask_widget.runner import _sse
 from ask_widget.storage import Storage
+
+LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "AskWidget.swift"
+
+
+def stock_menu_guard() -> str:
+    """The app's WebKit-menu guard, read out of the Swift source so the test runs what ships."""
+    source = LAUNCHER_SWIFT.read_text(encoding="utf-8")
+    return re.search(r'private let stockMenuGuard = """\n(.*?)\n"""', source, re.DOTALL).group(1)
 
 
 class BrowserSmokeTests(unittest.TestCase):
@@ -506,6 +515,121 @@ class BrowserSmokeTests(unittest.TestCase):
             self.assertLessEqual(show.evaluate(alpha), 0.3)
             self.assertEqual(show.evaluate("e => getComputedStyle(e).color"), "rgba(13, 13, 13, 0.62)")
             browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_vault_rows_open_the_apps_own_menu_and_option_turns_reveal_into_copy(self) -> None:
+        # WebKit's stock menu can't be themed, so the sidebar draws its own
+        # (static/app-menu.js) and the app suppresses the stock one elsewhere.
+        # Both engines: the app is WebKit.
+        topic = self.root / "learnings" / "architect"
+        guide = topic / "guides" / "who"
+        guide.mkdir(parents=True)
+        (guide / "index.html").write_text(
+            '<title>Who holds the plan</title><p>A passage to read.</p><p><a href="#notes">Notes</a></p>',
+            encoding="utf-8",
+        )
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Mine").mkdir(parents=True)
+        (artifacts / "Architect").symlink_to(topic, target_is_directory=True)
+        row_path = artifacts / "Architect" / "guides" / "who" / "index.html"
+        real = str(row_path.resolve())
+        self.app.state.storage.update_settings({"html_vault_root": str(artifacts)}, model_default="sonnet")
+        # Stands in for navigator.clipboard the way the app's pasteboard bridge does.
+        clipboard = (
+            "Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:t=>"
+            "{(window.__copied=window.__copied||[]).push(t);return Promise.resolve(true)}}});"
+        )
+        prevented = """e => { const ev = new MouseEvent('contextmenu', {bubbles: true, cancelable: true});
+            e.dispatchEvent(ev); return ev.defaultPrevented }"""
+        marked = re.compile(r"\bmenu-for\b")
+
+        revealed: list[str] = []
+        page_errors: list[str] = []
+        with (
+            patch("ask_widget.vault.reveal_in_finder", side_effect=lambda target: revealed.append(str(target))),
+            sync_playwright() as playwright,
+        ):
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    context = browser.new_context(viewport={"width": 1180, "height": 760})
+                    context.add_init_script(clipboard + stock_menu_guard())
+                    page = context.new_page()
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+                    row = page.locator("#tree a.file", has_text="Who holds the plan")
+                    menu = page.get_by_role("menu")
+                    items = menu.get_by_role("menuitem")
+
+                    row.click(button="right")
+                    expect(menu).to_have_attribute("aria-label", "Page actions")
+                    expect(items).to_have_text(["Open", "Reveal in Finder", "Reveal Link in Finder"])
+                    expect(row).to_have_class(marked)
+                    self.assertEqual(page.evaluate("getSelection().toString()"), "")  # WebKit's word-select is undone
+                    # Themed and opaque: the app's elevated surface, not the glass under it.
+                    self.assertEqual(menu.evaluate("e => getComputedStyle(e).backgroundColor"), "rgb(255, 255, 255)")
+                    width = menu.evaluate("e => e.getBoundingClientRect().width")
+
+                    # Holding Option swaps each Reveal for a Copy in place, at the same width.
+                    page.keyboard.down("Alt")
+                    expect(items).to_have_text(["Open", "Copy Path", "Copy Link Path"])
+                    self.assertEqual(menu.evaluate("e => e.getBoundingClientRect().width"), width)
+                    page.keyboard.press("ArrowDown")
+                    page.keyboard.press("ArrowDown")
+                    expect(items.nth(1)).to_be_focused()
+                    self.assertEqual(items.nth(1).evaluate("e => getComputedStyle(e).backgroundColor"), "rgb(58, 131, 247)")
+                    page.keyboard.press("Enter")  # Option still down: no keypress in Chromium
+                    page.keyboard.up("Alt")
+                    expect(menu).to_be_hidden()
+                    self.assertEqual(page.evaluate("window.__copied"), [real])
+                    expect(page.locator(".onyx-toast")).to_contain_text("Copied")
+                    expect(row).not_to_have_class(marked)
+
+                    # An Option-right-click opens straight into the copies.
+                    page.keyboard.down("Alt")
+                    row.click(button="right")
+                    expect(items.nth(2)).to_have_text("Copy Link Path")
+                    items.nth(2).click()
+                    page.keyboard.up("Alt")
+                    self.assertEqual(page.evaluate("window.__copied"), [real, str(row_path)])
+
+                    for label, target in (("Reveal in Finder", real), ("Reveal Link in Finder", str(artifacts / "Architect"))):
+                        row.click(button="right")
+                        with page.expect_response("**/api/vault/reveal"):
+                            menu.get_by_role("menuitem", name=label).click()
+                        self.assertEqual(revealed[-1], target)
+
+                    # Folders: a linked one offers both sides, the vault's own folder only itself.
+                    page.locator("#tree summary", has_text="Architect").click(button="right")
+                    expect(menu).to_have_attribute("aria-label", "Folder actions")
+                    expect(items).to_have_text(["Reveal in Finder", "Reveal Link in Finder"])
+                    page.keyboard.press("Escape")
+                    expect(menu).to_be_hidden()
+                    page.locator("#tree summary", has_text="Mine").click(button="right")
+                    expect(items).to_have_text(["Reveal in Finder"])
+                    page.locator("#vault-count").click()
+                    expect(menu).to_be_hidden()
+
+                    # Open reads the page, as a click on the row does; a click into the
+                    # reader (another document) still dismisses a menu.
+                    row.click(button="right")
+                    menu.get_by_role("menuitem", name="Open").click()
+                    reader = page.frame_locator("iframe[name=reader]")
+                    passage = reader.locator("p", has_text="A passage")
+                    passage.wait_for()
+                    row.click(button="right")
+                    expect(menu).to_be_visible()
+                    passage.click()
+                    expect(menu).to_be_hidden()
+
+                    # The stock menu stays suppressed wherever nothing of ours claimed the
+                    # event, except in an editable field and on a reader document's links.
+                    self.assertTrue(page.locator("#vault-count").evaluate(prevented))
+                    self.assertFalse(page.locator("#vault-filter").evaluate(prevented))
+                    self.assertTrue(passage.evaluate(prevented))
+                    self.assertFalse(reader.locator("a", has_text="Notes").evaluate(prevented))
+                    browser.close()
 
         self.assertEqual(page_errors, [])
 

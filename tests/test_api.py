@@ -373,6 +373,13 @@ class VaultApiTests(unittest.TestCase):
         outside_note = self.client.get("/view", params={"src": str(self.outside / "L.md")})
         self.assertIn("[[M]]", outside_note.text)  # outside the vault: literal wikilink
 
+    def test_row_menu_entry_reads_the_notes_vault_by_default(self) -> None:
+        self.set_vault(str(self.vault))
+        linked = self.client.get("/api/vault/entry", params={"path": str(self.vault / "linked" / "L.md")}).json()
+        self.assertEqual((linked["real"], linked["link"]), (str((self.outside / "L.md").resolve()), str(self.vault / "linked")))
+        own = self.client.get("/api/vault/entry", params={"path": str(self.vault / "Beta.md")}).json()
+        self.assertEqual((own["real"], own["link"], own["is_dir"]), (str(self.vault / "Beta.md"), None, False))
+
     def test_startup_registers_the_configured_vault_root(self) -> None:
         data = self.base / "seeded"
         store = Storage(data)
@@ -531,6 +538,28 @@ class HtmlVaultApiTests(unittest.TestCase):
             homed = self.post("/api/vault/html/link", {"parent": "Mine", "target": str(self.base / "top.html")})
         self.assertEqual((homed.json()["ok"], homed.json()["context_roots"]), (True, []))
         self.assertNotIn(str(self.base), [r["path"] for r in self.client.get("/api/settings").json()["roots"]])
+
+    def test_row_menu_routes_take_a_row_and_work_out_the_rest(self) -> None:
+        real = str(self.guide / "index.html")
+        entry = self.client.get("/api/vault/entry", params={"vault": "html", "path": str(self.page)}).json()
+        self.assertEqual((entry["ok"], entry["real"], entry["link"]), (True, real, str(self.vault / "Architect")))
+        # The real file is not a row; only paths the tree lists are.
+        self.assertEqual(self.client.get("/api/vault/entry", params={"vault": "html", "path": real}).status_code, 400)
+        foreign = self.client.get(
+            "/api/vault/entry", params={"vault": "html", "path": str(self.page)}, headers={"origin": "https://attacker.example"}
+        )
+        self.assertEqual(foreign.status_code, 403)
+
+        with patch("ask_widget.vault.reveal_in_finder") as reveal:
+            self.assertEqual(self.post("/api/vault/reveal", {"vault": "html", "path": str(self.page)}, token=False).status_code, 403)
+            shown = self.post("/api/vault/reveal", {"vault": "html", "path": str(self.page), "which": "real"}).json()
+            link = self.post("/api/vault/reveal", {"vault": "html", "path": str(self.page), "which": "link"}).json()
+            escape = self.post("/api/vault/reveal", {"vault": "html", "path": str(self.vault / ".." / "context")})
+            not_a_link = self.post("/api/vault/reveal", {"vault": "html", "path": str(self.vault / "Mine"), "which": "link"})
+        self.assertEqual((shown["revealed"], link["revealed"]), (real, str(self.vault / "Architect")))
+        self.assertEqual([call.args[0] for call in reveal.call_args_list], [real, str(self.vault / "Architect")])
+        self.assertEqual((escape.status_code, not_a_link.status_code), (400, 400))
+        self.assertEqual(not_a_link.json()["error"], "That row is not a link.")
 
 
 class PluginOriginTests(unittest.TestCase):
