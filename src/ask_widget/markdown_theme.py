@@ -33,6 +33,9 @@ PROPERTIES = frozenset({
 # Reject escapes, rule/declaration delimiters, comments and resource functions.
 _UNSAFE = re.compile(r"[;{}<>\\\x00-\x1f]|/\*|\*/|(?:url|var|env|attr|expression)\s*\(", re.I)
 MAX_SNAPSHOT_BYTES = 64 * 1024
+# The reader kinds that wear the vault's reading styles: notes, and the other pages Onyx lays out itself. HTML is
+# authored and keeps its own look.
+KINDS = ("markdown", "text", "pdf", "selection")
 
 
 def validate_snapshot(value: Any) -> dict[str, Any]:
@@ -62,7 +65,7 @@ def stylesheet(snapshot: dict[str, Any] | None) -> str:
     if not snapshot:
         return ""
     snapshot = validate_snapshot(snapshot)
-    body = 'body[data-askw-document-kind="markdown"]'
+    body = ":is(" + ",".join(f'body[data-askw-document-kind="{kind}"]' for kind in KINDS) + ")"
     main = body + " > main"
     background = snapshot["styles"]["content"].get("background-color", "transparent")
     rules = [

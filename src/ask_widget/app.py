@@ -45,7 +45,7 @@ from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
 from .providers import find_claude, find_codex, provider_catalogs, provider_status
 from .storage import Storage
 from .vault_ui import vault_page
-from . import handoff, markdown_theme, sidebar_theme, vault, viewer
+from . import handoff, markdown_theme, sidebar_theme, vault, vault_look, viewer
 from . import __version__
 
 logger = logging.getLogger("ask_widget.app")
@@ -382,6 +382,8 @@ def create_app(config: AppConfig) -> FastAPI:
             f'<blockquote id="askw-quick-selection">{_esc(passage)}</blockquote>'
         )
         html_text = viewer._reading_shell("Shared selection", body, kind="selection")
+        if css := current_markdown_theme()["css"]:
+            html_text = html_text.replace("</head>", f'<style id="askw-markdown-theme">{css}</style></head>', 1)
         seed = (
             f'<meta name="askw-folder" content="{_esc(str(seed_folder))}">'
             f'<meta name="askw-src" content="{_esc(source)}">'
@@ -471,7 +473,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     vault=index,
                 )
                 html_text = loaded.html
-                if loaded.kind == "markdown":
+                if loaded.kind in markdown_theme.KINDS:
                     css = current_markdown_theme()["css"]
                     html_text = html_text.replace(
                         "</head>", f'<style id="askw-markdown-theme">{css}</style></head>', 1
@@ -592,6 +594,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 reader_query=reader_query,
                 kind=kind,
                 sidebar=current_sidebar_theme(),
+                look=current_vault_look(),
             )
         )
 
@@ -1126,6 +1129,30 @@ def create_app(config: AppConfig) -> FastAPI:
             request, sidebar_theme.validate_snapshot, app.state.storage.save_sidebar_theme, "Sidebar theme is too large.",
             outcome=sidebar_sync,
         )
+
+    # The whole app in the vault's colours (vault_look): the palette the two snapshots give, while either
+    # vault-appearance setting is on — Settings shows them as one switch, "Match vault appearance".
+    def current_vault_look() -> dict:
+        settings = app.state.storage.settings(model_default=config.model)
+        root = _vault_root(app)
+        enabled = bool(settings.get("markdown_follow_obsidian", True) or settings.get("sidebar_follow_obsidian", True))
+        look = (
+            vault_look.palette(app.state.storage.markdown_theme(root), app.state.storage.sidebar_theme(root))
+            if root else None
+        )
+        worn = look if enabled else None
+        return {"ok": True, "enabled": enabled, "available": look is not None,
+                "mode": worn["mode"] if worn else None, "base": worn["base"] if worn else None,
+                "css": vault_look.stylesheet(worn), "reader_css": vault_look.reader_stylesheet(worn),
+                "revision": vault_look.revision(worn)}
+
+    @app.get("/api/vault-look")
+    async def vault_look_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        return JSONResponse(current_vault_look(), headers={
+            **cors(request.headers.get("origin")), "Cache-Control": "no-store",
+        })
 
     @app.post("/api/settings")
     async def update_settings_api(request: Request):

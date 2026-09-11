@@ -27,7 +27,7 @@
   var CSS = [
     // Opaque on purpose (cxtasks gotcha #22): the window behind a menu is glass,
     // and a translucent menu at full transparency is text on raw wallpaper.
-    '.onyx-menu{position:fixed;z-index:2147483000;min-width:200px;max-width:calc(100vw - 12px);margin:0;padding:4px;border:1px solid var(--line);border-radius:8px;background:rgb(var(--bg-elevated));color:rgb(var(--secondary));box-shadow:0 25px 50px -12px rgb(0 0 0/.35),0 0 0 .5px rgb(0 0 0/.12);font:13px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;user-select:none;-webkit-user-select:none;cursor:default}',
+    '.onyx-menu{position:fixed;z-index:2147483000;min-width:200px;max-width:calc(100vw - 12px);margin:0;padding:4px;border:1px solid var(--line);border-radius:8px;background:rgb(var(--bg-elevated));color:rgb(var(--secondary));box-shadow:0 25px 50px -12px rgb(0 0 0/.35),0 0 0 .5px rgb(0 0 0/.12);font:13px/1.35 var(--ui-font,-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif);-webkit-font-smoothing:antialiased;user-select:none;-webkit-user-select:none;cursor:default}',
     '.onyx-menu[hidden]{display:none}.onyx-menu:focus{outline:none}',
     '.onyx-menu button{display:block;width:100%;margin:0;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;cursor:default}',
     // Focus is the only highlight. The pointer moves focus, so the mouse and the
@@ -35,7 +35,7 @@
     '.onyx-menu button:focus{outline:none;background:rgb(var(--accent));color:#fff}',
     '.onyx-menu button[aria-disabled=true]{color:rgb(var(--faint));opacity:.5}',
     '.onyx-menu [role=separator]{height:1px;margin:4px 0;background:var(--line)}',
-    '.onyx-toast{position:fixed;left:50%;bottom:22px;z-index:2147483001;max-width:calc(100vw - 32px);padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:rgb(var(--bg-elevated));color:rgb(var(--ink));box-shadow:0 12px 34px rgb(0 0 0/.24);font:12.5px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transform:translate(-50%,6px);transition:opacity .15s,transform .15s;pointer-events:none}',
+    '.onyx-toast{position:fixed;left:50%;bottom:22px;z-index:2147483001;max-width:calc(100vw - 32px);padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:rgb(var(--bg-elevated));color:rgb(var(--ink));box-shadow:0 12px 34px rgb(0 0 0/.24);font:12.5px/1.4 var(--ui-font,-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transform:translate(-50%,6px);transition:opacity .15s,transform .15s;pointer-events:none}',
     '.onyx-toast.show{opacity:1;transform:translate(-50%,0)}.onyx-toast.bad{color:rgb(var(--bad))}',
     '@media(prefers-reduced-motion:reduce){.onyx-toast{transition:none}}'
   ].join('\n');

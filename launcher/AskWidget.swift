@@ -32,6 +32,8 @@ private struct ServerLaunch {
 /// page sends the same triple whenever glass goes off.
 private let baseRGB: (light: [Double], dark: [Double]) = ([247, 247, 247], [24, 24, 24])
 private let appearanceDefaultsKey = "appearanceTheme"
+/// The ground the shell last gave the glass: the first paint at launch, before any page has spoken.
+private let launchBaseDefaultsKey = "launchBaseRGB"
 
 private func srgb(_ components: [Double]) -> NSColor {
     NSColor(
@@ -863,8 +865,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// The window colour before any page has spoken: the theme's `--bg-primary`.
+    /// The window colour before any page has spoken: the ground the shell last gave the glass (the vault's own
+    /// while the app wears the vault look), else the theme's `--bg-primary`.
     private func launchBaseColor() -> NSColor {
+        if let saved = UserDefaults.standard.array(forKey: launchBaseDefaultsKey) as? [Double], saved.count == 3 {
+            return srgb(saved.map { min(255, max(0, $0)) })
+        }
         let dark = (window?.effectiveAppearance ?? NSApp.effectiveAppearance)
             .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         return srgb(dark ? baseRGB.dark : baseRGB.light)
@@ -896,6 +902,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             return
         }
         if message.name == "askwAppearance" {
+            // Only the shell page sets the window's appearance: a document in the reader frame, asking for the
+            // app theme, would otherwise undo the vault look's mode.
+            guard message.frameInfo.isMainFrame else {
+                replyHandler(true, nil)
+                return
+            }
             let theme = body["theme"] as? String
             let chosen = appearance(forTheme: theme)
             // Native menus (including HTML <select> popups) resolve their
@@ -927,6 +939,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             } else {
                 let rgb = (body["rgb"] as? [NSNumber])?.map { $0.doubleValue }
                 let base = rgb?.count == 3 ? srgb(rgb!.map { min(255, max(0, $0)) }) : launchBaseColor()
+                if let rgb, rgb.count == 3 { UserDefaults.standard.set(rgb, forKey: launchBaseDefaultsKey) }
                 glass.setState(enabled: body["enabled"] as? Bool ?? false, radius: radius, base: base)
             }
             replyHandler(state, nil)

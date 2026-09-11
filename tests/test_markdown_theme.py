@@ -36,9 +36,13 @@ class MarkdownThemeTests(unittest.TestCase):
         candidate["styles"]["content"]["background-image"] = "none"
         with self.assertRaises(ValueError):
             validate_snapshot(candidate)
-        self.assertIn('body[data-askw-document-kind="markdown"] > main h1', stylesheet(snapshot()))
+        # Notes, and the other pages Onyx lays out itself; an HTML page is authored and keeps its own look.
+        self.assertIn(':is(body[data-askw-document-kind="markdown"],body[data-askw-document-kind="text"],'
+                      'body[data-askw-document-kind="pdf"],body[data-askw-document-kind="selection"]) > main h1',
+                      stylesheet(snapshot()))
+        self.assertNotIn('document-kind="html"', stylesheet(snapshot()))
 
-    def test_api_persistence_vault_selection_and_markdown_only(self):
+    def test_api_persistence_vault_selection_and_reading_pages_not_html(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             first, second = root / "first", root / "second"
@@ -72,8 +76,9 @@ class MarkdownThemeTests(unittest.TestCase):
                 self.assertIn("rgb(196, 197, 181)", theme["css"])
                 rendered = client.get("/view", params={"src": str(note)}).text
                 self.assertIn(theme["css"], rendered)
-                for path in (plain, html):
-                    self.assertNotIn('id="askw-markdown-theme"', client.get("/view", params={"src": str(path)}).text)
+                # Onyx's own reading pages wear it too (a text file here); an authored HTML page never does.
+                self.assertIn(theme["css"], client.get("/view", params={"src": str(plain)}).text)
+                self.assertNotIn('id="askw-markdown-theme"', client.get("/view", params={"src": str(html)}).text)
                 self.assertNotIn(theme["css"], client.get("/").text)
 
                 # A second open vault cannot replace the selected vault's theme.

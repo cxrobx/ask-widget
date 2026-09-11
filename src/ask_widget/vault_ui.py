@@ -86,6 +86,7 @@ def vault_page(
     reader_query: str | None = None,
     kind: str = "notes",
     sidebar: dict[str, Any] | None = None,
+    look: dict[str, Any] | None = None,
 ) -> str:
     kind = kind if kind in VAULT_LABELS else "notes"
     _glass, theme = theme_settings(settings)
@@ -97,7 +98,12 @@ def vault_page(
     labels = VAULT_LABELS[kind]
     version = html.escape(__version__)
     shared_style = theme_style(settings)
-    glass_js = glass_script(settings)
+    # The whole app in the vault's colours (vault_look), while Match vault appearance is on and the plugin has measured it.
+    look = look or {}
+    look_css = look.get("css") or ""
+    look_state = json.dumps({"revision": look.get("revision", ""), "mode": look.get("mode"), "base": look.get("base")})
+    html_class = ' class="vault-look"' if look_css else ""
+    glass_js = glass_script(settings, vault=look if look_css else None)
     initial = html.escape(f"/view?{reader_query}", quote=True) if reader_query else "about:blank"
     initial_src = json.dumps(src or "")
     token = json.dumps(config.token)
@@ -129,7 +135,7 @@ def vault_page(
     empty_hint = labels["empty"]
     units = labels["units"]
     tree_label = labels["tree"]
-    return f"""<!doctype html><html data-theme="{theme}"><head><meta charset=utf-8>
+    return f"""<!doctype html><html data-theme="{theme}"{html_class}><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>{title}</title>
 <style>
 {shared_style}
@@ -166,7 +172,7 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
    heading is chrome, not a folder, so it keeps this look under the Obsidian one too: that look styles every row through
    `body.obsidian-tree #tree summary`, and these selectors are more specific. */
 #tree li.group+li.group{{margin-top:8px}} #tree .group>details>ul{{padding-left:0}}
-#tree li.group>details>summary.group-head{{gap:6px;min-height:26px;margin:0;padding:4px 10px;border-radius:7px;background:transparent;color:rgb(var(--muted));font:600 11px/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;letter-spacing:.06em;text-transform:uppercase}} #tree li.group>details>summary.group-head:hover{{background:transparent;color:rgb(var(--secondary))}}
+#tree li.group>details>summary.group-head{{gap:6px;min-height:26px;margin:0;padding:4px 10px;border-radius:7px;background:transparent;color:rgb(var(--muted));font:600 11px/1.3 var(--ui-font);letter-spacing:.06em;text-transform:uppercase}} #tree li.group>details>summary.group-head:hover{{background:transparent;color:rgb(var(--secondary))}}
 #tree li.group>details>summary.group-head::before{{content:"";flex:none;width:5px;height:5px;margin:0 3px 0 1px;border:solid currentColor;border-width:0 1.4px 1.4px 0;transform:rotate(-45deg);transition:transform .12s}} #tree li.group>details[open]>summary.group-head::before{{transform:rotate(45deg)}}
 #tree li.group>details>summary.group-head .count{{margin-left:auto;font-weight:500;letter-spacing:0;text-transform:none;opacity:0;transition:opacity .12s}} #tree li.group>details>summary.group-head:hover .count{{opacity:1}}
 /* The hover card: the whole title, the page's one line, where it lives, what it is. App chrome, so it takes the app's theme. */
@@ -218,7 +224,7 @@ body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1)
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
 {panels_css}
-</style><style id=sidebar-theme>{sidebar_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
+</style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Library and vaults"><a href="/"{library_active} data-kind=library>Library</a><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
@@ -353,8 +359,13 @@ const tops=KIND==='library'?BOTH.map(k=>[k,tree.querySelectorAll(`:scope > ul.ro
 for(const [k,rows] of tops)rows.forEach((d,i)=>{{const li=d.parentElement,name=(d.querySelector(':scope > summary .lbl')||{{}}).textContent||'';
 const f=on&&list.length?((k==='notes'&&byName.get(name.toLowerCase()))||list[i%list.length]):null;
 for(const [prop,value] of [['--folder-color',f&&f.color],['--guide-color',f&&(f.guide||f.color)],['--folder-hover',f&&f.hover]]){{if(value)li.style.setProperty(prop,value);else li.style.removeProperty(prop)}}}})}}
-// `force` is Settings turning the look on or off: the revision it last drew may be the one it has now.
-async function syncSidebarTheme(force){{if(document.hidden&&!force)return;try{{const d=await api('/api/sidebar-theme');if(!force&&d.revision===SIDE_THEME.revision)return;SIDE_THEME=d;$('#sidebar-theme').textContent=d.css||'';document.body.classList.toggle('obsidian-tree',!!d.css);applyTints()}}catch(e){{}}}}
+// MARK: vault look — the whole app in the vault's colours (vault_look) while Match vault appearance is on: its tokens on
+// :root.vault-look, and the glass and the native window in the vault's mode and ground. Kept live with the sidebar's look;
+// `force` is Settings turning it on or off, when the revision last drawn may be the one there is now.
+let LOOK={look_state};
+function syncAppearance(){{const h=native&&window.webkit.messageHandlers.askwAppearance;if(h)Promise.resolve(h.postMessage({{theme:GLASS.vault?GLASS.vault.mode:(document.documentElement.dataset.theme||'system')}})).catch(()=>{{}})}}
+function applyLook(d){{LOOK=d;$('#vault-look').textContent=d.css||'';document.documentElement.classList.toggle('vault-look',!!d.css);setGlassVault(d.css?d:null);syncAppearance();document.dispatchEvent(new Event('onyx:look'))}}
+async function syncSidebarTheme(force){{if(document.hidden&&!force)return;try{{const [d,l]=await Promise.all([api('/api/sidebar-theme'),api('/api/vault-look')]);if(force||l.revision!==LOOK.revision)applyLook(l);if(!force&&d.revision===SIDE_THEME.revision)return;SIDE_THEME=d;$('#sidebar-theme').textContent=d.css||'';document.body.classList.toggle('obsidian-tree',!!d.css);applyTints()}}catch(e){{}}}}
 setInterval(syncSidebarTheme,3000); document.addEventListener('visibilitychange',()=>syncSidebarTheme());
 // MARK: hover card — a page's whole title, its one line, where it lives, what it is. The first hover waits a beat; after
 // that it follows the pointer row to row at once. A click, scroll, right-click menu, Escape, or leaving puts it away.
@@ -417,6 +428,7 @@ if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList
 // Both trees load up front: Library draws them together, and the first switch is as instant as the rest.
 const FIRST=KIND; if(FIRST==='library'&&!INITIAL_SRC)loadHome();
 (FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)reader.src=viewHref(last,FIRST)}});
+syncAppearance();
 // A fragment names a dialog to open: #settings, #diagnostics, #history — which is where the old launcher's links land.
 {{const h=location.hash.slice(1);if(/^(settings|diagnostics|history)$/.test(h)){{history.replaceState(null,'',location.pathname+location.search);if(h==='history')PANELS.openHistory();else PANELS.openSettings(h==='diagnostics'?'diagnostics':'')}}}}
 </script></body></html>"""

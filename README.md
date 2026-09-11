@@ -189,10 +189,19 @@ media, and selected text.
 
 Hover a page (or Tab to it) and a card beside the sidebar shows its whole title,
 its one-line summary (a page's description, else its subtitle, else its first
-paragraph), where it lives, and when it last changed. With the Obsidian plugin
-running, the sidebar can also wear your vault's file explorer — its font,
-colors, chevrons, indent guides and per-folder colors — under **Settings →
-Appearance → Match vault sidebar appearance**; see the plugin's README.
+paragraph), where it lives, and when it last changed.
+
+With the Obsidian plugin running, **Settings → Appearance → Match vault
+appearance** (on by default) dresses the whole app in your vault's theme. The
+sidebar wears its file explorer — font, colors, chevrons, indent guides and
+per-folder colors. Notes, and the pages Onyx lays out itself (plain text, PDFs,
+shared selections), take its reading styles. Everything else — the main pane,
+Library's home page, Settings and Recent conversations, menus, the answer panel,
+and the window's own light or dark — takes a palette drawn from the vault's
+ground, ink, link and code colors, in its interface font. Text shades are mixed
+from the vault's ink to fixed contrasts, so no theme leaves a label unreadable.
+Color theme follows the vault while the switch is on. Authored HTML keeps its
+own look. See the plugin's README.
 
 ### Artifacts
 

@@ -1145,6 +1145,49 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_the_reader_and_the_answer_panel_wear_the_vault_look(self) -> None:
+        # Match vault appearance dresses the reader too: a text page takes the vault's reading styles and the answer
+        # panel its palette, in the vault's mode whatever the app theme says; off, they are Onyx's own again, live.
+        # Both engines: the app is WebKit.
+        vault = self.root / "vault"
+        vault.mkdir()
+        text = vault / "plain.txt"
+        text.write_text("Plain words to ask about.\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault), "appearance_theme": "dark"}, model_default="sonnet")
+        storage.save_markdown_theme(vault, {"mode": "light", "styles": {
+            "content": {"background-color": "rgb(253, 246, 227)", "color": "rgb(0, 43, 54)", "font-family": '"JetBrains Mono", monospace'},
+            "a": {"color": "rgb(203, 75, 22)"},
+            "code": {"background-color": "rgb(224, 215, 184)"},
+        }})
+        look = lambda on: storage.update_settings(  # noqa: E731
+            {"markdown_follow_obsidian": on, "sidebar_follow_obsidian": on}, model_default="sonnet"
+        )
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    look(True)
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme="dark")
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/view?{urllib.parse.urlencode({'src': str(text)})}", wait_until="networkidle")
+                    html = page.locator("html")
+                    expect(html).to_have_attribute("data-askw-look", "light")
+                    expect(html).to_have_attribute("data-askw-color", "light")  # the vault's mode, not the app's dark
+                    expect(page.locator("body")).to_have_css("background-color", "rgb(253, 246, 227)")
+                    panel = page.locator(".askw-panel")
+                    self.assertEqual(panel.evaluate("e => getComputedStyle(e).backgroundColor"), "rgba(253, 246, 227, 0.97)")
+                    accent = panel.evaluate("e => getComputedStyle(e).getPropertyValue('--askw-accent').trim()")
+                    self.assertEqual(accent.replace(",", "").replace("  ", " "), "rgb(203 75 22)")
+                    look(False)
+                    expect(html).not_to_have_attribute("data-askw-look", re.compile(".*"), timeout=8000)
+                    expect(html).to_have_attribute("data-askw-color", "dark")
+                    self.assertNotEqual(panel.evaluate("e => getComputedStyle(e).backgroundColor"), "rgba(253, 246, 227, 0.97)")
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_html_vault_lists_titles_links_pages_and_reads_them(self) -> None:
         html_vault = self.root / "Artifacts"
         topic = self.root / "learnings" / "topic"

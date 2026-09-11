@@ -64,10 +64,12 @@ every 30 seconds without opening the app.
 In Onyx, **Settings → Vault** selects the source vault. Its styles apply
 to Markdown documents opened in the app, including the Vault reader. Other open
 vaults keep separate snapshots and cannot overwrite the selected vault's style.
-**Settings → Appearance → Match vault Markdown appearance** is enabled by
-default; turn it off to restore the original reader appearance. With no snapshot,
-the reader keeps its default styles. The app chrome, floating answer panel,
-PDFs, plain text, and authored HTML keep their existing appearance.
+**Settings → Appearance → Match vault appearance** is on by default. It applies
+these styles to Markdown notes and to the pages Onyx lays out itself — plain
+text, PDFs, shared selections — and takes the rest of the app into the vault's
+colors too (see below). Turn it off to restore Onyx's own look. With no
+snapshot, the reader keeps its default styles. Authored HTML keeps its own
+appearance.
 
 To sync immediately, use **Onyx plugin settings → Markdown appearance →
 Sync now**. Update both the service and plugin when installing this feature.
@@ -91,9 +93,13 @@ level or note contents.
 Onyx's Notes and Artifacts sidebars then take Obsidian's shape and colors:
 chevrons instead of folder icons, the indent guides, and each top-level folder's
 color — by name in Notes, and in order in Artifacts, whose folder names never
-match the vault's. **Settings → Appearance → Match vault sidebar appearance** is
-on by default; turn it off, or run without the plugin, and the sidebar keeps
-Onyx's own design. Changes arrive within a few seconds, without a reload.
+match the vault's. The same switch, **Match vault appearance**, then takes the
+rest of Onyx along: the main pane, Library's home page, Settings and Recent
+conversations, menus, the answer panel, and the window's light or dark, in a
+palette drawn from the two snapshots — the reading view's ground, ink, link and
+code-block colors, and the explorer's font. Turn it off, or run without the
+plugin, and Onyx keeps its own design. Changes arrive within a few seconds,
+without a reload.
 
 ## Develop
 

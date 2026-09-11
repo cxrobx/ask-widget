@@ -33,6 +33,7 @@
   var recentFolders = [];
   var serverConfig = { version: 'unknown', provider: 'claude', model: 'sonnet', reasoning_effort: 'medium', cache_ttl_hours: 168, cache_max_entries: 100 };
   var appearanceTheme = 'system';
+  var vaultLook = null;  // Match vault appearance: {mode, reader_css} while the app wears the vault
   var sel = null;              // { text, context, rect }
   var abort = null;            // AbortController for the active stream
   var activeAction = null;     // 'eli5' | 'prove' | 'ask'
@@ -1140,11 +1141,13 @@
   function applyAppearance(raw) {
     appearanceTheme = raw === 'dark' || raw === 'light' ? raw : 'system';
     var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var effective = appearanceTheme === 'dark' || (appearanceTheme === 'system' && systemDark) ? 'dark' : 'light';
+    // While the app wears the vault look, the vault's mode stands in for the app theme.
+    var effective = vaultLook ? vaultLook.mode
+      : appearanceTheme === 'dark' || (appearanceTheme === 'system' && systemDark) ? 'dark' : 'light';
     document.documentElement.setAttribute('data-askw-color', effective);
     applyPageTone();
     var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.askwAppearance;
-    if (bridge) Promise.resolve(bridge.postMessage({ theme: appearanceTheme })).catch(function () {});
+    if (bridge) Promise.resolve(bridge.postMessage({ theme: vaultLook ? vaultLook.mode : appearanceTheme })).catch(function () {});
   }
 
   // Glass chips lie on the page, so they take the page's tone — a dark app over a
@@ -1192,7 +1195,8 @@
 
   // Markdown appearance changes in place: preserve selection, scroll, and answers.
   function initMarkdownTheme() {
-    if (document.body.getAttribute('data-askw-document-kind') !== 'markdown' || !metaSrc()) return;
+    // Notes, and the other pages Onyx lays out itself (markdown_theme.KINDS); an HTML page keeps its own look.
+    if (['markdown', 'text', 'pdf', 'selection'].indexOf(document.body.getAttribute('data-askw-document-kind')) < 0 || !metaSrc()) return;
     var style = document.getElementById('askw-markdown-theme');
     if (!style) {
       style = document.createElement('style');
@@ -1213,6 +1217,40 @@
     }
     refresh();
     window.setInterval(refresh, 2000);
+    document.addEventListener('visibilitychange', refresh);
+  }
+
+  // The whole app in the vault's colours (Match vault appearance): the panel's sheet from the service
+  // (vault_look.reader_stylesheet), on html[data-askw-look], after this file's own. Kept live like the reading styles.
+  function applyVaultLook(look) {
+    var css = (look && look.reader_css) || '';
+    var style = document.getElementById('askw-vault-look');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'askw-vault-look';
+      (document.head || document.documentElement).appendChild(style);
+    }
+    if (style.textContent !== css) style.textContent = css;
+    vaultLook = css ? look : null;
+    if (vaultLook) document.documentElement.setAttribute('data-askw-look', vaultLook.mode);
+    else document.documentElement.removeAttribute('data-askw-look');
+    applyAppearance(appearanceTheme);
+  }
+  function initVaultLook() {
+    var pending = false, revision = null;
+    function refresh() {
+      if (pending || document.hidden) return;
+      pending = true;
+      fetch(SERVER + '/api/vault-look', { cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error('Look unavailable');
+        return r.json();
+      }).then(function (look) {
+        if (look.revision !== revision) { revision = look.revision; applyVaultLook(look); }
+      }).catch(function () { /* Keep the last good look while offline, or none on a page that may not ask. */ })
+        .finally(function () { pending = false; });
+    }
+    refresh();
+    window.setInterval(refresh, 3000);
     document.addEventListener('visibilitychange', refresh);
   }
 
@@ -1415,6 +1453,7 @@
     initFolder().then(initHistoryReplay);
     initLiveReload();
     initMarkdownTheme();
+    initVaultLook();
     initPosition();
     initAutoSelection();
   }
