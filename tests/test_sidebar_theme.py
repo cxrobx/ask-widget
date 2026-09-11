@@ -129,9 +129,17 @@ class SidebarThemeTests(unittest.TestCase):
                 self.assertEqual((off["enabled"], off["css"], off["folders"]), (False, "", []))
                 self.assertIn('<body class="kind-notes">', client.get("/vault").text)
                 settings(sidebar_follow_obsidian=True)
+                self.assertTrue(client.get("/api/sidebar-theme").json()["last_sync"]["ok"])
                 body["snapshot"] = snapshot("red;display:none")
                 self.assertEqual(client.post("/api/sidebar-theme", json=body).status_code, 400)
-                self.assertEqual(client.get("/api/sidebar-theme").json()["revision"], theme["revision"])
+                refused = client.get("/api/sidebar-theme").json()
+                self.assertEqual(refused["revision"], theme["revision"])  # the good snapshot stays in force
+                # A refusal is visible, not indistinguishable from Obsidian being closed…
+                self.assertFalse(refused["last_sync"]["ok"])
+                self.assertIn("unsafe", refused["last_sync"]["error"])
+                # …but a caller without the token cannot write the status line.
+                client.post("/api/sidebar-theme", json={**body, "token": "wrong", "snapshot": snapshot()})
+                self.assertIn("unsafe", client.get("/api/sidebar-theme").json()["last_sync"]["error"])
 
             storage = Storage(root / "data")
             try:

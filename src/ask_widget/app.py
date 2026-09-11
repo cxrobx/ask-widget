@@ -985,8 +985,21 @@ def create_app(config: AppConfig) -> FastAPI:
             **cors(request.headers.get("origin")), "Cache-Control": "no-store",
         })
 
-    async def receive_theme(request: Request, validate, save, too_large: str):
-        """The plugin's POST of an appearance snapshot: bounded, token-checked, validated, stored per vault."""
+    async def receive_theme(request: Request, validate, save, too_large: str, outcome: dict | None = None):
+        """The plugin's POST of an appearance snapshot: bounded, token-checked, validated, stored per vault.
+
+        ``outcome`` (when given) keeps the last attempt, so a refused sync is visible in the status line rather
+        than indistinguishable from Obsidian simply being closed.
+        """
+        response = await _receive_theme(request, validate, save, too_large)
+        if outcome is not None and response.status_code != 403:
+            error = "" if response.status_code == 200 else json.loads(response.body).get("error", "")
+            outcome.update(at=time.time(), ok=response.status_code == 200, error=error)
+            if error:
+                logger.warning("Refused an Obsidian appearance snapshot: %s", error)
+        return response
+
+    async def _receive_theme(request: Request, validate, save, too_large: str):
         if denied := api_forbidden(request):
             return denied
         # Bound the body before decoding JSON, including chunked requests.
@@ -1032,7 +1045,10 @@ def create_app(config: AppConfig) -> FastAPI:
         css = sidebar_theme.stylesheet(snapshot) if enabled else ""
         folders = sidebar_theme.folder_tints(snapshot) if css else []
         return {"ok": True, "enabled": enabled, "available": snapshot is not None,
-                "css": css, "folders": folders, "revision": sidebar_theme.revision(css, folders)}
+                "css": css, "folders": folders, "revision": sidebar_theme.revision(css, folders),
+                "last_sync": dict(sidebar_sync) or None}
+
+    sidebar_sync: dict = {}  # the plugin's last sidebar POST: {at, ok, error}
 
     @app.get("/api/sidebar-theme")
     async def sidebar_theme_api(request: Request):
@@ -1045,7 +1061,8 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.post("/api/sidebar-theme")
     async def sync_sidebar_theme_api(request: Request):
         return await receive_theme(
-            request, sidebar_theme.validate_snapshot, app.state.storage.save_sidebar_theme, "Sidebar theme is too large."
+            request, sidebar_theme.validate_snapshot, app.state.storage.save_sidebar_theme, "Sidebar theme is too large.",
+            outcome=sidebar_sync,
         )
 
     @app.post("/api/settings")

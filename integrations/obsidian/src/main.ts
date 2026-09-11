@@ -34,6 +34,8 @@ export default class AskWidgetPlugin extends Plugin {
   private themeTimer = 0;
   private themeSync: Promise<void> | null = null;
   private themeStopped = false;
+  /** Why the last sidebar-appearance sync failed; "" once one succeeds. */
+  sidebarError = "";
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -132,11 +134,17 @@ export default class AskWidgetPlugin extends Plugin {
     if (!root) throw new Error("Markdown appearance sync requires a local vault.");
     this.themeSync = (async () => {
       const snapshot = await captureMarkdownTheme(this.app);
-      // The file explorer's look rides the same triggers; an Onyx too old for it just skips it.
-      const sidebar = captureSidebarTheme(this.app);
       if (this.themeStopped) return;
       await this.service.syncMarkdownTheme(root, snapshot);
-      await this.service.syncSidebarTheme(root, sidebar).catch(() => { /* Older Onyx: no sidebar route. */ });
+      // The file explorer's look rides the same triggers but can never hold back the reading
+      // styles. Its failure is kept for Sync now and the console, not swallowed.
+      try {
+        await this.service.syncSidebarTheme(root, captureSidebarTheme(this.app));
+        this.sidebarError = "";
+      } catch (error) {
+        this.sidebarError = error instanceof Error ? error.message : String(error);
+        console.warn("Onyx: sidebar appearance sync failed:", error);
+      }
     })();
     try {
       await this.themeSync;
