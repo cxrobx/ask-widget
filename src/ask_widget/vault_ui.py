@@ -162,7 +162,7 @@ body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1)
 <nav id=tree aria-label="{vault_name} {units}"><div class=none>Loading…</div></nav>
 <div class=aside-foot><a href="/">← Launcher</a> · <span id=vault-count>v{version}</span></div></aside>
 <main id=reader-pane><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
-<iframe id=reader name=reader src="{initial}" title="Reader"></iframe></main></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
+<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe></main></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 <script src=/app-menu.js></script>
 <script>
 const KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; let ROOT={root_json}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
