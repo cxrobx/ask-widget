@@ -535,6 +535,73 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_vault_sidebar_wears_the_obsidian_explorer_and_falls_back_live(self) -> None:
+        notes = self.root / "CX"
+        for folder in ("Archive", "Inbox/Quick Notes", "Projects"):  # the Notes tree lists folders that hold notes
+            (notes / folder).mkdir(parents=True)
+            (notes / folder / "Note.md").write_text("# Note\n", encoding="utf-8")
+        artifacts = self.root / "Artifacts"
+        for folder in ("Alpha", "Beta"):
+            (artifacts / folder).mkdir(parents=True)
+            (artifacts / folder / "page.html").write_text(f"<title>{folder} page</title>", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(notes), "html_vault_root": str(artifacts)}, model_default="sonnet")
+        teal, red, orange = "rgb(42, 161, 152)", "rgb(220, 50, 47)", "rgb(203, 75, 22)"
+        storage.save_sidebar_theme(notes, {
+            "mode": "light",
+            "styles": {
+                "pane": {"background-color": "rgb(253, 246, 227)", "color": "rgb(7, 54, 66)", "font-family": "Menlo, monospace"},
+                "folder": {"color": "rgb(88, 110, 117)"}, "file": {"color": "rgb(7, 54, 66)"},
+                "guide": {"border-left-color": "rgb(147, 161, 161)", "border-left-width": "1px", "border-left-style": "solid"},
+            },
+            # Listed out of the tree's order: Notes must match by name, not by position.
+            "folders": [{"name": "Projects", "color": teal}, {"name": "Archive", "color": red}, {"name": "Inbox", "color": orange}],
+        })
+        color = "e => getComputedStyle(e).color"
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme="dark")
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault", wait_until="networkidle")
+            inbox = page.locator("#tree details[data-path$='Inbox'] > summary")
+            inbox.wait_for()
+            self.assertEqual(page.locator("body").get_attribute("class"), "kind-notes obsidian-tree")
+            self.assertEqual(page.locator("#vault-side").evaluate("e => getComputedStyle(e).backgroundColor"), "rgb(253, 246, 227)")
+            # The dark app's chrome reads on the cream pane: dark ink, not white.
+            self.assertEqual(page.locator(".brand-name").evaluate(color), "rgb(7, 54, 66)")
+            self.assertEqual(inbox.evaluate(color), orange)
+            self.assertEqual(page.locator("#tree details[data-path$='Archive'] > summary").evaluate(color), red)
+            self.assertEqual(page.locator("#tree details[data-path$='Projects'] > summary").evaluate(color), teal)
+            inbox.click()  # Notes starts folded; open Inbox to see its guide and child folder
+            quick = page.locator("#tree details[data-path$='Quick Notes'] > summary")
+            self.assertEqual(quick.evaluate(color), orange)  # a nested folder keeps its top folder's colour
+            self.assertEqual(
+                page.locator("#tree details[data-path$='Inbox'] > ul").evaluate("e => getComputedStyle(e).borderLeftColor"), orange
+            )
+            self.assertTrue(inbox.locator("svg.chev").is_visible())
+            self.assertFalse(inbox.locator(".fold").is_visible())
+
+            page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+            page.locator("#tree details[data-path$='Beta']").wait_for()
+            self.assertEqual(page.locator("body").get_attribute("class"), "kind-html obsidian-tree")
+            # Artifacts' names never match the vault's: its folders take the colours in order.
+            self.assertEqual(page.locator("#tree details[data-path$='Alpha'] > summary").evaluate(color), teal)
+            self.assertEqual(page.locator("#tree details[data-path$='Beta'] > summary").evaluate(color), red)
+
+            storage.update_settings({"sidebar_follow_obsidian": False}, model_default="sonnet")
+            expect(page.locator("body")).to_have_attribute("class", "kind-html", timeout=8000)  # live, no reload
+            alpha = page.locator("#tree details[data-path$='Alpha'] > summary")
+            self.assertTrue(alpha.locator(".fold").is_visible())
+            self.assertFalse(alpha.locator("svg.chev").is_visible())
+            self.assertEqual(alpha.evaluate("e => e.parentElement.parentElement.style.getPropertyValue('--folder-color')"), "")
+            storage.update_settings({"sidebar_follow_obsidian": True}, model_default="sonnet")
+            expect(page.locator("body")).to_have_attribute("class", "kind-html obsidian-tree", timeout=8000)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_glass_icons_take_the_page_tone_not_the_app_theme(self) -> None:
         # A dark app over a cream page (the usual Artifacts case) must get light
         # glass with dark ink there; dark glass would turn the icon into a smudge.

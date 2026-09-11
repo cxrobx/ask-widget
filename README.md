@@ -176,6 +176,13 @@ through the link. Like cxtasks, Onyx draws its menus in its own theme; in the ap
 WebKit's stock menu appears only in text fields and on a document's own links,
 media, and selected text.
 
+Hover a page (or Tab to it) and a card beside the sidebar shows its whole title,
+its one-line summary (a page's description, else its subtitle, else its first
+paragraph), where it lives, and when it last changed. With the Obsidian plugin
+running, the sidebar can also wear your vault's file explorer — its font,
+colors, chevrons, indent guides and per-folder colors — under **Settings →
+Appearance → Match vault sidebar appearance**; see the plugin's README.
+
 ### Artifacts
 
 **Artifacts** in the sidebar (or **File ▸ Artifacts**, ⌘⇧H, or the Notes | Artifacts

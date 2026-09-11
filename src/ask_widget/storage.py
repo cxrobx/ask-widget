@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Extra browser origins allowed to reach /ask and the JSON APIs, beyond the
 # built-in localhost set. The Obsidian plugin's renderer origin is the default.
@@ -37,6 +37,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "glass_transparency": 38,
     "appearance_theme": "system",
     "markdown_follow_obsidian": True,
+    "sidebar_follow_obsidian": True,
     # Browsed read-only in Vault mode; "" disables the vault view.
     "vault_root": str(Path.home() / "Documents" / "CX"),
     # Artifacts: a folder of symlinks to HTML pages anywhere on disk; "" hides it.
@@ -130,6 +131,11 @@ class Storage:
                 created_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS markdown_themes (
+                vault_root TEXT PRIMARY KEY,
+                snapshot_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sidebar_themes (
                 vault_root TEXT PRIMARY KEY,
                 snapshot_json TEXT NOT NULL,
                 updated_at REAL NOT NULL
@@ -279,7 +285,7 @@ class Storage:
                 if value < lower or value > upper:
                     raise ValueError(f"{key} must be between {lower} and {upper}.")
                 clean[key] = value
-        for key in ("history_enabled", "allow_private_remote", "markdown_follow_obsidian"):
+        for key in ("history_enabled", "allow_private_remote", "markdown_follow_obsidian", "sidebar_follow_obsidian"):
             if key in patch:
                 clean[key] = bool(patch[key])
         if "allowed_origins" in patch:
@@ -324,23 +330,37 @@ class Storage:
             self._db.commit()
         return self.settings(model_default=model_default)
 
-    def save_markdown_theme(self, root: Path, snapshot: dict[str, Any]) -> None:
+    # Obsidian appearance snapshots, one per vault and kind: the reading view
+    # (markdown_themes) and the file explorer (sidebar_themes).
+    def _save_theme(self, table: str, root: Path, snapshot: dict[str, Any]) -> None:
         encoded = json.dumps(snapshot, sort_keys=True)
         with self._lock:
             self._db.execute(
-                "INSERT INTO markdown_themes(vault_root, snapshot_json, updated_at) VALUES(?, ?, ?) "
+                f"INSERT INTO {table}(vault_root, snapshot_json, updated_at) VALUES(?, ?, ?) "
                 "ON CONFLICT(vault_root) DO UPDATE SET snapshot_json=excluded.snapshot_json, "
                 "updated_at=excluded.updated_at WHERE snapshot_json != excluded.snapshot_json",
                 (str(root.resolve()), encoded, time.time()),
             )
             self._db.commit()
 
-    def markdown_theme(self, root: Path) -> dict[str, Any] | None:
+    def _theme(self, table: str, root: Path) -> dict[str, Any] | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT snapshot_json FROM markdown_themes WHERE vault_root=?", (str(root.resolve()),)
+                f"SELECT snapshot_json FROM {table} WHERE vault_root=?", (str(root.resolve()),)
             ).fetchone()
         return json.loads(row[0]) if row else None
+
+    def save_markdown_theme(self, root: Path, snapshot: dict[str, Any]) -> None:
+        self._save_theme("markdown_themes", root, snapshot)
+
+    def markdown_theme(self, root: Path) -> dict[str, Any] | None:
+        return self._theme("markdown_themes", root)
+
+    def save_sidebar_theme(self, root: Path, snapshot: dict[str, Any]) -> None:
+        self._save_theme("sidebar_themes", root, snapshot)
+
+    def sidebar_theme(self, root: Path) -> dict[str, Any] | None:
+        return self._theme("sidebar_themes", root)
 
     def sync_builtin_roots(self, roots: tuple[Path, ...]) -> None:
         now = time.time()

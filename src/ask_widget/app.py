@@ -46,7 +46,7 @@ from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
 from .providers import find_claude, find_codex, provider_catalogs, provider_status
 from .storage import Storage
 from .vault_ui import vault_page
-from . import handoff, markdown_theme, vault, viewer
+from . import handoff, markdown_theme, sidebar_theme, vault, viewer
 from . import __version__
 
 logger = logging.getLogger("ask_widget.app")
@@ -555,6 +555,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 src=src if root is not None else None,
                 reader_query=reader_query,
                 kind=kind,
+                sidebar=current_sidebar_theme(),
             )
         )
 
@@ -984,8 +985,8 @@ def create_app(config: AppConfig) -> FastAPI:
             **cors(request.headers.get("origin")), "Cache-Control": "no-store",
         })
 
-    @app.post("/api/markdown-theme")
-    async def sync_markdown_theme_api(request: Request):
+    async def receive_theme(request: Request, validate, save, too_large: str):
+        """The plugin's POST of an appearance snapshot: bounded, token-checked, validated, stored per vault."""
         if denied := api_forbidden(request):
             return denied
         # Bound the body before decoding JSON, including chunked requests.
@@ -993,7 +994,7 @@ def create_app(config: AppConfig) -> FastAPI:
         async for chunk in request.stream():
             raw.extend(chunk)
             if len(raw) > markdown_theme.MAX_SNAPSHOT_BYTES + 8192:
-                return JSONResponse({"ok": False, "error": "Reading theme is too large."}, status_code=413)
+                return JSONResponse({"ok": False, "error": too_large}, status_code=413)
         try:
             body = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
@@ -1009,11 +1010,43 @@ def create_app(config: AppConfig) -> FastAPI:
             root = Path(raw_root).expanduser()
             if not root.is_absolute() or not root.is_dir():
                 raise ValueError("Vault folder does not exist.")
-            snapshot = markdown_theme.validate_snapshot(body.get("snapshot"))
+            snapshot = validate(body.get("snapshot"))
         except (OSError, ValueError, RuntimeError) as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        app.state.storage.save_markdown_theme(root, snapshot)
+        save(root, snapshot)
         return JSONResponse({"ok": True}, headers=cors(request.headers.get("origin")))
+
+    @app.post("/api/markdown-theme")
+    async def sync_markdown_theme_api(request: Request):
+        return await receive_theme(
+            request, markdown_theme.validate_snapshot, app.state.storage.save_markdown_theme, "Reading theme is too large."
+        )
+
+    # The vault sidebar can wear the vault's Obsidian file explorer. The snapshot
+    # comes from the configured Obsidian vault and dresses both vaults' sidebars.
+    def current_sidebar_theme() -> dict:
+        settings = app.state.storage.settings(model_default=config.model)
+        root = _vault_root(app)
+        snapshot = app.state.storage.sidebar_theme(root) if root else None
+        enabled = bool(settings.get("sidebar_follow_obsidian", True))
+        css = sidebar_theme.stylesheet(snapshot) if enabled else ""
+        folders = sidebar_theme.folder_tints(snapshot) if css else []
+        return {"ok": True, "enabled": enabled, "available": snapshot is not None,
+                "css": css, "folders": folders, "revision": sidebar_theme.revision(css, folders)}
+
+    @app.get("/api/sidebar-theme")
+    async def sidebar_theme_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        return JSONResponse(current_sidebar_theme(), headers={
+            **cors(request.headers.get("origin")), "Cache-Control": "no-store",
+        })
+
+    @app.post("/api/sidebar-theme")
+    async def sync_sidebar_theme_api(request: Request):
+        return await receive_theme(
+            request, sidebar_theme.validate_snapshot, app.state.storage.save_sidebar_theme, "Sidebar theme is too large."
+        )
 
     @app.post("/api/settings")
     async def update_settings_api(request: Request):

@@ -18,6 +18,7 @@ import { AskWidgetPanel, VIEW_TYPE_ASK_WIDGET } from "./panel";
 import { AskService, ServiceError } from "./service";
 import { AskWidgetSettingTab, DEFAULT_SETTINGS, type AskWidgetSettings } from "./settings";
 import { captureMarkdownTheme } from "./markdown-theme";
+import { captureSidebarTheme } from "./sidebar-theme";
 
 type Action = "eli5" | "prove" | "ask";
 
@@ -131,7 +132,11 @@ export default class AskWidgetPlugin extends Plugin {
     if (!root) throw new Error("Markdown appearance sync requires a local vault.");
     this.themeSync = (async () => {
       const snapshot = await captureMarkdownTheme(this.app);
-      if (!this.themeStopped) await this.service.syncMarkdownTheme(root, snapshot);
+      // The file explorer's look rides the same triggers; an Onyx too old for it just skips it.
+      const sidebar = captureSidebarTheme(this.app);
+      if (this.themeStopped) return;
+      await this.service.syncMarkdownTheme(root, snapshot);
+      await this.service.syncSidebarTheme(root, sidebar).catch(() => { /* Older Onyx: no sidebar route. */ });
     })();
     try {
       await this.themeSync;

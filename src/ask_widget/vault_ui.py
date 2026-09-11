@@ -46,6 +46,9 @@ TREE_ICONS = {
         cls="", body='<path d="M4 1.75h5.25L12.5 5v8.25c0 .55-.45 1-1 1H4c-.55 0-1-.45-1-1V2.75c0-.55.45-1 1-1z"/><path d="M9 1.75V5.25h3.5M5.5 8.5h5M5.5 11h3.5"/>'
     ),
     "link": _SVG.format(cls="", body='<path d="M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>'),
+    # Only the Obsidian look shows it (sidebar_theme): a chevron that turns as its folder opens.
+    "chev": '<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>',
 }
 
 
@@ -57,8 +60,14 @@ def vault_page(
     src: str | None = None,
     reader_query: str | None = None,
     kind: str = "notes",
+    sidebar: dict[str, Any] | None = None,
 ) -> str:
     _glass, theme = theme_settings(settings)
+    # The vault's Obsidian file-explorer look (sidebar_theme), in force only when it has CSS.
+    sidebar = sidebar or {}
+    sidebar_css = sidebar.get("css") or ""
+    sidebar_state = json.dumps({"revision": sidebar.get("revision", ""), "folders": sidebar.get("folders", [])}).replace("<", "\\u003c")
+    body_class = f"kind-{kind}" + (" obsidian-tree" if sidebar_css else "")
     html_kind = kind == "html"
     version = html.escape(__version__)
     shared_style = theme_style(settings)
@@ -107,6 +116,7 @@ aside{{display:flex;flex-direction:column;height:100vh;padding:20px 12px 14px;ov
 #tree{{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:2px 6px;font-size:13.5px}} #tree ul{{list-style:none;margin:0;padding:0}} #tree ul ul{{padding-left:25px}}
 #tree summary,#tree .file{{display:flex;align-items:center;gap:9px;min-height:30px;margin:1px 0;padding:5px 10px;border-radius:9px;color:rgb(var(--ink)/.84);text-decoration:none;white-space:nowrap;user-select:none;transition:background-color .12s,color .12s}}
 #tree summary{{cursor:default;list-style:none}} #tree summary::-webkit-details-marker{{display:none}} #tree .lbl{{min-width:0;overflow:hidden;text-overflow:ellipsis}}
+#tree .chev{{display:none;flex:none;width:14px;height:14px;transition:transform .12s}} #tree details[open]>summary .chev{{transform:rotate(90deg)}}
 #tree .fold{{display:grid;flex:none;width:16px;height:16px;color:rgb(var(--ink)/.6)}} #tree .fold svg{{grid-area:1/1;width:16px;height:16px}} #tree .fold .open,#tree details[open]>summary .fold .shut{{display:none}} #tree details[open]>summary .fold .open{{display:block}}
 #tree summary:hover,#tree .file:hover{{background:rgb(var(--ink)/.045);color:rgb(var(--ink))}} #tree a.file.active{{background:rgb(var(--ink)/.12);color:rgb(var(--ink));font-weight:500}}
 #tree summary:focus-visible,#tree .file:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}}
@@ -136,7 +146,7 @@ body.side-collapsed .shell{{grid-template-columns:minmax(0,1fr)}} body.side-coll
 @media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}} body.side-collapsed .shell{{grid-template-rows:minmax(0,1fr)}}}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
-</style></head><body class="kind-{kind}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-hide class=side-toggle type=button title="Hide sidebar (⌘\\)" aria-label="Hide sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button></div>
+</style><style id=sidebar-theme>{sidebar_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-hide class=side-toggle type=button title="Hide sidebar (⌘\\)" aria-label="Hide sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button></div>
 <nav class=vault-switch aria-label="Vaults"><a href="/vault"{notes_active}>Notes</a><a href="/vault?vault=html"{html_active}>Artifacts</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
@@ -163,9 +173,9 @@ function label(n){{return HTML?(n.title||n.name):n.name.replace(/\\.(md|markdown
 // Rows carry only a label; what a page is (title, summary, folder, kind, age) waits in NODES for the hover card.
 const ICON={json.dumps(TREE_ICONS)}; const NODES=new Map();
 function fileRow(n,crumbs){{NODES.set(n.path,{{n,crumbs}});if(n.missing)return `<li><span class="file missing" data-path="${{esc(n.path)}}" tabindex=0><span class=lbl>${{esc(label(n))}}</span><span class=ext>missing</span></span></li>`;return `<li><a class=file target=reader href="${{esc(viewHref(n.path))}}" data-path="${{esc(n.path)}}"><span class=lbl>${{esc(label(n))}}</span>${{HTML?'':badge(n.ext||'')}}</a></li>`}}
-function dirRow(n,crumbs){{const inside=crumbs.concat(n.name);return `<li><details data-path="${{esc(n.path)}}"${{isOpen(n.path)?' open':''}}><summary title="${{esc(n.path)}}"><span class=fold>${{ICON.shut}}${{ICON.open}}</span><span class=lbl>${{esc(n.name)}}</span>${{n.symlink?'<span class=sym title="Linked folder">↗</span>':''}}</summary><ul>${{n.children.length?n.children.map(c=>render(c,inside)).join(''):(HTML?'<li class=none>No pages yet.</li>':'')}}</ul></details></li>`}}
+function dirRow(n,crumbs){{const inside=crumbs.concat(n.name);return `<li><details data-path="${{esc(n.path)}}"${{isOpen(n.path)?' open':''}}><summary title="${{esc(n.path)}}">${{ICON.chev}}<span class=fold>${{ICON.shut}}${{ICON.open}}</span><span class=lbl>${{esc(n.name)}}</span>${{n.symlink?'<span class=sym title="Linked folder">↗</span>':''}}</summary><ul>${{n.children.length?n.children.map(c=>render(c,inside)).join(''):(HTML?'<li class=none>No pages yet.</li>':'')}}</ul></details></li>`}}
 function render(n,crumbs){{return n.kind==='dir'?dirRow(n,crumbs):fileRow(n,crumbs)}}
-function renderTree(){{if(!TREE)return;hidePeek();NODES.clear();tree.innerHTML=TREE.children.length?'<ul class=root>'+TREE.children.map(c=>render(c,[])).join('')+'</ul>':`<div class=none>${{HTML?'No artifacts yet. Use + to link pages or folders, or add a project folder.':'No notes found.'}}</div>`;tree.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{{const shut=!d.open;if(HTML?shut:!shut)FOLD.add(d.dataset.path);else FOLD.delete(d.dataset.path);store(KEY+(HTML?'closed':'open'),JSON.stringify([...FOLD]))}}));highlight(currentSrc());if(HTML)fillDestinations()}}
+function renderTree(){{if(!TREE)return;hidePeek();NODES.clear();tree.innerHTML=TREE.children.length?'<ul class=root>'+TREE.children.map(c=>render(c,[])).join('')+'</ul>':`<div class=none>${{HTML?'No artifacts yet. Use + to link pages or folders, or add a project folder.':'No notes found.'}}</div>`;tree.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{{const shut=!d.open;if(HTML?shut:!shut)FOLD.add(d.dataset.path);else FOLD.delete(d.dataset.path);store(KEY+(HTML?'closed':'open'),JSON.stringify([...FOLD]))}}));highlight(currentSrc());applyTints();if(HTML)fillDestinations()}}
 function currentSrc(){{try{{const l=reader.contentWindow.location;if(!l||!l.href||l.href==='about:blank')return '';return new URLSearchParams(l.search).get('src')||''}}catch(e){{return ''}}}}
 function highlight(src){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:'nearest'}})}}
 async function loadTree(){{try{{const d=await api('/api/vault/tree?vault='+KIND);ROOT=d.root;TREE=d.tree;$('#vault-count').textContent=d.files+' '+UNIT+(d.files===1?'':'s')+(d.missing?' · '+d.missing+' missing':'')+(d.truncated?' (truncated)':'');renderTree()}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}} <a href="/#settings">Open Settings</a></div>`;$('#vault-count').textContent=HTML?'no Artifacts folder':'no vault'}}}}
@@ -209,6 +219,16 @@ $('#add-pick-folder').onclick=async()=>{{try{{const picked=await window.webkit.m
 $('#add-path-go').onclick=()=>linkTargets([$('#add-path').value.trim()]);$('#add-path').onkeydown=e=>{{if(e.key==='Enter'){{e.preventDefault();linkTargets([e.target.value.trim()])}}}};
 async function makeFolder(){{const name=$('#add-folder-name').value.trim();if(!name)return;try{{const d=await postJSON('/api/vault/html/folder',{{parent:$('#add-dest').value,name}});$('#add-folder-name').value='';store(KEY+'dest',d.rel);addStatus('Created '+d.rel,'ok');await loadTree()}}catch(e){{addStatus(e.message,'bad')}}}}
 $('#add-mkdir').onclick=makeFolder;$('#add-folder-name').onkeydown=e=>{{if(e.key==='Enter'){{e.preventDefault();makeFolder()}}}}}}
+// MARK: Obsidian look — while the vault's file-explorer look is in force (body.obsidian-tree, CSS from /api/sidebar-theme),
+// each top-level folder takes its own Obsidian colour: by name in Notes, else by position — Artifacts always by position,
+// since its folder names never match the vault's. Kept live, like the reader's Markdown styles.
+let SIDE_THEME={sidebar_state};
+function applyTints(){{const on=document.body.classList.contains('obsidian-tree'),list=SIDE_THEME.folders||[],byName=new Map(list.map(f=>[f.name.toLowerCase(),f]));
+tree.querySelectorAll(':scope > ul.root > li > details').forEach((d,i)=>{{const li=d.parentElement,name=(d.querySelector(':scope > summary .lbl')||{{}}).textContent||'';
+const f=on&&list.length?((!HTML&&byName.get(name.toLowerCase()))||list[i%list.length]):null;
+if(f){{li.style.setProperty('--folder-color',f.color);li.style.setProperty('--guide-color',f.guide||f.color)}}else{{li.style.removeProperty('--folder-color');li.style.removeProperty('--guide-color')}}}})}}
+async function syncSidebarTheme(){{if(document.hidden)return;try{{const d=await api('/api/sidebar-theme');if(d.revision===SIDE_THEME.revision)return;SIDE_THEME=d;$('#sidebar-theme').textContent=d.css||'';document.body.classList.toggle('obsidian-tree',!!d.css);applyTints()}}catch(e){{}}}}
+setInterval(syncSidebarTheme,3000); document.addEventListener('visibilitychange',syncSidebarTheme);
 // MARK: hover card — a page's whole title, its one line, where it lives, what it is. The first hover waits a beat; after
 // that it follows the pointer row to row at once. A click, scroll, right-click menu, Escape, or leaving puts it away.
 const peek=$('#peek'); let peekRow=null, peekTimer=0, peekWarmUntil=0;

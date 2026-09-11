@@ -77,6 +77,24 @@ lists, quotes, code blocks, and tables. It does not copy whole stylesheets,
 embedded font files, syntax-highlighting rules, custom callout renderers, or
 note-specific `cssclasses`. Fonts must be available on the computer.
 
+## Sidebar appearance
+
+On the same triggers (and the same **Sync now**), the plugin shares how this
+vault's file explorer looks: its pane color and font, folder and file rows, the
+open file, hover, chevrons, indent guides, the search box, and each top-level
+folder's own color, so a rainbow-folders snippet comes across folder by folder.
+It measures a hidden copy of the explorer built from Obsidian's own classes, in
+the explorer's folder order, so themes and snippets resolve exactly as they do
+in the real sidebar. Only styles cross over, never note names below the top
+level or note contents.
+
+Onyx's Notes and Artifacts sidebars then take Obsidian's shape and colors:
+chevrons instead of folder icons, the indent guides, and each top-level folder's
+color — by name in Notes, and in order in Artifacts, whose folder names never
+match the vault's. **Settings → Appearance → Match vault sidebar appearance** is
+on by default; turn it off, or run without the plugin, and the sidebar keeps
+Onyx's own design. Changes arrive within a few seconds, without a reload.
+
 ## Develop
 
 ```bash
