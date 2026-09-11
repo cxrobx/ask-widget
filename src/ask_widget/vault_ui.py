@@ -149,6 +149,9 @@ body.side-unpinned #vault-side{{position:fixed;top:8px;bottom:8px;left:8px;z-ind
 body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar)/.9);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
 @media(prefers-reduced-transparency:reduce){{body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
+/* Motion: out with an ease-out slide; away with a quicker ease-in one, hidden only once it is off. Reduce Motion fades in place. */
+body.side-unpinned #vault-side{{transition:transform .18s cubic-bezier(.4,0,1,1),visibility 0s linear .18s}} body.side-unpinned.side-out #vault-side{{transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.side-still #vault-side{{transition:none!important}}
+@media(prefers-reduced-motion:reduce){{body.side-unpinned #vault-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.side-unpinned.side-out #vault-side{{opacity:1;transition:opacity .15s linear,visibility 0s}}}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
 </style><style id=sidebar-theme>{sidebar_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
@@ -258,6 +261,7 @@ tree.addEventListener('mouseover',e=>{{const row=e.target.closest('#tree .file')
 tree.addEventListener('mouseout',e=>{{const row=e.target.closest('#tree .file');if(row&&!row.contains(e.relatedTarget)){{clearTimeout(peekTimer);peekTimer=setTimeout(hidePeek,90)}}}});
 tree.addEventListener('focusin',e=>{{const row=e.target.closest('#tree .file');if(row&&row.matches(':focus-visible'))wantPeek(row,200)}});
 for(const ev of ['focusout','scroll','click','contextmenu'])tree.addEventListener(ev,hidePeek,{{passive:true}}); document.addEventListener('keydown',e=>{{if(e.key==='Escape')hidePeek()}}); window.addEventListener('blur',hidePeek);
-if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||''))setPinned(false);
+// Put back as it was left without a slide: the page opens with the sidebar already away.
+if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
 loadTree().then(()=>{{if(!INITIAL_SRC&&ROOT){{const last=recall(KEY+'last');if(last)reader.src=viewHref(last)}}}});
 </script></body></html>"""

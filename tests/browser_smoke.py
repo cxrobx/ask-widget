@@ -899,16 +899,30 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(menu).to_be_hidden()
                     expect(side).to_be_hidden()
 
-                    # Remembered across a reload; ⌘\ pins it back, and that is remembered too.
+                    # Remembered across a reload, and put back without a slide; ⌘\ pins it back, and that is remembered too.
+                    page.add_init_script(
+                        "window.__sideRuns = []; addEventListener('transitionrun', e => {"
+                        " if (e.target.id === 'vault-side') __sideRuns.push(e.propertyName) }, true)"
+                    )
                     page.reload(wait_until="networkidle")
                     expect(pin).to_have_attribute("aria-pressed", "false")
                     expect(side).to_be_hidden()
+                    self.assertEqual(page.evaluate("__sideRuns"), [])
                     page.keyboard.press("Meta+Backslash")
                     expect(pin).to_have_attribute("aria-pressed", "true")
                     expect(side).to_be_visible()
                     self.assertGreater(reader_x(), 250)
                     page.reload(wait_until="networkidle")
                     expect(pin).to_have_attribute("aria-pressed", "true")
+
+                    # Unpinned with the pointer away, it slides off (so the listener above does hear a slide);
+                    # under Reduce Motion it fades where it is instead of travelling.
+                    page.mouse.move(700, 350)
+                    page.keyboard.press("Meta+Backslash")
+                    expect(side).to_be_hidden()
+                    self.assertIn("transform", page.evaluate("__sideRuns"))
+                    page.emulate_media(reduced_motion="reduce")
+                    self.assertEqual(side.evaluate("e => getComputedStyle(e).transform"), "none")
                     browser.close()
 
         self.assertEqual(page_errors, [])
