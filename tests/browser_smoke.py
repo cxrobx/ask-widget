@@ -872,6 +872,11 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(side).to_be_visible()
                     page.mouse.move(700, 350)
                     expect(side).to_be_hidden()
+                    # Out from the edge and straight back to the page, never touching the (inset) panel: it still goes.
+                    page.mouse.move(3, 350)
+                    expect(side).to_be_visible()
+                    page.mouse.move(700, 350)
+                    expect(side).to_be_hidden()
 
                     # In use holds it out: "/" brings it out to type in, Escape lets it go ...
                     page.keyboard.press("/")

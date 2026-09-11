@@ -143,7 +143,11 @@ body.kind-html .shell{{grid-template-columns:290px minmax(0,1fr)}}
 @media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}}}}
 #side-edge{{position:fixed;top:0;bottom:0;left:0;z-index:39;display:none;width:8px}} body.side-unpinned #side-edge{{display:block}}
 body.side-unpinned .shell,body.side-unpinned.kind-html .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
-body.side-unpinned #vault-side{{position:fixed;top:0;bottom:0;left:0;z-index:40;width:min(260px,86vw);height:auto;max-height:none;visibility:hidden;transform:translateX(-100%)}} body.side-unpinned.kind-html #vault-side{{width:min(290px,86vw)}}
+/* Floating, it is a panel lying on the page: inset, rounded, shadowed, and on a ground thick enough to read over a page's
+   text; the window's glass is too thin for that (the Obsidian look already brings an opaque ground of its own). */
+body.side-unpinned #vault-side{{position:fixed;top:8px;bottom:8px;left:8px;z-index:40;width:min(260px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(-100% - 16px))}} body.side-unpinned.kind-html #vault-side{{width:min(290px,86vw)}} body.native.side-unpinned #vault-side{{padding-top:40px}}
+body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar)/.9);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
+@media(prefers-reduced-transparency:reduce){{body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
@@ -193,7 +197,7 @@ function sideLater(){{clearTimeout(sideTimer);if(pinned())return;sideTimer=setTi
 function setPinned(on){{document.body.classList.toggle('side-unpinned',!on);store(SIDE_KEY,on?'':'unpinned');pin.setAttribute('aria-pressed',String(on));pin.title=(on?'Unpin':'Pin')+' sidebar (⌘\\\\)';clearTimeout(sideTimer);sideOut(!on&&(sideOver||inUse()));if(!on&&!sideOver)sideLater()}}
 function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setPinned(!pinned())}}}}
 pin.onclick=()=>setPinned(!pinned()); document.addEventListener('keydown',sideKey);
-edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),120)}}); edge.addEventListener('mouseleave',e=>{{if(!side.contains(e.relatedTarget))clearTimeout(sideTimer)}});
+edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),120)}}); edge.addEventListener('mouseleave',e=>{{if(side.contains(e.relatedTarget))return;clearTimeout(sideTimer);if(document.body.classList.contains('side-out'))sideLater()}});
 side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}); side.addEventListener('mouseleave',()=>{{sideOver=false;sideLater()}}); side.addEventListener('focusout',()=>{{if(!sideOver)sideLater()}});
 reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'Artifacts':'Vault');store(KEY+'last',src)}});
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
