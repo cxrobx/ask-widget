@@ -670,6 +670,7 @@ class BrowserSmokeTests(unittest.TestCase):
         )
         artifacts = self.root / "Artifacts"
         (artifacts / "Mine").mkdir(parents=True)
+        (artifacts / "Mine" / "draft.html").write_text("<title>Draft</title>", encoding="utf-8")  # listed once it holds a page
         (artifacts / "Architect").symlink_to(topic, target_is_directory=True)
         row_path = artifacts / "Architect" / "guides" / "who" / "index.html"
         real = str(row_path.resolve())
@@ -814,6 +815,7 @@ class BrowserSmokeTests(unittest.TestCase):
                         self.assertAlmostEqual(js[key], value, places=9, msg=(t, dark, key))
             link = page.locator("#tree a.file", has_text="Who holds the plan")
             self.assertEqual(link.count(), 1)
+            self.assertEqual(page.locator("#tree summary", has_text="Study").count(), 0)  # no page yet: not listed
             link.click()
             reader = page.frame_locator("iframe[name=reader]")
             self.assertEqual(reader.locator("#predict p").inner_text(), "Before you read, predict the answer.")
@@ -838,7 +840,9 @@ class BrowserSmokeTests(unittest.TestCase):
 
             page.locator("#add-folder-name").fill("Week 1")
             page.locator("#add-mkdir").click()
-            page.locator("#tree summary", has_text="Week 1").wait_for()
+            # Made but empty: + offers it at once, the list only once it holds a page.
+            expect(page.locator('#add-dest option[value="Study/Week 1"]')).to_have_count(1)
+            self.assertEqual(page.locator("#tree summary", has_text="Week 1").count(), 0)
             self.assertTrue((html_vault / "Study" / "Week 1").is_dir())
 
             page.locator("#add-dest").select_option("")

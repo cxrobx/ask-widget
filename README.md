@@ -190,9 +190,10 @@ switch at the top of either vault) browses a folder of **symlinks to HTML pages
 anywhere on your Mac** — the HTML counterpart of an Obsidian vault. It defaults to
 `~/Documents/Artifacts`; change it under **Settings ▸ Vaults**.
 
-- **Top-level folders are projects**, listed even while empty. Link a whole
-  folder (say a topic in `~/learnings`) and every page added to it later shows up
-  on its own.
+- **Top-level folders are projects.** A folder is listed once it holds a page,
+  so an empty one stays out of the way; **+** still offers it as a place to add
+  to. Link a whole folder (say a topic in `~/learnings`) and every page added to
+  it later shows up on its own.
 - **Pages are listed by their `<title>`**, with how long ago each changed. Below
   the project level a folder containing `index.html` is one page, so a guide
   folder reads as a single entry; its `index.inline.html` twin, audio, and notes

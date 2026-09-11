@@ -24,7 +24,9 @@ Markdown. Three things differ there, all in service of scanning the list:
     silently vanishing — in a vault made of links, a moved file is the common
     failure and the list is where you would notice it.
 
-Top-level folders are the vault's projects and are always listed, empty or not.
+Top-level folders are the vault's projects and stay in the index even while
+empty, so + can offer a folder you just made; the sidebar lists a folder only
+once a page sits somewhere beneath it.
 """
 
 from __future__ import annotations
@@ -546,9 +548,10 @@ class VaultIndex:
                 keep.append(name)
             keep.sort(key=str.casefold)
             dirnames[:] = keep
-            # Folders the vault owns are listed even while empty — a folder you
-            # just made has to show up. Inside a linked tree only folders that
-            # hold pages appear, or a linked repo would list every directory.
+            # Folders the vault owns stay in the index even while empty, so +
+            # can offer a folder you just made (the sidebar shows it once it
+            # holds a page). Inside a linked tree only folders that hold pages
+            # appear, or a linked repo would list every directory.
             for name in keep:
                 child_rel = f"{rel_dir}/{name}" if rel_dir else name
                 if depth == 0 or not any(
