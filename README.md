@@ -168,6 +168,14 @@ the button in the reader's corner or ⌘\ again, even with focus inside the page
 Symlinked vault folders are followed and keep their vault-visible paths, so
 links between notes inside them stay in the vault.
 
+Right-click a note or folder for its menu: **Open**, **Reveal in Finder** (the
+real file), and — for anything reached through a symlink — **Reveal Link in
+Finder**, which shows the link itself in the vault folder. Hold ⌥ and they read
+**Copy Path** and **Copy Link Path**: the resolved absolute path, or the path
+through the link. Like cxtasks, Onyx draws its menus in its own theme; in the app,
+WebKit's stock menu appears only in text fields and on a document's own links,
+media, and selected text.
+
 ### Artifacts
 
 **Artifacts** in the sidebar (or **File ▸ Artifacts**, ⌘⇧H, or the Notes | Artifacts
