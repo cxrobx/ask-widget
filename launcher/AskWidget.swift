@@ -1,4 +1,4 @@
-// Ask Widget — resilient macOS launcher.
+// Onyx — resilient macOS launcher.
 //
 // Production builds ship the FastAPI service as a bundled executable. A
 // checkout-local runtime remains as a development fallback, but the installed
@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 
 private let port = 8899
 private let baseURL = "http://127.0.0.1:\(port)"
-private let expectedService = "ask-widget"
+private let expectedService = "onyx"
 private let expectedProtocol = 3
 private let releasesURL = URL(string: "https://github.com/cxrobx/ask-widget/releases/latest")!
 private let releasesAPIURL = URL(string: "https://api.github.com/repos/cxrobx/ask-widget/releases/latest")!
@@ -182,7 +182,7 @@ private final class WindowGlass {
         material.autoresizingMask = [.width, .height]
         content.addSubview(material, positioned: .below, relativeTo: nil)
         fallback = material
-        NSLog("Ask Widget glass: CGS blur unavailable; using NSVisualEffectView")
+        NSLog("Onyx glass: CGS blur unavailable; using NSVisualEffectView")
     }
 
     private func applyRadius(_ radius: Int) {
@@ -193,7 +193,7 @@ private final class WindowGlass {
         guard number > 0 else { return }
         let status = setBlur(connection(), UInt32(truncatingIfNeeded: number), Int32(radius))
         if status != 0 {
-            NSLog("Ask Widget glass: CGSSetWindowBackgroundBlurRadius(%ld) returned %d", radius, status)
+            NSLog("Onyx glass: CGSSetWindowBackgroundBlurRadius(%ld) returned %d", radius, status)
         }
     }
 }
@@ -225,11 +225,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
     private lazy var logURL: URL = {
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Ask Widget", isDirectory: true)
+            .appendingPathComponent("Library/Logs/Onyx", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true
         )
-        return directory.appendingPathComponent("ask-widget.log")
+        return directory.appendingPathComponent("onyx.log")
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -287,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     ) {
         guard let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
-            error.pointee = "Ask Widget did not receive any selected text."
+            error.pointee = "Onyx did not receive any selected text."
             return
         }
         DispatchQueue.main.async { [weak self] in
@@ -312,11 +312,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         guard let urls = pasteboard.readObjects(
             forClasses: [NSURL.self], options: options
         ) as? [URL], let url = urls.first else {
-            error.pointee = "Ask Widget did not receive a document."
+            error.pointee = "Onyx did not receive a document."
             return
         }
         guard isSupportedDocument(url) else {
-            error.pointee = "Ask Widget supports HTML, Markdown, text, and PDF documents."
+            error.pointee = "Onyx supports HTML, Markdown, text, and PDF documents."
             return
         }
 
@@ -361,7 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     private func startServer(id: UUID) {
         guard let launch = resolveServerLaunch() else {
             failStartup(
-                "The Ask Widget service is missing.",
+                "The Onyx service is missing.",
                 detail: "Rebuild the app with launcher/build-app.sh. No bundled service or usable development checkout was found.",
                 id: id
             )
@@ -372,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             try prepareLog()
         } catch {
             failStartup(
-                "Ask Widget could not create its log file.",
+                "Onyx could not create its log file.",
                 detail: error.localizedDescription,
                 id: id
             )
@@ -392,7 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             DispatchQueue.main.async {
                 guard self.startupID == id, !self.showingFailure else { return }
                 self.failStartup(
-                    "The Ask Widget service exited before it was ready.",
+                    "The Onyx service exited before it was ready.",
                     detail: "\(launch.label) exited with status \(status).",
                     id: id
                 )
@@ -408,7 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             waitForServer(id: id, deadline: Date().addingTimeInterval(20))
         } catch {
             failStartup(
-                "The Ask Widget service could not be launched.",
+                "The Onyx service could not be launched.",
                 detail: error.localizedDescription,
                 id: id
             )
@@ -438,7 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 json["service"] as? String == expectedService,
                 json["protocol"] as? Int == expectedProtocol
             else {
-                completion(.incompatible("Its health response does not identify a compatible Ask Widget service."))
+                completion(.incompatible("Its health response does not identify a compatible Onyx service."))
                 return
             }
             let providerAvailable =
@@ -466,7 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 case .unavailable:
                     if Date() >= deadline {
                         self.failStartup(
-                            "The Ask Widget service did not become ready.",
+                            "The Onyx service did not become ready.",
                             detail: "Startup exceeded 20 seconds.",
                             id: id
                         )
@@ -487,7 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         let commonArguments = serverArguments(home: home)
 
         if let resources = Bundle.main.resourceURL {
-            let bundled = resources.appendingPathComponent("Server/ask-widget-server")
+            let bundled = resources.appendingPathComponent("Server/onyx-server")
             if fileManager.isExecutableFile(atPath: bundled.path) {
                 return ServerLaunch(
                     executable: bundled,
@@ -498,10 +498,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             }
         }
 
-        // Development fallbacks. ASK_WIDGET_REPO is useful when the checkout is
+        // Development fallbacks. ONYX_REPO is useful when the checkout is
         // elsewhere; the bundle-relative candidate supports launcher/build.
         var candidates: [URL] = []
-        if let override = ProcessInfo.processInfo.environment["ASK_WIDGET_REPO"],
+        if let override = ProcessInfo.processInfo.environment["ONYX_REPO"],
            !override.isEmpty {
             candidates.append(URL(fileURLWithPath: (override as NSString).expandingTildeInPath))
         }
@@ -542,7 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             "--port", String(port),
             "--parent-pid", String(ProcessInfo.processInfo.processIdentifier),
         ]
-        let rootsFile = home.appendingPathComponent(".config/ask-widget/allow-roots")
+        let rootsFile = home.appendingPathComponent(".config/onyx/allow-roots")
         if let raw = try? String(contentsOf: rootsFile, encoding: .utf8) {
             // A closure, not `\Character.isNewline`: Swift 5.10 (CI's macos-14) cannot
             // pass a key path where a rethrowing closure is expected.
@@ -597,7 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         if let size = try? logURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
            size > 2_000_000 {
             let previous = logURL.deletingLastPathComponent()
-                .appendingPathComponent("ask-widget.previous.log")
+                .appendingPathComponent("onyx.previous.log")
             try? fileManager.removeItem(at: previous)
             try fileManager.moveItem(at: logURL, to: previous)
         }
@@ -758,7 +758,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.title = "Ask Widget"
+        window.title = "Onyx"
         // Opaque until the page has painted and arms the glass itself.
         glass.window = window
         glass.paintOpaque(launchBaseColor())
@@ -798,7 +798,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             defer: false
         )
         window.titlebarAppearsTransparent = true
-        window.title = "Ask Widget"
+        window.title = "Onyx"
         window.isMovableByWindowBackground = true
         window.center()
         // A plain opaque splash: there is no page yet to tint the glass, and a
@@ -812,7 +812,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         spinner.startAnimation(nil)
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: "Ask Widget")
+        let title = NSTextField(labelWithString: "Onyx")
         title.font = .boldSystemFont(ofSize: 16)
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1022,7 +1022,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func checkForUpdates() {
         var request = URLRequest(url: releasesAPIURL)
         request.timeoutInterval = 10
-        request.setValue("Ask-Widget/\(currentVersion())", forHTTPHeaderField: "User-Agent")
+        request.setValue("Onyx/\(currentVersion())", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode
@@ -1043,7 +1043,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             let isNewer = latest.compare(current, options: .numeric) == .orderedDescending
             DispatchQueue.main.async {
                 self?.showUpdateResult(
-                    title: isNewer ? "Ask Widget \(latest) Is Available" : "Ask Widget Is Up to Date",
+                    title: isNewer ? "Onyx \(latest) Is Available" : "Onyx Is Up to Date",
                     message: isNewer
                         ? "You’re running \(current). Open the release page to download the update."
                         : "You’re running the latest release (\(current)).",
@@ -1132,17 +1132,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         let appMenu = NSMenu()
         appItem.submenu = appMenu
         appMenu.addItem(NSMenuItem(
-            title: "About Ask Widget",
+            title: "About Onyx",
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: ""
         ))
         appMenu.addItem(menuItem("Check for Updates…", #selector(checkForUpdates), ""))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(
-            title: "Hide Ask Widget", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"
+            title: "Hide Onyx", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"
         ))
         appMenu.addItem(NSMenuItem(
-            title: "Quit Ask Widget", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
+            title: "Quit Onyx", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
         ))
 
         let fileItem = NSMenuItem()

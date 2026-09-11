@@ -105,7 +105,7 @@ def main() -> None:
 
     roots_label = "(any — --allow-any)" if args.allow_any else ", ".join(str(r) for r in roots)
     print(
-        "\n  Ask Widget server\n"
+        "\n  Onyx server\n"
         f"  Folder:  {default_folder}\n"
         f"  Roots:   {roots_label}\n"
         f"  Model:   {config.model}\n"

@@ -597,7 +597,7 @@ class PluginOriginTests(unittest.TestCase):
         self.assertEqual(allowed.status_code, 200)
         payload = allowed.json()
         self.assertEqual(payload["token"], self.config.token)
-        self.assertEqual(payload["service"], "ask-widget")
+        self.assertEqual(payload["service"], "onyx")
         self.assertEqual(payload["protocol"], 3)
         self.assertEqual(payload["provider"], "claude")
         self.assertEqual(payload["request_timeout"], 120)
@@ -649,7 +649,7 @@ class PluginOriginTests(unittest.TestCase):
     def test_health_and_plugin_routes_carry_cors_headers(self) -> None:
         headers = {"origin": self.OBSIDIAN}
         health = self.client.get("/health", headers=headers)
-        self.assertEqual(health.json()["service"], "ask-widget")
+        self.assertEqual(health.json()["service"], "onyx")
         self.assertEqual(health.headers["access-control-allow-origin"], self.OBSIDIAN)
         for path, params in (
             ("/api/settings", None),

@@ -1,4 +1,4 @@
-/* ask-widget — highlight-to-ask reading companion.
+/* Onyx — highlight-to-ask reading companion.
  *
  * Drop this on any local HTML page:
  *   <script src="http://localhost:8899/ask.js"></script>
@@ -342,7 +342,7 @@
     panelEl = document.createElement('div');
     panelEl.className = 'askw-root askw-panel';
     panelEl.setAttribute('role', 'dialog');
-    panelEl.setAttribute('aria-label', 'Ask Widget answer');
+    panelEl.setAttribute('aria-label', 'Onyx answer');
     panelEl.setAttribute('aria-modal', 'false');
     panelEl.setAttribute('aria-busy', 'false');
     panelEl.innerHTML =
@@ -1250,7 +1250,7 @@
   // window's material, which tinted it. The window is now a raw desktop blur, so
   // such a page would put its text straight on the wallpaper. Give it the page
   // canvas a browser would. Only at the top level — inside the vault shell the
-  // pane behind the reader supplies the tint — and never for Ask Widget's own
+  // pane behind the reader supplies the tint — and never for Onyx's own
   // reading shells, whose translucency is deliberate.
   function guardTransparentCanvas() {
     if (window.top !== window || document.body.hasAttribute('data-askw-document-kind')) return;

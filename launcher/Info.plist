@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Ask Widget</string>
+    <string>Onyx</string>
     <key>CFBundleDisplayName</key>
-    <string>Ask Widget</string>
+    <string>Onyx</string>
     <key>CFBundleExecutable</key>
-    <string>AskWidget</string>
+    <string>Onyx</string>
     <key>CFBundleIdentifier</key>
-    <string>com.cx.ask-widget</string>
+    <string>com.cx.onyx</string>
     <key>CFBundleVersion</key>
     <string>0.6.0</string>
     <key>CFBundleShortVersionString</key>
@@ -30,7 +30,7 @@
     <array>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>Ask Widget Document</string>
+            <string>Onyx Document</string>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
             <key>LSHandlerRank</key>
@@ -47,7 +47,7 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>Ask Widget Document Content</string>
+            <string>Onyx Document Content</string>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
             <key>LSHandlerRank</key>
@@ -90,12 +90,12 @@
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>Open in Ask Widget</string>
+                <string>Open in Onyx</string>
             </dict>
             <key>NSMessage</key>
             <string>openDocumentWithAskWidget</string>
             <key>NSPortName</key>
-            <string>com.cx.ask-widget</string>
+            <string>com.cx.onyx</string>
             <key>NSSendFileTypes</key>
             <array>
                 <string>public.html</string>
@@ -108,12 +108,12 @@
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>Ask Selection with Ask Widget</string>
+                <string>Ask Selection with Onyx</string>
             </dict>
             <key>NSMessage</key>
             <string>askSelection</string>
             <key>NSPortName</key>
-            <string>com.cx.ask-widget</string>
+            <string>com.cx.onyx</string>
             <key>NSSendTypes</key>
             <array>
                 <string>NSStringPboardType</string>

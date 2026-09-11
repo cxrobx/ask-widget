@@ -22,9 +22,9 @@ import { captureMarkdownTheme } from "./markdown-theme";
 type Action = "eli5" | "prove" | "ask";
 
 const ACTION_TITLES: Record<Action, string> = {
-  eli5: "Ask Widget: ELI5",
-  prove: "Ask Widget: Prove it",
-  ask: "Ask Widget: Ask…",
+  eli5: "Onyx: ELI5",
+  prove: "Onyx: Prove it",
+  ask: "Onyx: Ask…",
 };
 
 export default class AskWidgetPlugin extends Plugin {
@@ -179,7 +179,7 @@ export default class AskWidgetPlugin extends Plugin {
     }
     const folder = this.contextFolder();
     if (!folder) {
-      new Notice("Set a context folder in Ask Widget settings.");
+      new Notice("Set a context folder in Onyx settings.");
       return;
     }
     try {
@@ -204,19 +204,19 @@ export default class AskWidgetPlugin extends Plugin {
     if (error instanceof ServiceError && error.kind === "offline") {
       // ensureSession already tried to start the background service.
       const message = this.service.hasDaemon()
-        ? "The Ask Widget background service did not start."
-        : "Ask Widget isn't running. Install the background service to skip this.";
+        ? "The Onyx background service did not start."
+        : "Onyx isn't running. Install the background service to skip this.";
       const notice = new Notice(message, 8000);
       const button = notice.noticeEl.createEl("button", { text: "Open the app" });
       button.addEventListener("click", async () => {
         this.service.openInApp();
         const ready = await this.service.waitForService();
-        new Notice(ready ? "Ask Widget is running. Try again." : "Ask Widget did not start.");
+        new Notice(ready ? "Onyx is running. Try again." : "Onyx did not start.");
       });
       return;
     }
     if (error instanceof ServiceError && error.kind === "incompatible") {
-      new Notice("Update Ask Widget: this version has no /api/session.");
+      new Notice("Update Onyx: this version has no /api/session.");
       return;
     }
     new Notice(error instanceof Error ? error.message : String(error));

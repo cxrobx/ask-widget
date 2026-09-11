@@ -4,10 +4,50 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unittest.mock import patch
+
 from ask_widget.storage import Storage
 
 
 class StorageTests(unittest.TestCase):
+    def test_first_start_adopts_the_ask_widget_database_and_leaves_it_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()  # Storage resolves /var → /private/var
+            legacy_dir, new_dir = root / "Ask Widget", root / "Onyx"
+            legacy = legacy_dir / "ask-widget.db"
+            old = Storage(legacy_dir)
+            old.upsert_document(source="/notes/guide.md", title="Guide", kind="markdown", folder="/notes")
+            old.update_settings({"appearance_theme": "dark"}, model_default="sonnet")
+            old.close()
+            (legacy_dir / "onyx.db").rename(legacy)
+
+            with patch("ask_widget.storage.default_data_dir", return_value=new_dir), \
+                 patch("ask_widget.storage.legacy_database", return_value=legacy):
+                store = Storage()
+                self.assertEqual(store.path, new_dir / "onyx.db")
+                self.assertEqual([d["title"] for d in store.recent_documents()], ["Guide"])
+                self.assertEqual(store.settings()["appearance_theme"], "dark")
+                store.upsert_document(source="/notes/new.md", title="New", kind="markdown", folder="/notes")
+                store.close()
+
+                # A second start keeps the adopted copy rather than re-copying over it.
+                again = Storage()
+                self.assertEqual(len(again.recent_documents()), 2)
+                again.close()
+
+            self.assertTrue(legacy.is_file())
+            self.assertFalse((new_dir / "onyx.db.partial").exists())
+
+    def test_an_explicit_data_dir_never_adopts_the_legacy_database(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            legacy = Path(raw) / "ask-widget.db"
+            Storage(Path(raw)).close()
+            (Path(raw) / "onyx.db").rename(legacy)
+            with patch("ask_widget.storage.legacy_database", return_value=legacy):
+                store = Storage(Path(raw) / "fresh")
+                self.assertEqual(store.recent_documents(), [])
+                store.close()
+
     def test_settings_documents_conversations_and_export_persist(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             data = Path(raw)

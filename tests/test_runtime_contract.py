@@ -22,7 +22,7 @@ class RuntimeContractTests(unittest.TestCase):
                 body = client.get("/health").json()
 
             self.assertEqual(body["status"], "ok")
-            self.assertEqual(body["service"], "ask-widget")
+            self.assertEqual(body["service"], "onyx")
             self.assertEqual(body["version"], __version__)
             self.assertEqual(body["protocol"], PROTOCOL_VERSION)
             self.assertIsInstance(body["claude_available"], bool)

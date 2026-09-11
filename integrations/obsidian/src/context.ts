@@ -75,7 +75,7 @@ export function vaultBasePath(app: App): string | null {
 }
 
 /**
- * The absolute path Ask Widget files this note's answers under. It must match
+ * The absolute path Onyx files this note's answers under. It must match
  * what `/view?src=` stores, so Library and History key on the same document.
  */
 export function documentSource(app: App, file: TFile | null): string | null {

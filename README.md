@@ -1,6 +1,6 @@
-# Ask Widget
+# Onyx
 
-Ask Widget is a local-first reading workspace for Claude Code and Codex. Open an HTML,
+Onyx (formerly Ask Widget) is a local-first reading workspace for Claude Code and Codex. Open an HTML,
 Markdown, text, or PDF document; select a passage; then right-click for **ELI5**,
 **Prove it**, or **Ask a question**. Answers stream into the document and can use
 read-only evidence from a context folder you choose.
@@ -12,14 +12,14 @@ visible conversation. Version 0.4 introduced subscription-backed Claude and
 Codex providers, live model catalogs, and native model selectors.
 
 ```text
-selection → Ask Widget → local FastAPI service → Claude CLI (claude.ai subscription)
+selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscription)
                 ↑              │               ↘ Codex CLI (ChatGPT subscription)
                 └──── answer, tool trace, validated citations ───────────────┘
 ```
 
 ## What it includes
 
-- A native **Ask Widget.app** with its own frozen Python service. The installed
+- A native **Onyx.app** with its own frozen Python service. The installed
   app does not depend on this checkout, a project virtual environment, or a
   system Python.
 - The same macOS glass as cxtasks and cxmail: a plain Gaussian blur of the
@@ -59,7 +59,7 @@ selection → Ask Widget → local FastAPI service → Claude CLI (claude.ai sub
 - Diagnostics for both CLI installations, both subscription sessions, the
   selected model, database, default folder, and an optional live provider probe.
 - Native **File ▸ Open Document…**, file-association support, and a macOS
-  **Services ▸ Ask Selection with Ask Widget** action.
+  **Services ▸ Ask Selection with Onyx** action.
 - Browser-style **Command-Plus**, **Command-Minus**, and **Command-0** zoom,
   also available from the View menu.
 - **Open in Claude/Codex** for continuing with the selected provider in a dedicated terminal session. Hold
@@ -75,16 +75,16 @@ Claude Code signed into claude.ai, or Codex signed in with ChatGPT.
 git clone https://github.com/cxrobx/ask-widget.git
 cd ask-widget
 ./launcher/build-app.sh
-open -a "Ask Widget"
+open -a "Onyx"
 ```
 
-The build installs `/Applications/Ask Widget.app`, refreshes macOS Services, and
+The build installs `/Applications/Onyx.app`, refreshes macOS Services, and
 also produces:
 
 ```text
-launcher/build/Ask-Widget-0.5.0-macOS.zip
-launcher/build/Ask-Widget-0.5.0-macOS.zip.sha256
-launcher/build/Open-in-Ask-Widget.alfredworkflow
+launcher/build/Onyx-0.5.0-macOS.zip
+launcher/build/Onyx-0.5.0-macOS.zip.sha256
+launcher/build/Open-in-Onyx.alfredworkflow
 ```
 
 Use `./launcher/build-app.sh --no-install` to build without replacing the
@@ -93,7 +93,7 @@ restored if the replacement fails.
 
 The launcher:
 
-- accepts only an Ask Widget service with the expected service identity and
+- accepts only an Onyx service with the expected service identity and
   protocol version;
 - starts the bundled service when no compatible service is running;
 - stops its owned service on normal quit and uses a parent-process watcher for
@@ -101,10 +101,10 @@ The launcher:
 - waits up to 20 seconds for a healthy service and offers Retry, Open Log, and
   Quit on failure;
 - writes service output to
-  `~/Library/Logs/Ask Widget/ask-widget.log` and rotates it at 2 MB;
+  `~/Library/Logs/Onyx/onyx.log` and rotates it at 2 MB;
 - discovers Claude and Codex through the login shell and common GUI-safe paths,
   including NVM-installed Codex binaries;
-- provides **Ask Widget ▸ Check for Updates…** using published GitHub releases.
+- provides **Onyx ▸ Check for Updates…** using published GitHub releases.
 
 ## Run from a checkout
 
@@ -116,7 +116,7 @@ versions in `requirements-runtime.lock`.
 open http://127.0.0.1:8899/
 ```
 
-Set `ASK_WIDGET_VENV` to keep the runtime environment elsewhere. Source code is
+Set `ONYX_VENV` to keep the runtime environment elsewhere. Source code is
 loaded directly from `src/`, so normal edits do not trigger a reinstall.
 
 ## Use the reader
@@ -139,7 +139,7 @@ return a Supported, Partially supported, Not supported, or No evidence verdict.
 
 The macOS Selection Service provides the same workflow outside the reader:
 select text in another app, open its Services menu, and choose **Ask Selection
-with Ask Widget**. Ask Widget opens a temporary reading page and selects the
+with Onyx**. Onyx opens a temporary reading page and selects the
 shared passage automatically.
 
 ### Vault mode
@@ -207,21 +207,21 @@ position.
 | PDF | Extracts selectable text per page with `pypdf`; page-aware citations are preserved. |
 | HTTP/HTTPS HTML | Fetched with redirect, content-type, size, and private-network checks. |
 
-PDFs that contain only scanned images need OCR before Ask Widget can select or
+PDFs that contain only scanned images need OCR before Onyx can select or
 reason over their text.
 
 ### Open from Finder or Alfred
 
 Once the app is installed, a supported document can be opened through Finder's
-**Open With ▸ Ask Widget** menu. Ask Widget also provides **Services ▸ Open in
-Ask Widget** for HTML, Markdown, text, and PDF files. If the Service is hidden,
+**Open With ▸ Onyx** menu. Onyx also provides **Services ▸ Open in
+Onyx** for HTML, Markdown, text, and PDF files. If the Service is hidden,
 enable it under **System Settings ▸ Keyboard ▸ Keyboard Shortcuts ▸ Services ▸
 Files and Folders**.
 
 For a first-class Alfred action, double-click
-`launcher/build/Open-in-Ask-Widget.alfredworkflow` and approve the import. Then
+`launcher/build/Open-in-Onyx.alfredworkflow` and approve the import. Then
 select a supported file in Alfred, open Universal Actions (right arrow by
-default), and choose **Open in Ask Widget**.
+default), and choose **Open in Onyx**.
 
 ### Opening a document directly
 
@@ -252,8 +252,12 @@ Serve the page over HTTP rather than `file://` for predictable browser behavior.
 The app stores its database at:
 
 ```text
-~/Library/Application Support/Ask Widget/ask-widget.db
+~/Library/Application Support/Onyx/onyx.db
 ```
+
+On its first start, Onyx copies the database it kept as Ask Widget
+(`~/Library/Application Support/Ask Widget/ask-widget.db`) into place with
+SQLite's backup API and leaves the original untouched.
 
 Saved data includes settings, trusted roots, recent documents, reading
 positions, requests, answers, citations, tool traces, errors, timing, and links
@@ -270,7 +274,7 @@ The **HTML vault folder** is not registered itself — it holds only links — b
 each folder linked into it is (see HTML Vault above).
 
 Additional trusted roots can be managed in Settings. The launcher also reads
-`~/.config/ask-widget/allow-roots` at startup for compatibility; use one path per
+`~/.config/onyx/allow-roots` at startup for compatibility; use one path per
 line, with `~` expansion and `#` comments supported.
 
 ### Run headless
@@ -285,7 +289,7 @@ Obsidian plugin and any browser page work with nothing open:
 ```
 
 The agent runs the same bundled server the app would spawn, logging to
-`~/Library/Logs/ask-widget-daemon.log`. The two coexist: the launcher adopts a
+`~/Library/Logs/onyx-daemon.log`. The two coexist: the launcher adopts a
 healthy service rather than starting a second one, and only terminates a server
 it spawned itself, so quitting the app leaves the daemon serving. If the app
 happens to own the port, the daemon idles and takes over when the app quits.
@@ -308,7 +312,7 @@ development loop and the settings the plugin needs.
 
 ## Security model
 
-Ask Widget can invoke Claude or Codex against local files, so the local HTTP boundary is
+Onyx can invoke Claude or Codex against local files, so the local HTTP boundary is
 deliberately narrow:
 
 0. Browser origins are allowlisted, never `*`: `null` (file://), localhost, and
@@ -385,8 +389,8 @@ For a distributable release, provide a Developer ID identity and optional
 notarytool keychain profile:
 
 ```bash
-ASK_WIDGET_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
-ASK_WIDGET_NOTARY_PROFILE="ask-widget-notary" \
+ONYX_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
+ONYX_NOTARY_PROFILE="onyx-notary" \
 ./launcher/build-app.sh --no-install
 ```
 

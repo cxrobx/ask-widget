@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install (or remove) the LaunchAgent that keeps the Ask Widget service running
+# Install (or remove) the LaunchAgent that keeps the Onyx service running
 # in the background, so the Obsidian plugin and any browser page work whether or
 # not the app is open.
 #
@@ -8,11 +8,11 @@
 #   ./scripts/install-daemon.sh --status
 set -euo pipefail
 
-LABEL="com.cx.ask-widget.server"
+LABEL="com.cx.onyx.server"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-SCRIPT="$HOME/.local/bin/ask-widget-daemon"
-SOURCE="$(cd "$(dirname "$0")" && pwd)/ask-widget-daemon.sh"
-LOG="$HOME/Library/Logs/ask-widget-daemon.log"
+SCRIPT="$HOME/.local/bin/onyx-daemon"
+SOURCE="$(cd "$(dirname "$0")" && pwd)/onyx-daemon.sh"
+LOG="$HOME/Library/Logs/onyx-daemon.log"
 DOMAIN="gui/$(id -u)"
 
 case "${1:-install}" in
@@ -76,7 +76,7 @@ launchctl kickstart "$DOMAIN/$LABEL"
 
 for _ in $(seq 1 40); do
   if curl --fail --silent --max-time 1 http://127.0.0.1:8899/health >/dev/null; then
-    echo "✓ Ask Widget service is running in the background (label $LABEL)."
+    echo "✓ Onyx service is running in the background (label $LABEL)."
     echo "  Log: $LOG"
     echo "  Stop it with: ./scripts/install-daemon.sh --uninstall"
     exit 0

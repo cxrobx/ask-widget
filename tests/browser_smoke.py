@@ -294,7 +294,7 @@ class BrowserSmokeTests(unittest.TestCase):
             page.get_by_label("Question about the highlighted text").fill("How many turns?")
             page.get_by_role("button", name="Go", exact=True).click()
 
-            panel = page.get_by_role("dialog", name="Ask Widget answer")
+            panel = page.get_by_role("dialog", name="Onyx answer")
             body = panel.locator(".askw-body")
             expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
             self.assertGreater(body.evaluate("e => e.scrollHeight - e.clientHeight"), 100)

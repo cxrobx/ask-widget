@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the bundled Ask Widget service."""
+"""PyInstaller entry point for the bundled Onyx service."""
 
 from ask_widget.__main__ import main
 

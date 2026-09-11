@@ -246,7 +246,7 @@ def _esc(s: str) -> str:
 
 def _error_page(message: str) -> str:
     return (
-        "<!doctype html><meta charset=utf-8><title>Ask Widget — can't open</title>"
+        "<!doctype html><meta charset=utf-8><title>Onyx — can't open</title>"
         "<body style='font:16px/1.6 -apple-system,system-ui,sans-serif;max-width:640px;"
         "margin:80px auto;padding:0 24px;color:#1c1917'>"
         "<h1 style='color:#c2410c'>Couldn't open that document</h1>"
@@ -263,7 +263,7 @@ def create_app(config: AppConfig) -> FastAPI:
         yield
         storage.close()
 
-    app = FastAPI(title="ask-widget", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Onyx", version=__version__, lifespan=lifespan)
     app.state.config = config
     app.state.storage = storage
     app.state.storage.sync_builtin_roots(config.allowed_roots)
@@ -301,7 +301,7 @@ def create_app(config: AppConfig) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ok",
-                "service": "ask-widget",
+                "service": "onyx",
                 "version": __version__,
                 "protocol": PROTOCOL_VERSION,
                 "runtime": f"python-{sys.version_info.major}.{sys.version_info.minor}",
@@ -854,7 +854,7 @@ def create_app(config: AppConfig) -> FastAPI:
         return JSONResponse(
             {
                 "ok": True,
-                "service": "ask-widget",
+                "service": "onyx",
                 "protocol": PROTOCOL_VERSION,
                 "version": __version__,
                 "token": config.token,

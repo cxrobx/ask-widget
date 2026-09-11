@@ -1,5 +1,5 @@
 /**
- * Transport to the local Ask Widget service.
+ * Transport to the local Onyx service.
  *
  * The service is gated on Host + Origin + a per-process token. Obsidian's
  * renderer sends `Origin: app://obsidian.md`, which the service allows through
@@ -65,9 +65,9 @@ export interface Citation {
 }
 
 const TOKEN_ERRORS = ["Refused: invalid or missing token.", "invalid token"];
-const BUNDLE_ID = "com.cx.ask-widget";
-const DAEMON_LABEL = "com.cx.ask-widget.server";
-const DAEMON_SCRIPT = join(homedir(), ".local", "bin", "ask-widget-daemon");
+const BUNDLE_ID = "com.cx.onyx";
+const DAEMON_LABEL = "com.cx.onyx.server";
+const DAEMON_SCRIPT = join(homedir(), ".local", "bin", "onyx-daemon");
 
 export class AskService {
   private session: Session | null = null;
@@ -93,23 +93,23 @@ export class AskService {
     try {
       response = await fetch(`${this.baseUrl}${path}`, init);
     } catch (error) {
-      throw new ServiceError("offline", `Ask Widget isn't reachable at ${this.baseUrl}.`);
+      throw new ServiceError("offline", `Onyx isn't reachable at ${this.baseUrl}.`);
     }
     if (response.status === 403) {
-      throw new ServiceError("forbidden", "Ask Widget refused this request (origin or token).");
+      throw new ServiceError("forbidden", "Onyx refused this request (origin or token).");
     }
     if (response.status === 404) {
-      throw new ServiceError("incompatible", "This Ask Widget version is too old for the plugin.");
+      throw new ServiceError("incompatible", "This Onyx version is too old for the plugin.");
     }
     if (!response.ok) {
-      throw new ServiceError("error", `Ask Widget returned HTTP ${response.status}.`);
+      throw new ServiceError("error", `Onyx returned HTTP ${response.status}.`);
     }
     return (await response.json()) as T;
   }
 
   async health(): Promise<{ service: string; protocol: number; version: string }> {
     const body = await this.json<{ service?: string; protocol?: number; version?: string }>("/health");
-    if (body.service !== "ask-widget") {
+    if (body.service !== "onyx") {
       throw new ServiceError("incompatible", `Port in use by another service (${body.service ?? "unknown"}).`);
     }
     return { service: body.service, protocol: body.protocol ?? 0, version: body.version ?? "" };
@@ -127,13 +127,13 @@ export class AskService {
     } catch (error) {
       if (!(error instanceof ServiceError) || error.kind !== "offline") throw error;
       if (!(await this.autoStart())) {
-        throw new ServiceError("offline", `Ask Widget could not be started at ${this.baseUrl}.`);
+        throw new ServiceError("offline", `Onyx could not be started at ${this.baseUrl}.`);
       }
       await this.health();
     }
     const body = await this.json<Session & { ok?: boolean }>("/api/session");
     if (!body.token) {
-      throw new ServiceError("incompatible", "Ask Widget did not return a session token.");
+      throw new ServiceError("incompatible", "Onyx did not return a session token.");
     }
     this.session = body;
     return body;
@@ -159,7 +159,7 @@ export class AskService {
       clearTimeout(total);
       handlers.signal?.removeEventListener("abort", abort);
       if (handlers.signal?.aborted) throw new ServiceError("aborted", "Stopped.");
-      throw new ServiceError("offline", `Ask Widget isn't reachable at ${this.baseUrl}.`);
+      throw new ServiceError("offline", `Onyx isn't reachable at ${this.baseUrl}.`);
     }
 
     if (response.status === 403 && retry) {
@@ -172,7 +172,7 @@ export class AskService {
     if (!response.ok || !response.body) {
       clearTimeout(total);
       handlers.signal?.removeEventListener("abort", abort);
-      throw new ServiceError("error", `Ask Widget returned HTTP ${response.status}.`);
+      throw new ServiceError("error", `Onyx returned HTTP ${response.status}.`);
     }
 
     const reader = response.body.getReader();
@@ -194,7 +194,7 @@ export class AskService {
       for (const frame of splitter.flush()) handlers.onFrame(frame);
     } catch (error) {
       if (handlers.signal?.aborted) throw new ServiceError("aborted", "Stopped.");
-      if (controller.signal.aborted) throw new ServiceError("timeout", "Ask Widget stopped responding.");
+      if (controller.signal.aborted) throw new ServiceError("timeout", "Onyx stopped responding.");
       throw new ServiceError("error", error instanceof Error ? error.message : String(error));
     } finally {
       clearTimeout(total);
@@ -209,7 +209,7 @@ export class AskService {
       return this.ask(request, handlers, false);
     }
     if (staleToken) {
-      throw new ServiceError("forbidden", "Ask Widget refused the request token.");
+      throw new ServiceError("forbidden", "Onyx refused the request token.");
     }
   }
 
@@ -258,7 +258,7 @@ export class AskService {
   async syncMarkdownTheme(vaultRoot: string, snapshot: MarkdownThemeSnapshot): Promise<void> {
     const signal = AbortSignal.timeout(5000);
     const session = await this.json<Session>("/api/session", { signal });
-    if (!session.token) throw new ServiceError("incompatible", "Update Ask Widget to sync Markdown appearance.");
+    if (!session.token) throw new ServiceError("incompatible", "Update Onyx to sync Markdown appearance.");
     await this.json("/api/markdown-theme", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

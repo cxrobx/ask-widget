@@ -78,7 +78,7 @@ export class AskWidgetPanel extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Ask Widget";
+    return "Onyx";
   }
 
   getIcon(): string {
@@ -91,8 +91,8 @@ export class AskWidgetPanel extends ItemView {
     root.addClass("ask-widget-panel");
 
     const head = root.createDiv({ cls: "askw-head" });
-    this.headerEl = head.createDiv({ cls: "askw-title", text: "Ask Widget" });
-    this.metaEl = head.createDiv({ cls: "askw-meta", text: "Select a passage, then run an Ask Widget command." });
+    this.headerEl = head.createDiv({ cls: "askw-title", text: "Onyx" });
+    this.metaEl = head.createDiv({ cls: "askw-meta", text: "Select a passage, then run an Onyx command." });
 
     this.passageEl = root.createEl("details", { cls: "askw-passage" });
     this.passageEl.createEl("summary", { text: "Passage" });
@@ -241,7 +241,7 @@ export class AskWidgetPanel extends ItemView {
         this.renderCitations();
         break;
       case "error":
-        this.showError(new Error(String(data.message ?? "Ask Widget reported an error.")));
+        this.showError(new Error(String(data.message ?? "Onyx reported an error.")));
         break;
       default:
         break;
@@ -257,9 +257,9 @@ export class AskWidgetPanel extends ItemView {
       // Auto-start already ran and failed, so offer the visible app as a fallback.
       box.createEl("button", { text: "Open the app" }).addEventListener("click", async () => {
         this.plugin.service.openInApp();
-        new Notice("Starting Ask Widget…");
+        new Notice("Starting Onyx…");
         const ready = await this.plugin.service.waitForService();
-        new Notice(ready ? "Ask Widget is running. Try again." : "Ask Widget did not start.");
+        new Notice(ready ? "Onyx is running. Try again." : "Onyx did not start.");
       });
     }
     if (message.includes("folder not allowed")) {
@@ -391,7 +391,7 @@ export class AskWidgetPanel extends ItemView {
       await navigator.clipboard.writeText(this.answer);
       new Notice("Answer copied.");
     });
-    this.actionsEl.createEl("button", { text: "Open in Ask Widget" }).addEventListener("click", () => {
+    this.actionsEl.createEl("button", { text: "Open in Onyx" }).addEventListener("click", () => {
       this.plugin.service.openInApp(this.request?.documentSource);
     });
   }

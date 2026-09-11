@@ -32,6 +32,8 @@ from markdown_it import MarkdownIt
 from markdown_it.common import normalize_url as _normalize_url
 from markdown_it.token import Token
 
+from . import __version__
+
 if TYPE_CHECKING:  # vault.py imports from this module; keep the runtime import one-way
     from .vault import VaultIndex
 
@@ -240,7 +242,7 @@ def fetch_remote(url: str, *, allow_private: bool = False) -> str:
     validate_remote_url(url, allow_private=allow_private)
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "ask-widget/0.3 (+local reading companion)"},
+        headers={"User-Agent": f"Onyx/{__version__} (+local reading companion)"},
     )
     try:
         opener = urllib.request.build_opener(_ValidatedRedirects(allow_private))

@@ -50,7 +50,7 @@ def open_in_provider(provider: str, folder: Path, prompt: str) -> None:
         raise RuntimeError("No terminal found (Ghostty / iTerm / Terminal).")
     term_path, kind = term
 
-    scratch = Path.home() / ".ask-widget" / "sessions" / uuid.uuid4().hex[:8]
+    scratch = Path.home() / ".onyx" / "sessions" / uuid.uuid4().hex[:8]
     scratch.mkdir(parents=True, exist_ok=True)
     prompt_file = scratch / "prompt.txt"
     prompt_file.write_text(prompt, encoding="utf-8")

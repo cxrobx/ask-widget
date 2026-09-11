@@ -7,7 +7,7 @@ import esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
 const vault = process.env.OBSIDIAN_VAULT;
-const target = vault ? join(vault, ".obsidian", "plugins", "ask-widget") : null;
+const target = vault ? join(vault, ".obsidian", "plugins", "onyx") : null;
 
 /** Copy the three shipped files into the vault so Cmd+R picks up the build. */
 const installPlugin = {

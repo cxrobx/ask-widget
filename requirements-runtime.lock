@@ -1,4 +1,4 @@
-# Exact, pure-Python runtime resolved for Ask Widget 0.5.0.
+# Exact, pure-Python runtime resolved for Onyx 0.5.0.
 # Refresh deliberately after testing the oldest supported Python and macOS.
 annotated-doc==0.0.5
 annotated-types==0.8.0

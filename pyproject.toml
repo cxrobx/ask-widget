@@ -1,5 +1,5 @@
 [project]
-name = "ask-widget"
+name = "onyx"
 version = "0.6.0"
 description = "Highlight-to-ask reading companion with subscription-backed Claude and Codex CLI providers."
 requires-python = ">=3.11"
@@ -19,7 +19,7 @@ bundle = ["pyinstaller>=6.0"]
 test = ["httpx2>=2.0", "reportlab>=4.0"]
 
 [project.scripts]
-ask-widget = "ask_widget.__main__:main"
+onyx = "ask_widget.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

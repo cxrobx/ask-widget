@@ -25,7 +25,7 @@ def _probe_claude(status: dict[str, Any], model: str, effort: str) -> dict[str, 
             [
                 path,
                 "-p",
-                "Reply with exactly ASK_WIDGET_OK and nothing else.",
+                "Reply with exactly ONYX_OK and nothing else.",
                 "--safe-mode",
                 "--strict-mcp-config",
                 "--no-session-persistence",
@@ -45,7 +45,7 @@ def _probe_claude(status: dict[str, Any], model: str, effort: str) -> dict[str, 
         )
         output = check.stdout.strip()
         return {
-            "ok": check.returncode == 0 and "ASK_WIDGET_OK" in output,
+            "ok": check.returncode == 0 and "ONYX_OK" in output,
             "latency_ms": int((time.monotonic() - started) * 1000),
             "output": output[:300],
             "error": check.stderr.strip()[-600:] if check.returncode else "",
@@ -61,7 +61,7 @@ def _probe_codex(status: dict[str, Any], folder: Path, model: str, effort: str) 
     try:
         check = subprocess.run(
             command,
-            input="Reply with exactly ASK_WIDGET_OK and nothing else.",
+            input="Reply with exactly ONYX_OK and nothing else.",
             capture_output=True,
             text=True,
             timeout=60,
@@ -78,7 +78,7 @@ def _probe_codex(status: dict[str, Any], folder: Path, model: str, effort: str) 
                 if value.get("type") == "agent_message":
                     output += str(value.get("text") or "")
         return {
-            "ok": check.returncode == 0 and "ASK_WIDGET_OK" in output,
+            "ok": check.returncode == 0 and "ONYX_OK" in output,
             "latency_ms": int((time.monotonic() - started) * 1000),
             "output": output[:300],
             "error": check.stderr.strip()[-600:] if check.returncode else "",

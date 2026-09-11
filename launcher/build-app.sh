@@ -1,24 +1,24 @@
 #!/bin/bash
-# Build a self-contained "Ask Widget.app" and install it to /Applications.
+# Build a self-contained "Onyx.app" and install it to /Applications.
 #   ./launcher/build-app.sh          # build + install
 #   ./launcher/build-app.sh --no-install
 #
 # Release signing is opt-in:
-#   ASK_WIDGET_SIGN_IDENTITY="Developer ID Application: …" ./launcher/build-app.sh
-#   ASK_WIDGET_NOTARY_PROFILE="notary-profile" ASK_WIDGET_SIGN_IDENTITY="…" ./launcher/build-app.sh
+#   ONYX_SIGN_IDENTITY="Developer ID Application: …" ./launcher/build-app.sh
+#   ONYX_NOTARY_PROFILE="notary-profile" ONYX_SIGN_IDENTITY="…" ./launcher/build-app.sh
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
-APP_NAME="Ask Widget"
-BIN_NAME="AskWidget"
+APP_NAME="Onyx"
+BIN_NAME="Onyx"
 BUILD="$DIR/build"
 BUNDLE="$BUILD/$APP_NAME.app"
 BUILDER_VENV="$DIR/.build-venv"
 SERVER_DIST="$BUILD/server-dist"
 BUILD_LOCK="$ROOT/requirements-build.lock"
-SIGN_IDENTITY="${ASK_WIDGET_SIGN_IDENTITY:--}"
-NOTARY_PROFILE="${ASK_WIDGET_NOTARY_PROFILE:-}"
+SIGN_IDENTITY="${ONYX_SIGN_IDENTITY:--}"
+NOTARY_PROFILE="${ONYX_NOTARY_PROFILE:-}"
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DIR/Info.plist")"
 
 if [ ! -x "$BUILDER_VENV/bin/python" ]; then
@@ -45,7 +45,7 @@ echo "→ Bundling self-contained local service…"
   --noconfirm \
   --clean \
   --onedir \
-  --name ask-widget-server \
+  --name onyx-server \
   --paths "$ROOT/src" \
   --add-data "$ROOT/static:static" \
   --collect-all markdown_it \
@@ -56,11 +56,11 @@ echo "→ Bundling self-contained local service…"
   --specpath "$BUILD" \
   "$DIR/server-entry.py"
 mkdir -p "$BUNDLE/Contents/Resources/Server"
-cp -R "$SERVER_DIST/ask-widget-server/." "$BUNDLE/Contents/Resources/Server/"
+cp -R "$SERVER_DIST/onyx-server/." "$BUNDLE/Contents/Resources/Server/"
 
 echo "→ Drawing icon…"
 swiftc -O "$DIR/make-icon.swift" -o "$BUILD/make-icon"
-"$BUILD/make-icon" "$BUILD/icon.png"
+"$BUILD/make-icon" "$BUILD/icon.png" "$DIR/onyx-gem.png"
 ICONSET="$BUILD/AppIcon.iconset"; mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do
   sips -z $s $s        "$BUILD/icon.png" --out "$ICONSET/icon_${s}x${s}.png"     >/dev/null
@@ -69,7 +69,7 @@ done
 iconutil -c icns "$ICONSET" -o "$BUNDLE/Contents/Resources/AppIcon.icns"
 
 echo "→ Packaging Alfred Universal Action…"
-ALFRED_WORKFLOW="$BUILD/Open-in-Ask-Widget.alfredworkflow"
+ALFRED_WORKFLOW="$BUILD/Open-in-Onyx.alfredworkflow"
 /usr/bin/zip -j -q "$ALFRED_WORKFLOW" \
   "$ROOT/integrations/alfred/info.plist" "$BUILD/icon.png"
 
@@ -90,14 +90,14 @@ else
 fi
 codesign --verify --deep --strict --verbose=2 "$BUNDLE"
 
-ARCHIVE="$BUILD/Ask-Widget-$APP_VERSION-macOS.zip"
+ARCHIVE="$BUILD/Onyx-$APP_VERSION-macOS.zip"
 CHECKSUM="$ARCHIVE.sha256"
 echo "→ Creating release archive…"
 ditto -c -k --sequesterRsrc --keepParent "$BUNDLE" "$ARCHIVE"
 
 if [ -n "$NOTARY_PROFILE" ]; then
   if [ "$SIGN_IDENTITY" = "-" ]; then
-    echo "ASK_WIDGET_NOTARY_PROFILE requires ASK_WIDGET_SIGN_IDENTITY." >&2
+    echo "ONYX_NOTARY_PROFILE requires ONYX_SIGN_IDENTITY." >&2
     exit 1
   fi
   echo "→ Submitting release archive for notarization…"
@@ -142,4 +142,4 @@ echo ""
 echo "✓ Installed: $DEST"
 echo "  Archive: $ARCHIVE"
 echo "  Alfred workflow: $ALFRED_WORKFLOW"
-echo "  Open it from Spotlight/Launchpad as 'Ask Widget', or:  open -a 'Ask Widget'"
+echo "  Open it from Spotlight/Launchpad as 'Onyx', or:  open -a 'Onyx'"

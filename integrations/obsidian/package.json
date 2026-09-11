@@ -1,7 +1,7 @@
 {
   "name": "ask-widget-obsidian",
   "version": "0.1.0",
-  "description": "Obsidian client for the local Ask Widget service.",
+  "description": "Obsidian client for the local Onyx service.",
   "private": true,
   "type": "module",
   "scripts": {

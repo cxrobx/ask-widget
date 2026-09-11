@@ -26,7 +26,7 @@ class VersioningTests(unittest.TestCase):
         versions = json.loads((plugin / "versions.json").read_text(encoding="utf-8"))
         package = json.loads((plugin / "package.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(manifest["id"], "ask-widget")
+        self.assertEqual(manifest["id"], "onyx")
         self.assertTrue(manifest["isDesktopOnly"])
         self.assertEqual(package["version"], manifest["version"])
         self.assertEqual(versions[manifest["version"]], manifest["minAppVersion"])

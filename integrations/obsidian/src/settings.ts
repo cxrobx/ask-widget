@@ -26,7 +26,7 @@ export class AskWidgetSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Service URL")
-      .setDesc("Where the Ask Widget app is listening. Keep this on loopback.")
+      .setDesc("Where the Onyx app is listening. Keep this on loopback.")
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.serviceUrl)
@@ -40,7 +40,7 @@ export class AskWidgetSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Context folder")
       .setDesc(
-        "Folder the model may read as supporting evidence. Defaults to this vault. It must be an allowed root in Ask Widget.",
+        "Folder the model may read as supporting evidence. Defaults to this vault. It must be an allowed root in Onyx.",
       )
       .addText((text) =>
         text
@@ -54,7 +54,7 @@ export class AskWidgetSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Allow this vault as context")
-      .setDesc("Registers the context folder with Ask Widget so answers can cite your notes.")
+      .setDesc("Registers the context folder with Onyx so answers can cite your notes.")
       .addButton((button) =>
         button
           .setButtonText("Allow vault folder")
@@ -67,7 +67,7 @@ export class AskWidgetSettingTab extends PluginSettingTab {
             }
             try {
               await this.plugin.service.ensureRoot(folder);
-              new Notice(`Ask Widget can now read ${folder}`);
+              new Notice(`Onyx can now read ${folder}`);
             } catch (error) {
               new Notice(error instanceof Error ? error.message : String(error));
             }
@@ -76,7 +76,7 @@ export class AskWidgetSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Markdown appearance")
-      .setDesc("Automatically shares this vault’s reading styles with Ask Widget. The app uses the styles from its configured vault and keeps them when Obsidian is closed.")
+      .setDesc("Automatically shares this vault’s reading styles with Onyx. The app uses the styles from its configured vault and keeps them when Obsidian is closed.")
       .addButton((button) =>
         button.setButtonText("Sync now").onClick(async () => {
           button.setDisabled(true);
@@ -98,7 +98,7 @@ export class AskWidgetSettingTab extends PluginSettingTab {
         button.setButtonText("Test connection").onClick(async () => {
           try {
             const session = await this.plugin.service.ensureSession(true);
-            new Notice(`Ask Widget ${session.version} · ${session.provider}/${session.model}`);
+            new Notice(`Onyx ${session.version} · ${session.provider}/${session.model}`);
           } catch (error) {
             new Notice(error instanceof Error ? error.message : String(error));
           }

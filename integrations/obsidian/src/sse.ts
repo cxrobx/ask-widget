@@ -2,7 +2,7 @@
  * Server-sent-event splitting and parsing, with no Obsidian dependency so the
  * unit tests can load this file directly under `node --test`.
  *
- * The Ask Widget service emits `event: <name>` + `data: <json>` pairs separated
+ * The Onyx service emits `event: <name>` + `data: <json>` pairs separated
  * by a blank line, plus periodic comment heartbeats. Frames arrive split across
  * arbitrary chunk boundaries, so the splitter buffers until it sees a blank line.
  */

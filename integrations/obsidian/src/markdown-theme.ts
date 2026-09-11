@@ -34,7 +34,7 @@ const ELEMENTS: Record<string, [string, string[]]> = {
 };
 
 // Ordinary Markdown only: no embeds, network assets, or user note contents.
-const SAMPLE = `Paragraph with **bold**, *italic*, \`code\`, [link](https://example.invalid), and [[Ask Widget theme sample]].
+const SAMPLE = `Paragraph with **bold**, *italic*, \`code\`, [link](https://example.invalid), and [[Onyx theme sample]].
 
 # Heading one
 ## Heading two

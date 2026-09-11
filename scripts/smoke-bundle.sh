@@ -3,13 +3,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SERVER="$ROOT/launcher/build/Ask Widget.app/Contents/Resources/Server/ask-widget-server"
+SERVER="$ROOT/launcher/build/Onyx.app/Contents/Resources/Server/onyx-server"
 if [ ! -x "$SERVER" ]; then
   echo "Missing bundled server. Run ./launcher/build-app.sh --no-install first." >&2
   exit 1
 fi
 
-SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ask-widget-smoke.XXXXXX")"
+SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/onyx-smoke.XXXXXX")"
 PORT="$(python3 - <<'PY'
 import socket
 with socket.socket() as sock:
@@ -21,7 +21,7 @@ SERVER_PID=""
 # Read the expected version from the bundle being tested, not a literal, so a
 # release bump never needs this script edited in lockstep.
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-  "$ROOT/launcher/build/Ask Widget.app/Contents/Info.plist")"
+  "$ROOT/launcher/build/Onyx.app/Contents/Info.plist")"
 
 cleanup() {
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -54,7 +54,7 @@ python3 - "$SMOKE_DIR/health.json" "$VERSION" <<'PY'
 import json, pathlib, sys
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload["status"] == "ok", payload
-assert payload["service"] == "ask-widget", payload
+assert payload["service"] == "onyx", payload
 assert payload["protocol"] == 3, payload
 assert payload["version"] == sys.argv[2], payload
 PY
@@ -82,7 +82,7 @@ python3 - "$SMOKE_DIR/session.json" <<'PY'
 import json, pathlib, sys
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload["ok"] is True, payload
-assert payload["service"] == "ask-widget", payload
+assert payload["service"] == "onyx", payload
 assert payload["token"], payload
 PY
 

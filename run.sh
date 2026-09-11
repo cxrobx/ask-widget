@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Launch the Ask Widget server from a self-healing project venv.
+# Launch the Onyx server from a self-healing project venv.
 # Usage:  ./run.sh                       # ~/Projects on :8899
 #         ./run.sh --folder ~/Projects/my-app --port 8899
 #         ./run.sh --allow-root ~/work --folder ~/work/notes
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="${ASK_WIDGET_VENV:-$PROJECT_DIR/.venv}"
+VENV_DIR="${ONYX_VENV:-$PROJECT_DIR/.venv}"
 STAMP="$VENV_DIR/.ask-widget-installed"
 RUNTIME_LOCK="$PROJECT_DIR/requirements-runtime.lock"
 cd "$PROJECT_DIR"
 
 if [ ! -x "$VENV_DIR/bin/python" ]; then
   if ! SYSTEM_PYTHON="$(command -v python3)"; then
-    echo "Ask Widget needs Python 3.11 or newer, but python3 was not found." >&2
+    echo "Onyx needs Python 3.11 or newer, but python3 was not found." >&2
     exit 1
   fi
-  echo "Setting up Ask Widget's local runtime…" >&2
+  echo "Setting up Onyx's local runtime…" >&2
   "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
 fi
 
@@ -24,10 +24,10 @@ fi
 if [ ! -f "$STAMP" ] || [ "$RUNTIME_LOCK" -nt "$STAMP" ] || \
    ! PYTHONPATH="$PROJECT_DIR/src" "$VENV_DIR/bin/python" -c \
      'import ask_widget, fastapi, pypdf, uvicorn' 2>/dev/null; then
-  echo "Installing Ask Widget dependencies…" >&2
+  echo "Installing Onyx dependencies…" >&2
   if ! "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check \
     --requirement "$RUNTIME_LOCK"; then
-    echo "Ask Widget setup failed. Check your network connection and the pip error above." >&2
+    echo "Onyx setup failed. Check your network connection and the pip error above." >&2
     exit 1
   fi
   touch "$STAMP"

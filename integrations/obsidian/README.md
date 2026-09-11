@@ -1,7 +1,7 @@
-# Ask Widget for Obsidian
+# Onyx for Obsidian
 
 ELI5, Prove it, and Ask a question on any selection in a note, answered by the
-Ask Widget app already running on your Mac. Answers stream into a right-sidebar
+Onyx app already running on your Mac. Answers stream into a right-sidebar
 panel and are saved under the note's absolute path, so they also appear in Ask
 Widget's own Library and History.
 
@@ -16,7 +16,7 @@ cd integrations/obsidian && npm install && npm run build
 VAULT="$HOME/Documents/CX" ../../scripts/install-obsidian-plugin.sh
 ```
 
-Then in Obsidian: **Settings ▸ Community plugins ▸ Ask Widget ▸ enable**, and
+Then in Obsidian: **Settings ▸ Community plugins ▸ Onyx ▸ enable**, and
 **quit and relaunch Obsidian**. A newly enabled plugin is not picked up by
 Cmd+R; only a full relaunch loads it the first time.
 
@@ -42,8 +42,8 @@ works — it runs the service on demand, falling back to launching the app.
 
 With a passage selected:
 
-- Right-click in the editor (source or Live Preview) and pick an Ask Widget item.
-- Or run **Ask Widget: ELI5 / Prove it / Ask…** from the command palette, which
+- Right-click in the editor (source or Live Preview) and pick an Onyx item.
+- Or run **Onyx: ELI5 / Prove it / Ask…** from the command palette, which
   also works in reading view. No hotkeys are bound by default.
 
 The panel streams the answer, shows the provider and model, lists the tools the
@@ -58,10 +58,10 @@ The plugin automatically shares this vault's computed reading styles with Ask
 Widget on startup and when the theme changes. Font settings and CSS snippets
 are included. Open Markdown readers update in place within a few seconds;
 the last successful snapshot is saved by the service and survives closing
-Obsidian or restarting Ask Widget. If the service is offline, the plugin retries
+Obsidian or restarting Onyx. If the service is offline, the plugin retries
 every 30 seconds without opening the app.
 
-In Ask Widget, **Settings → Vault** selects the source vault. Its styles apply
+In Onyx, **Settings → Vault** selects the source vault. Its styles apply
 to Markdown documents opened in the app, including the Vault reader. Other open
 vaults keep separate snapshots and cannot overwrite the selected vault's style.
 **Settings → Appearance → Match vault Markdown appearance** is enabled by
@@ -69,7 +69,7 @@ default; turn it off to restore the original reader appearance. With no snapshot
 the reader keeps its default styles. The app chrome, floating answer panel,
 PDFs, plain text, and authored HTML keep their existing appearance.
 
-To sync immediately, use **Ask Widget plugin settings → Markdown appearance →
+To sync immediately, use **Onyx plugin settings → Markdown appearance →
 Sync now**. Update both the service and plugin when installing this feature.
 
 The snapshot covers ordinary Markdown typography, colors, spacing, links,
@@ -94,5 +94,5 @@ With `npm run dev` watching, Cmd+R in Obsidian reloads the rebuilt `main.js`.
   synced vault never carries a credential.
 - The service must list `app://obsidian.md` in its `allowed_origins` setting.
   That is the default; clearing it turns the plugin off at the server.
-- Restarting the Ask Widget app mints a new token. The plugin notices and
+- Restarting the Onyx app mints a new token. The plugin notices and
   refetches once, so an in-flight action just works.

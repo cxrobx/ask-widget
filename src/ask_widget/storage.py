@@ -46,7 +46,38 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 
 def default_data_dir() -> Path:
-    return Path.home() / "Library" / "Application Support" / "Ask Widget"
+    return Path.home() / "Library" / "Application Support" / "Onyx"
+
+
+def legacy_database() -> Path:
+    """Where the database lived while the app was called Ask Widget."""
+    return Path.home() / "Library" / "Application Support" / "Ask Widget" / "ask-widget.db"
+
+
+def adopt_legacy_database(legacy: Path, target: Path) -> bool:
+    """Copy the pre-rename database into place once; the original is left as-is.
+
+    SQLite's backup API takes a consistent snapshot even while an older server
+    still has the legacy file open, which a plain file copy of a WAL database
+    does not. The copy lands under a temporary name and is renamed into place,
+    so an interrupted copy is retried on the next start instead of being opened
+    as a half-written database.
+    """
+    if target.exists() or not legacy.is_file():
+        return False
+    partial = target.with_name(target.name + ".partial")
+    partial.unlink(missing_ok=True)
+    source = sqlite3.connect(legacy)
+    try:
+        copy = sqlite3.connect(partial)
+        try:
+            source.backup(copy)
+        finally:
+            copy.close()
+    finally:
+        source.close()
+    partial.replace(target)
+    return True
 
 
 def selection_hash(selection: str) -> str:
@@ -64,7 +95,9 @@ class Storage:
     def __init__(self, data_dir: Path | None = None) -> None:
         self.data_dir = (data_dir or default_data_dir()).expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.path = self.data_dir / "ask-widget.db"
+        self.path = self.data_dir / "onyx.db"
+        if data_dir is None:
+            adopt_legacy_database(legacy_database(), self.path)
         self._lock = threading.RLock()
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row

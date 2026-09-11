@@ -1,62 +1,99 @@
-// Draws the Ask Widget app icon (1024×1024 PNG) with AppKit — no external asset.
-// Motif: a warm "paper" card with a highlighted line of text + a cursor, on the
-// burnt-orange accent, matching the widget's look.
+// Draws the Onyx app icon (1024×1024 PNG): the gem in onyx-gem.png set on a
+// near-black macOS tile, with a faint red bloom behind it so the stone still
+// reads at 16 px.
+//   make-icon <out.png> <gem.png>
 import AppKit
 
-let S: CGFloat = 1024
-let img = NSImage(size: NSSize(width: S, height: S))
-img.lockFocus()
-let ctx = NSGraphicsContext.current!.cgContext
-
-func rrect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ r: CGFloat) -> NSBezierPath {
-    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: w, height: h), xRadius: r, yRadius: r)
+let args = CommandLine.arguments
+guard args.count == 3,
+      let gem = NSImage(contentsOfFile: args[2])?
+          .cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    FileHandle.standardError.write("usage: make-icon <out.png> <gem.png>\n".data(using: .utf8)!)
+    exit(2)
 }
 
-// Background squircle (leave a margin so macOS's own mask doesn't clip it)
-let orange = NSColor(red: 0.76, green: 0.25, blue: 0.05, alpha: 1)      // #C2410C
-let orangeDark = NSColor(red: 0.60, green: 0.20, blue: 0.04, alpha: 1)  // #9A3412
-let grad = NSGradient(starting: orange, ending: orangeDark)!
-let bg = rrect(96, 96, S - 192, S - 192, 196)
-grad.draw(in: bg, angle: -90)
+let rgb = CGColorSpace(name: CGColorSpace.sRGB)!
+let rgba = CGImageAlphaInfo.premultipliedLast.rawValue
 
-// Paper card
-let cream = NSColor(red: 0.996, green: 0.988, blue: 0.980, alpha: 1)
-NSColor.black.withAlphaComponent(0.18).setFill()
-rrect(250, 232, 540, 540, 64).fill()                 // soft shadow
-cream.setFill()
-rrect(240, 248, 540, 540, 64).fill()                 // the card
-
-// Text lines on the card
-let ink = NSColor(red: 0.11, green: 0.10, blue: 0.09, alpha: 1)
-let faint = NSColor(red: 0.80, green: 0.78, blue: 0.76, alpha: 1)
-faint.setFill()
-rrect(312, 648, 360, 26, 13).fill()                  // line 1
-rrect(312, 588, 300, 26, 13).fill()                  // line 2
-
-// The highlighted line (orange marker) + dark text over it + a cursor
-NSColor(red: 0.98, green: 0.62, blue: 0.30, alpha: 0.55).setFill()
-rrect(300, 446, 392, 64, 18).fill()                  // highlighter swipe
-ink.setFill()
-rrect(312, 466, 332, 26, 13).fill()                  // text on the highlight
-orange.setFill()
-rrect(660, 440, 18, 76, 6).fill()                    // caret
-
-faint.setFill()
-rrect(312, 360, 250, 26, 13).fill()                  // line 4
-
-// Small "ask" speech dot cluster bottom-right of the card
-ink.withAlphaComponent(0.85).setFill()
-for i in 0..<3 {
-    NSBezierPath(ovalIn: NSRect(x: 600 + CGFloat(i) * 44, y: 312, width: 26, height: 26)).fill()
+/// The stone's own bounds in bottom-left coordinates: pixels at least this
+/// opaque, so the glow around it is carried along but not measured.
+func bodyBounds(of image: CGImage, alphaFloor: UInt8 = 40) -> CGRect {
+    let w = image.width, h = image.height
+    var pixels = [UInt8](repeating: 0, count: w * h * 4)
+    let scan = CGContext(
+        data: &pixels, width: w, height: h, bitsPerComponent: 8,
+        bytesPerRow: w * 4, space: rgb, bitmapInfo: rgba
+    )!
+    scan.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    var minX = w, maxX = -1, minRow = h, maxRow = -1
+    for row in 0..<h {
+        for x in 0..<w where pixels[(row * w + x) * 4 + 3] >= alphaFloor {
+            minX = min(minX, x); maxX = max(maxX, x)
+            minRow = min(minRow, row); maxRow = max(maxRow, row)
+        }
+    }
+    guard maxX >= 0 else { return CGRect(x: 0, y: 0, width: w, height: h) }
+    // Memory row 0 is the top of the image; drawing space starts at the bottom.
+    return CGRect(x: minX, y: h - 1 - maxRow, width: maxX - minX + 1, height: maxRow - minRow + 1)
 }
 
-img.unlockFocus()
+let S = 1024
+let ctx = CGContext(
+    data: nil, width: S, height: S, bitsPerComponent: 8,
+    bytesPerRow: 0, space: rgb, bitmapInfo: rgba
+)!
 
-guard let tiff = img.tiffRepresentation,
-      let rep = NSBitmapImageRep(data: tiff),
-      let png = rep.representation(using: .png, properties: [:]) else {
+// Apple's macOS grid: an 824-pt tile centred in the canvas, which leaves room
+// for the shadow below it.
+let tile = CGRect(x: 100, y: 100, width: 824, height: 824)
+let shape = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
+
+ctx.saveGState()
+ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28,
+              color: CGColor(gray: 0, alpha: 0.4))
+ctx.addPath(shape)
+ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+ctx.fillPath()
+ctx.restoreGState()
+
+ctx.saveGState()
+ctx.addPath(shape)
+ctx.clip()
+// Onyx: near-black, a touch lighter at the top.
+let stone = CGGradient(colorsSpace: rgb, colors: [
+    CGColor(srgbRed: 0.13, green: 0.12, blue: 0.12, alpha: 1),
+    CGColor(srgbRed: 0.02, green: 0.02, blue: 0.02, alpha: 1),
+] as CFArray, locations: [0, 1])!
+ctx.drawLinearGradient(stone, start: CGPoint(x: 0, y: tile.maxY),
+                       end: CGPoint(x: 0, y: tile.minY), options: [])
+// Red bloom behind the gem.
+let centre = CGPoint(x: tile.midX, y: tile.midY)
+let bloom = CGGradient(colorsSpace: rgb, colors: [
+    CGColor(srgbRed: 0.85, green: 0.04, blue: 0.04, alpha: 0.38),
+    CGColor(srgbRed: 0.85, green: 0.04, blue: 0.04, alpha: 0),
+] as CFArray, locations: [0, 1])!
+ctx.drawRadialGradient(bloom, startCenter: centre, startRadius: 0,
+                       endCenter: centre, endRadius: 430, options: [])
+
+// The gem, scaled so the stone fills ~74% of the tile's height and centred
+// on it; its glow draws too and is clipped at the tile's edge.
+let body = bodyBounds(of: gem)
+let scale = tile.height * 0.74 / body.height
+let origin = CGPoint(x: centre.x - body.midX * scale, y: centre.y - body.midY * scale)
+ctx.interpolationQuality = .high
+ctx.draw(gem, in: CGRect(x: origin.x, y: origin.y,
+                         width: CGFloat(gem.width) * scale, height: CGFloat(gem.height) * scale))
+
+// A hairline rim so the tile keeps its edge on a dark Dock.
+ctx.addPath(shape)
+ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.10))
+ctx.setLineWidth(3)
+ctx.strokePath()
+ctx.restoreGState()
+
+guard let image = ctx.makeImage(),
+      let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
     FileHandle.standardError.write("icon render failed\n".data(using: .utf8)!)
     exit(1)
 }
-let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "icon.png"
-try! png.write(to: URL(fileURLWithPath: out))
+try! png.write(to: URL(fileURLWithPath: args[1]))

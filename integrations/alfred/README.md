@@ -1,16 +1,16 @@
 # Alfred integration
 
-The **Open in Ask Widget** workflow adds a file-specific action to Alfred's
+The **Open in Onyx** workflow adds a file-specific action to Alfred's
 Universal Actions panel for HTML, Markdown, plain-text, and PDF documents.
 
-Build Ask Widget first, then double-click:
+Build Onyx first, then double-click:
 
 ```text
-launcher/build/Open-in-Ask-Widget.alfredworkflow
+launcher/build/Open-in-Onyx.alfredworkflow
 ```
 
 After Alfred imports it, select a supported document, open Universal Actions
-(right arrow inside Alfred by default), and choose **Open in Ask Widget**.
+(right arrow inside Alfred by default), and choose **Open in Onyx**.
 
-The workflow opens the selected file by Ask Widget's bundle identifier, so the
+The workflow opens the selected file by Onyx's bundle identifier, so the
 app must be installed but does not have to be running.
