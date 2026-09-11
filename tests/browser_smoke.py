@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import socket
 import tempfile
 import threading
@@ -15,6 +16,7 @@ from playwright.sync_api import expect, sync_playwright
 from ask_widget.app import create_app
 from ask_widget.config import AppConfig
 from ask_widget.launcher_ui import glass_alphas
+from ask_widget.runner import _sse
 from ask_widget.storage import Storage
 
 
@@ -249,6 +251,78 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
+    def test_answer_panel_never_hides_the_passage_or_the_question(self) -> None:
+        # The quoted passage used to be clipped mid-line, and every streamed token
+        # scrolled the body to the bottom, pushing the question out of view.
+        passage = (
+            "An eight-turn transcript ends with a wrong answer. You can inspect any one "
+            "turn's full state in about a minute. How many turns do you need to inspect "
+            "to find the first one that went wrong, and which turn do you check first?"
+        )
+        document = self.root / "quiz.md"
+        document.write_text(f"# Quiz\n\n{passage}\n", encoding="utf-8")
+
+        async def long_stream(*args, **kwargs):
+            for index in range(36):
+                yield _sse("token", {"text": f"Paragraph {index} of an answer long enough to overflow the panel.\n\n"})
+                await asyncio.sleep(0.04)
+            yield _sse("done", {"elapsed_ms": 5})
+
+        # Line boxes cut by the element's visible bottom edge (0 = no half-drawn line).
+        sliced_lines = """e => {
+            const box = e.getBoundingClientRect(), range = document.createRange();
+            range.selectNodeContents(e);
+            return [...range.getClientRects()]
+                .filter(r => r.top < box.bottom - 0.5 && r.bottom > box.bottom + 0.5).length;
+        }"""
+        # Pixels of the element scrolled above the answer body's visible top.
+        hidden_above = """e => Math.max(0,
+            e.closest('.askw-body').getBoundingClientRect().top - e.getBoundingClientRect().top)"""
+
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", long_stream), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 640})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            query = urllib.parse.urlencode({"src": str(document), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            paragraph = page.locator("main p").first
+            paragraph.select_text()
+            paragraph.dispatch_event("mouseup", {"button": 0})
+            page.get_by_role("button", name="Ask about the selected text").click()
+            page.get_by_role("button", name="Ask a question…").click()
+            page.get_by_label("Question about the highlighted text").fill("How many turns?")
+            page.get_by_role("button", name="Go", exact=True).click()
+
+            panel = page.get_by_role("dialog", name="Ask Widget answer")
+            body = panel.locator(".askw-body")
+            expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            self.assertGreater(body.evaluate("e => e.scrollHeight - e.clientHeight"), 100)
+            self.assertEqual(panel.locator(".askw-q").last.evaluate(hidden_above), 0)
+
+            quote = panel.locator(".askw-selq")
+            self.assertEqual(quote.evaluate(sliced_lines), 0)
+            quote.click()
+            self.assertIn(passage, quote.inner_text())
+            self.assertLessEqual(quote.evaluate("e => e.scrollHeight - e.clientHeight"), 1)
+            quote.click()
+            self.assertEqual(quote.evaluate(sliced_lines), 0)
+
+            follow = panel.get_by_label("Follow-up question")
+            follow.fill("Is this binary search?")
+            follow.press("Enter")
+            page.wait_for_function(
+                "() => { const a = document.querySelectorAll('.askw-a'); return a.length === 2 && a[1].querySelectorAll('p').length >= 12; }"
+            )
+            self.assertEqual(panel.locator(".askw-q").last.evaluate(hidden_above), 0)
+            # The reader scrolls back up mid-stream; later tokens must not drag them down.
+            body.evaluate("e => { e.scrollTop = 0; }")
+            expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            self.assertEqual(body.evaluate("e => e.scrollTop"), 0)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_shell_navigates_reader_iframe(self) -> None:
         vault = self.root / "vault"
         (vault / "notes").mkdir(parents=True)
@@ -322,6 +396,58 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
+    def test_vault_sidebar_collapses_and_context_pill_rests_as_an_icon(self) -> None:
+        vault = self.root / "vault"
+        vault.mkdir()
+        note = vault / "Alpha.md"
+        note.write_text("# Alpha\n\nA passage.\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        storage.add_root(vault)
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault?src={urllib.parse.quote(str(note))}", wait_until="networkidle")
+            reader = page.frame_locator("iframe[name=reader]")
+            reader.locator("h1").wait_for()
+            side, pane = page.locator("#vault-side"), page.locator("#reader-pane")
+            show = page.get_by_role("button", name="Show sidebar")
+            self.assertTrue(side.is_visible())
+            self.assertFalse(show.is_visible())
+
+            page.get_by_role("button", name="Hide sidebar").click()
+            self.assertFalse(side.is_visible())
+            self.assertEqual(pane.evaluate("e => e.getBoundingClientRect().width"), 1280)
+            self.assertTrue(show.evaluate("e => e === document.activeElement"))
+            page.reload(wait_until="networkidle")
+            reader.locator("h1").wait_for()
+            self.assertFalse(side.is_visible())  # remembered
+
+            reader.locator("body").press("Control+Backslash")  # from inside the reader
+            expect(side).to_be_visible()
+            reader.locator("body").press("Control+Backslash")
+            expect(side).to_be_hidden()
+            show.click()
+            expect(side).to_be_visible()
+
+            # The context folder rests as an icon; its name slides out on hover.
+            pill = reader.locator(".askw-pill")
+            label = pill.locator(".askw-pill-label")
+            expect(label).to_have_css("opacity", "0")
+            self.assertLess(pill.evaluate("e => e.getBoundingClientRect().width"), 34)
+            self.assertRegex(pill.get_attribute("aria-label"), r"^Context folder: .*/vault\.")
+            pill.hover()
+            expect(label).to_have_css("opacity", "1")
+            self.assertEqual(label.inner_text(), "vault")
+            page.frame(name="reader").wait_for_function(
+                "() => document.querySelector('.askw-pill').getBoundingClientRect().width > 60"
+            )
+            browser.close()
+
+        self.assertEqual(page_errors, [])
 
     def test_html_vault_lists_titles_links_pages_and_reads_them(self) -> None:
         html_vault = self.root / "HTML Vault"

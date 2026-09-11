@@ -23,6 +23,12 @@ from . import __version__
 from .config import AppConfig
 from .launcher_ui import glass_script, theme_settings, theme_style
 
+# SF Symbols' sidebar.left: the one glyph both sidebar toggles share.
+SIDEBAR_ICON = (
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">'
+    '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/></svg>'
+)
+
 
 def vault_page(
     config: AppConfig,
@@ -92,14 +98,18 @@ main,body.native main{{position:relative;padding:0;overflow:hidden}}
 #reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
 /* HTML pages are named by sentence-length titles: give them room and two lines. */
 body.kind-html .shell{{grid-template-columns:290px minmax(0,1fr)}} body.kind-html #tree .file{{align-items:flex-start;white-space:normal}} body.kind-html #tree .file>span:first-child{{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.35}} body.kind-html #tree .age{{padding-top:1px}}
-@media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}}}}
-</style></head><body class="kind-{kind}"><div class=shell><aside id=vault-side><div class=brand><span class=mark>✦</span><span class=brand-name>{vault_name}</span>{add_toggle}</div>
+/* Collapsible sidebar: hide from the brand row, bring back from the reader's corner, or ⌘\\ anywhere. */
+.side-toggle{{display:grid;place-items:center;flex:none;width:26px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}} .side-toggle:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .side-toggle svg{{width:16px;height:16px}}
+#side-show{{position:absolute;top:12px;left:12px;z-index:2;display:none;border:1px solid var(--line-soft);background:rgb(var(--bg-elevated)/.82);box-shadow:0 4px 14px rgb(0 0 0/.12);backdrop-filter:blur(16px) saturate(1.3);-webkit-backdrop-filter:blur(16px) saturate(1.3)}} body.native #side-show{{top:36px}}
+body.side-collapsed .shell{{grid-template-columns:minmax(0,1fr)}} body.side-collapsed aside{{display:none}} body.side-collapsed #side-show{{display:grid}}
+@media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}} body.side-collapsed .shell{{grid-template-rows:minmax(0,1fr)}}}}
+</style></head><body class="kind-{kind}"><div class=shell><aside id=vault-side><div class=brand><span class=mark>✦</span><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-hide class=side-toggle type=button title="Hide sidebar (⌘\\)" aria-label="Hide sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button></div>
 <nav class=vault-switch aria-label="Vaults"><a href="/vault"{notes_active}>Notes</a><a href="/vault?vault=html"{html_active}>HTML</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
 <nav id=tree aria-label="{vault_name} {units}"><div class=none>Loading…</div></nav>
 <div class=aside-foot><a href="/">← Launcher</a> · <span id=vault-count>v{version}</span></div></aside>
-<main id=reader-pane><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
+<main id=reader-pane><button id=side-show class=side-toggle type=button title="Show sidebar (⌘\\)" aria-label="Show sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
 <iframe id=reader name=reader src="{initial}" title="Reader"></iframe></main></div>
 <script>
 const KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; let ROOT={root_json}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
@@ -123,7 +133,12 @@ function renderTree(){{if(!TREE)return;tree.innerHTML=TREE.children.length?'<ul 
 function currentSrc(){{try{{const l=reader.contentWindow.location;if(!l||!l.href||l.href==='about:blank')return '';return new URLSearchParams(l.search).get('src')||''}}catch(e){{return ''}}}}
 function highlight(src){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:'nearest'}})}}
 async function loadTree(){{try{{const d=await api('/api/vault/tree?vault='+KIND);ROOT=d.root;TREE=d.tree;$('#vault-count').textContent=d.files+' '+UNIT+(d.files===1?'':'s')+(d.missing?' · '+d.missing+' missing':'')+(d.truncated?' (truncated)':'');renderTree()}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}} <a href="/#settings">Open Settings</a></div>`;$('#vault-count').textContent=HTML?'no HTML vault':'no vault'}}}}
-reader.addEventListener('load',()=>{{const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'HTML Vault':'Vault');store(KEY+'last',src)}});
+// MARK: sidebar — remembered across both vaults; ⌘\\ also works while focus is inside the reader.
+const SIDE_KEY='askw:vault:sidebar'; if(recall(SIDE_KEY)==='collapsed')document.body.classList.add('side-collapsed');
+function setSide(collapsed,focus){{document.body.classList.toggle('side-collapsed',collapsed);store(SIDE_KEY,collapsed?'collapsed':'');if(focus)$(collapsed?'#side-show':'#side-hide').focus()}}
+function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setSide(!document.body.classList.contains('side-collapsed'),false)}}}}
+$('#side-hide').onclick=()=>setSide(true,true); $('#side-show').onclick=()=>setSide(false,true); document.addEventListener('keydown',sideKey);
+reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'HTML Vault':'Vault');store(KEY+'last',src)}});
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
 async function applyFilter(){{const q=filter.value.trim();if(q.length<2){{renderTree();return}}try{{const d=await api('/api/vault/search?vault='+KIND+'&q='+encodeURIComponent(q));tree.innerHTML='<ul class="root results">'+d.items.map(i=>`<li><a class=file target=reader href="${{esc(viewHref(i.path))}}" data-path="${{esc(i.path)}}" title="${{esc(i.path)}}"><span>${{esc(HTML?(i.title||i.name):label(i))}}</span><small>${{esc(i.folder||'/')}}</small></a></li>`).join('')+(d.items.length?'':`<li class=none>No ${{UNIT}}s match.</li>`)+'</ul>';highlight(currentSrc())}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}}</div>`}}}}
 document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement&&document.activeElement.tagName);if(e.key==='/'&&!typing&&!e.metaKey&&!e.ctrlKey){{e.preventDefault();filter.focus();filter.select()}}else if(e.key==='Escape'&&document.activeElement===filter){{filter.value='';applyFilter();filter.blur()}}}});

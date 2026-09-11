@@ -75,7 +75,8 @@
     '.askw-panel.open{display:flex;}',
     '.askw-head{padding:13px 40px 11px 15px;border-bottom:1px solid var(--askw-soft);background:rgba(255,255,255,.28);position:relative;flex:0 0 auto;cursor:move;user-select:none;}',
     '.askw-eyebrow{font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--askw-accent);margin:0 0 3px;}',
-    '.askw-selq{font-size:12.5px;color:#5d5d5d;margin:0;max-height:46px;overflow:hidden;}',
+    '.askw-selq{font-size:12.5px;line-height:1.45;color:#5d5d5d;margin:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;}',
+    '.askw-selq.clamped{cursor:pointer;}.askw-selq.expanded{display:block;max-height:30vh;overflow-y:auto;}',
     '.askw-x{position:absolute;top:9px;right:9px;width:26px;height:26px;border:none;background:transparent;color:#a8a29e;font-size:17px;line-height:1;border-radius:6px;cursor:pointer;}',
     '.askw-x:hover{background:rgba(13,13,13,.07);color:#0d0d0d;}',
     '.askw-tools{display:flex;flex-wrap:wrap;gap:6px;padding:9px 15px 0;flex:0 0 auto;}',
@@ -120,9 +121,13 @@
     '.askw-follow-go:disabled{opacity:.4;cursor:not-allowed;}',
     '.askw-toast{position:fixed;bottom:24px;left:50%;z-index:2147483603;background:rgba(28,28,28,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:#fff;padding:9px 16px;border:1px solid rgba(255,255,255,.1);border-radius:10px;font-size:13px;box-shadow:0 12px 34px rgba(0,0,0,.28);opacity:0;pointer-events:none;transform:translateX(-50%) translateY(8px);transition:opacity .15s,transform .15s;}',
     '.askw-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}',
-    '.askw-pill{position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;gap:6px;max-width:240px;background:rgba(255,255,255,.78);border:1px solid var(--askw-line);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.13),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);padding:5px 11px;font-size:11.5px;color:#5d5d5d;cursor:pointer;}',
-    '.askw-pill .askw-ico{color:var(--askw-accent);}',
-    '.askw-pill b{color:#0d0d0d;font-weight:600;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    // The context folder rests as a folder icon and slides its name out on hover,
+    // keyboard focus, or while the picker is open.
+    '.askw-pill{position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;height:30px;max-width:240px;background:rgba(255,255,255,.78);border:1px solid var(--askw-line);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.13),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);padding:0 7px;font-size:11.5px;color:#5d5d5d;cursor:pointer;transition:padding .2s ease;}',
+    '.askw-pill .askw-ico{display:block;flex:none;width:14px;height:14px;color:var(--askw-accent);}',
+    '.askw-pill b{color:#0d0d0d;font-weight:600;max-width:0;margin-left:0;opacity:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:max-width .2s ease,margin-left .2s ease,opacity .15s;}',
+    '.askw-pill:hover,.askw-pill:focus-visible,.askw-pill[aria-expanded="true"]{padding-right:11px;}',
+    '.askw-pill:hover b,.askw-pill:focus-visible b,.askw-pill[aria-expanded="true"] b{max-width:180px;margin-left:6px;opacity:1;}',
     '.askw-picker{position:fixed;top:42px;right:12px;z-index:2147483602;display:none;width:300px;background:rgba(255,255,255,.86);border:1px solid var(--askw-line);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.19),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(24px) saturate(1.32);-webkit-backdrop-filter:blur(24px) saturate(1.32);padding:10px;font-size:12.5px;}',
     '.askw-picker.open{display:block;}',
     '.askw-picker label{display:block;font-weight:600;color:#44403c;margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;}',
@@ -151,7 +156,7 @@
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-menu,.askw-panel,.askw-picker,.askw-pill{background:#fff}}',
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker,html[data-askw-color="dark"] .askw-pill{background:#242424}}',
     '@media(prefers-reduced-transparency:reduce){.askw-menu,.askw-panel,.askw-picker,.askw-pill{background:rgba(255,255,255,.98);backdrop-filter:none;-webkit-backdrop-filter:none}html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker,html[data-askw-color="dark"] .askw-pill{background:rgba(36,36,36,.98)}}',
-    '@media(prefers-reduced-motion:reduce){.askw-dot{animation:none}.askw-toast{transition:none}}'
+    '@media(prefers-reduced-motion:reduce){.askw-dot{animation:none}.askw-toast,.askw-pill,.askw-pill b{transition:none}}'
   ].join('\n');
 
   function injectStyle() {
@@ -361,6 +366,10 @@
     stopBtn = panelEl.querySelector('.askw-stop');
     retryBtn = panelEl.querySelector('.askw-retry');
     panelEl.querySelector('.askw-x').addEventListener('click', closePanel);
+    panelSel.addEventListener('click', function () { if (!panelDragged) toggleQuote(); });
+    panelSel.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleQuote(); }
+    });
     panelEl.querySelector('.askw-copy').addEventListener('click', function () {
       var t = panelBody.innerText || '';
       if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function () {});
@@ -380,7 +389,7 @@
     pillEl = document.createElement('button');
     pillEl.type = 'button';
     pillEl.className = 'askw-root askw-pill';
-    pillEl.innerHTML = '<span class="askw-ico" aria-hidden="true">◈</span><b class="askw-pill-label">…</b>';
+    pillEl.innerHTML = '<svg class="askw-ico" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.5 1.5h4.9A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/></svg><b class="askw-pill-label">…</b>';
     pillLabel = pillEl.querySelector('.askw-pill-label');
     pillEl.title = 'Context folder the selected provider reads — click to change';
     pillEl.setAttribute('aria-haspopup', 'dialog');
@@ -467,15 +476,37 @@
   function openPanel(action) {
     activeAction = action;
     panelTitle.textContent = EYEBROW[action] || 'Answer';
-    panelSel.textContent = sel ? ('“' + sel.text.slice(0, 160) + (sel.text.length > 160 ? '…' : '') + '”') : '';
+    panelSel.textContent = sel ? '“' + sel.text + '”' : '';
     panelTools.innerHTML = '';
     panelBody.innerHTML = '';
     stopBtn.style.display = 'none';
     retryBtn.style.display = 'none';
     hideFollowup();
     panelEl.classList.add('open');
+    fitQuote();
     if (!userPinned) positionPanel();
     panelEl.querySelector('.askw-x').focus();
+  }
+  // The quoted passage shows three whole lines; a longer one ends in an ellipsis
+  // and becomes a button that unfolds the rest.
+  function fitQuote() {
+    panelSel.classList.remove('expanded');
+    var clamped = panelSel.scrollHeight > panelSel.clientHeight + 1;
+    panelSel.classList.toggle('clamped', clamped);
+    if (clamped) {
+      panelSel.setAttribute('role', 'button');
+      panelSel.setAttribute('tabindex', '0');
+      panelSel.setAttribute('aria-expanded', 'false');
+      panelSel.title = 'Show the whole passage';
+    } else {
+      ['role', 'tabindex', 'aria-expanded', 'title'].forEach(function (a) { panelSel.removeAttribute(a); });
+    }
+  }
+  function toggleQuote() {
+    if (!panelSel.classList.contains('clamped')) return;
+    var open = panelSel.classList.toggle('expanded');
+    panelSel.setAttribute('aria-expanded', open ? 'true' : 'false');
+    panelSel.title = open ? 'Collapse the passage' : 'Show the whole passage';
   }
   function closePanel() {
     panelEl.classList.remove('open');
@@ -552,7 +583,7 @@
     if (item.citations && item.citations.length) renderCitations(item.citations);
     panelTitle.textContent = mode === 'continue' ? 'Continue saved answer' : 'Saved answer';
     showFollowup(true);
-    autoscroll();
+    anchorTurn(panelBody.firstElementChild);
   }
 
   function askAgainHistory(item) {
@@ -566,11 +597,12 @@
   }
   // Append a fresh answer block (showing "Thinking…") for the stream to fill.
   function appendLive() {
+    var asked = panelBody.lastElementChild;
     liveEl = document.createElement('div');
     liveEl.className = 'askw-a';
     liveEl.innerHTML = '<div class="askw-think"><span class="askw-dot"></span>Thinking…</div>';
     panelBody.appendChild(liveEl);
-    autoscroll();
+    anchorTurn(asked && asked.classList.contains('askw-q') ? asked : liveEl);
   }
   function liveError(msg) {
     if (liveEl) liveEl.innerHTML = '<div class="askw-err">' + esc(msg) + '</div>';
@@ -609,18 +641,37 @@
     // streams below the screen; the flex body becomes the scroll container.
     panelEl.style.maxHeight = Math.max(180, vh - top - m) + 'px';
   }
-  function autoscroll() { panelBody.scrollTop = panelBody.scrollHeight; }
+  // Follow a streaming answer down, but never past the top of the turn that asked
+  // for it: the question stays in view and the answer reads from its first line.
+  // Once the reader scrolls on their own, later tokens leave them where they are.
+  var scrollAnchor = null, scrollPinned = -1;
+  function anchorTurn(el) { scrollAnchor = el; scrollPinned = -1; autoscroll(); }
+  function autoscroll() {
+    var max = panelBody.scrollHeight - panelBody.clientHeight, now = panelBody.scrollTop;
+    var clamped = scrollPinned > max && now >= max - 1;   // a re-render shrank the content
+    if (scrollPinned >= 0 && Math.abs(now - scrollPinned) > 2 && !clamped) return;
+    var top = max;
+    if (scrollAnchor && panelBody.contains(scrollAnchor)) {
+      top = Math.min(top, scrollAnchor.getBoundingClientRect().top - panelBody.getBoundingClientRect().top + now - 8);
+    }
+    panelBody.scrollTop = Math.max(0, top);
+    scrollPinned = panelBody.scrollTop;
+  }
 
   // Drag the panel by its header; resize from the bottom-right corner (CSS
   // resize:both). Either gesture "pins" it so auto-positioning stops fighting you.
+  var panelDragged = false;   // a drag that ends on the quote is not a click on it
   function makeDragResize(panel, handle) {
     handle.addEventListener('mousedown', function (e) {
-      if (e.target.closest('.askw-x')) return;     // close button isn't a drag grip
+      // close button isn't a drag grip; an unfolded quote keeps its scrollbar
+      if (e.target.closest('.askw-x, .askw-selq.expanded')) return;
       e.preventDefault();
-      userPinned = true;
       var r = panel.getBoundingClientRect();
       var sx = e.clientX, sy = e.clientY, ox = r.left, oy = r.top;
+      panelDragged = false;
       function mv(ev) {
+        if (!panelDragged && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 4) return;
+        panelDragged = userPinned = true;
         var nx = ox + (ev.clientX - sx), ny = oy + (ev.clientY - sy);
         nx = Math.max(4, Math.min(nx, window.innerWidth - panel.offsetWidth - 4));
         ny = Math.max(4, Math.min(ny, window.innerHeight - 44));
