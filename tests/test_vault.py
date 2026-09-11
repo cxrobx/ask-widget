@@ -255,6 +255,30 @@ class HtmlVaultIndexTests(unittest.TestCase):
         labels = [item.label for item in rebuilt.files if item.name == "zeta.html"]
         self.assertEqual(labels, ["Renamed page, longer"])
 
+    def test_pages_carry_a_one_line_summary_for_the_preview(self) -> None:
+        scratch = self.vault / "Scratch"
+        (scratch / "described.html").write_text(
+            '<head><meta content="Said &amp; done." name="description"><title>D</title></head>'
+            "<body><p class=subtitle>The description wins over the subtitle.</p></body>",
+            encoding="utf-8",
+        )
+        (scratch / "subtitled.html").write_text(
+            '<title>S</title><style>p{}</style><h1>S</h1><p class="subtitle">Localize, falsify, <code>fix</code> .</p>',
+            encoding="utf-8",
+        )
+        (scratch / "plain.html").write_text(
+            "<title>P</title><p>Short.</p><script>'<p>a script string long enough to pass for prose here</p>'</script>"
+            "<p>The first real paragraph, long enough to preview the page by.</p>",
+            encoding="utf-8",
+        )
+        tree = VaultIndex.build(self.vault, kind="html").tree_json()
+        nodes = {c["name"]: c for c in self.child(tree, "Scratch")["children"]}
+        self.assertEqual(nodes["described.html"]["summary"], "Said & done.")
+        self.assertEqual(nodes["subtitled.html"]["summary"], "Localize, falsify, fix.")
+        self.assertEqual(nodes["plain.html"]["summary"], "The first real paragraph, long enough to preview the page by.")
+        self.assertNotIn("summary", nodes["zeta.html"])  # nothing to say: no field
+        self.assertNotIn("summary", nodes["gone.html"])  # a dangling link has no page to read
+
     def test_context_folder_is_the_real_folder_behind_the_first_link(self) -> None:
         who = self.vault / "Architect" / "guides" / "who-holds-the-plan" / "index.html"
         self.assertEqual(vault_mod.html_context_folder(who, self.vault), self.topic.resolve())

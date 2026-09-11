@@ -463,6 +463,78 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_vault_rows_are_single_lines_and_hovering_one_previews_the_page(self) -> None:
+        sources = self.root / "sources"
+        (sources / "guides").mkdir(parents=True)
+        long_title = "Debugging a broken Claude agent, live — a walkthrough far too long for one sidebar line"
+        (sources / "guides" / "debugging.html").write_text(
+            f"<title>{long_title}</title><p class=subtitle>Read the transcript, find the first wrong turn, fix it.</p>",
+            encoding="utf-8",
+        )
+        (sources / "guides" / "wire.html").write_text("<title>Reading the wire</title>", encoding="utf-8")
+        vault = self.root / "Artifacts"
+        vault.mkdir()
+        (vault / "Architect").symlink_to(sources, target_is_directory=True)
+        (vault / "gone.html").symlink_to(self.root / "nowhere.html")
+        self.app.state.storage.update_settings({"html_vault_root": str(vault)}, model_default="sonnet")
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1200, "height": 700})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+            row = page.locator("#tree a.file", has_text="Debugging a broken")
+            wire = page.locator("#tree a.file", has_text="Reading the wire")
+            row.wait_for()
+            # One line per row however long the title; the card carries the rest.
+            self.assertLess(row.evaluate("e => e.getBoundingClientRect().height"), 40)
+            self.assertTrue(row.locator(".lbl").evaluate("e => e.scrollWidth > e.clientWidth"))
+            # A folder's icon opens and shuts with it.
+            folder = page.locator("#tree details[data-path$='guides'] > summary")
+            self.assertTrue(folder.locator("svg.open").is_visible())
+            folder.click()
+            self.assertTrue(folder.locator("svg.shut").is_visible())
+            folder.click()
+            # The right-click menu finds every page row by its path, missing ones too.
+            self.assertEqual(page.locator("#tree .file.missing").get_attribute("data-path"), str(vault / "gone.html"))
+
+            peek = page.locator("#peek")
+            self.assertTrue(peek.is_hidden())
+            row.hover()
+            expect(peek).to_be_visible()
+            self.assertEqual(row.get_attribute("aria-describedby"), "peek")
+            self.assertEqual(peek.locator(".peek-title").inner_text(), long_title)
+            self.assertEqual(peek.locator(".peek-sum").inner_text(), "Read the transcript, find the first wrong turn, fix it.")
+            self.assertEqual(peek.locator(".peek-row").nth(0).inner_text(), "Architect › guides")
+            self.assertRegex(peek.locator(".peek-row").nth(1).inner_text(), r"^HTML page · Updated \d+m ago$")
+            side_right = page.locator("#vault-side").evaluate("e => e.getBoundingClientRect().right")
+            self.assertGreaterEqual(peek.evaluate("e => e.getBoundingClientRect().left"), side_right)  # beside, never over
+            wire.hover()  # warm: the next row previews at once
+            expect(peek.locator(".peek-title")).to_have_text("Reading the wire", timeout=400)
+            self.assertEqual(peek.locator(".peek-sum").count(), 0)  # nothing to summarise, no empty line
+            wire.click(button="right")  # the row menu puts it away, and keeps it away while open
+            expect(peek).to_be_hidden()
+            page.wait_for_function("() => OnyxMenu.isOpen()")  # the menu opens after a round trip
+            wire.hover()
+            page.wait_for_timeout(600)
+            expect(peek).to_be_hidden()
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !OnyxMenu.isOpen()")
+            page.mouse.move(900, 400)
+
+            page.locator("#vault-filter").focus()  # from the keyboard, focus shows it too
+            for _ in range(3):
+                page.keyboard.press("Tab")
+            self.assertTrue(row.evaluate("e => e === document.activeElement"))
+            expect(peek).to_be_visible()
+            expect(peek.locator(".peek-title")).to_have_text(long_title)
+            page.keyboard.press("Escape")
+            expect(peek).to_be_hidden()
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_glass_icons_take_the_page_tone_not_the_app_theme(self) -> None:
         # A dark app over a cream page (the usual Artifacts case) must get light
         # glass with dark ink there; dark glass would turn the icon into a smudge.

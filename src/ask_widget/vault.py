@@ -292,6 +292,62 @@ def read_attachment_folder(root: Path) -> str:
     return value
 
 
+# The sidebar's hover preview shows one line under a page's title. It comes
+# from the same first 64 KB as the title (see html_page_meta), cached the same way.
+SUMMARY_CHARS = 180
+_META_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""")
+_DEK_RE = re.compile(
+    r"""<(p|div|h2|h3)\b[^>]*\bclass\s*=\s*["']?[^"'>]*?\b(?:subtitle|lede|lead|dek|summary|standfirst)\b[^>]*>(.*?)</\1\s*>""",
+    re.IGNORECASE | re.DOTALL,
+)
+_PARA_RE = re.compile(r"<p\b[^>]*>(.*?)</p\s*>", re.IGNORECASE | re.DOTALL)
+_NOISE_RE = re.compile(r"<(script|style|template|svg|title)\b.*?</\1\s*>|<!--.*?-->", re.IGNORECASE | re.DOTALL)
+_SUMMARY_CACHE: dict[tuple[str, int, int], str] = {}
+
+
+def _fragment_text(fragment: str) -> str:
+    text = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
+    # A tag stripped to a space leaves "built )." — close punctuation back up.
+    return re.sub(r"([(\[“‘])\s+", r"\1", re.sub(r"\s+([,.;:!?)\]”’])", r"\1", text))
+
+
+def html_page_summary(path: Path) -> str:
+    """One line to preview a page by, or "": its description, else its subtitle, else its first real paragraph."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    cached = _SUMMARY_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(_TITLE_SCAN_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        head = ""
+    summary = ""
+    for tag in _META_RE.findall(head):
+        attrs = {k.lower(): v.strip("\"'") for k, v in _ATTR_RE.findall(tag)}
+        if (attrs.get("name") or attrs.get("property") or "").lower() in ("description", "og:description"):
+            summary = _fragment_text(attrs.get("content", ""))
+            if summary:
+                break
+    if not summary:
+        body = _NOISE_RE.sub(" ", head)
+        dek = _DEK_RE.search(body)
+        summary = _fragment_text(dek.group(2)) if dek else ""
+        if not summary:
+            summary = next((t for t in map(_fragment_text, _PARA_RE.findall(body)) if len(t) >= 40), "")
+    if len(summary) > SUMMARY_CHARS:
+        summary = summary[:SUMMARY_CHARS].rsplit(" ", 1)[0].rstrip(",;:—–- ") + "…"
+    if len(_SUMMARY_CACHE) >= _TITLE_CACHE_MAX:
+        _SUMMARY_CACHE.clear()
+    _SUMMARY_CACHE[key] = summary
+    return summary
+
+
 @dataclass(frozen=True)
 class VaultFile:
     path: Path  # lexical absolute path — never resolve()d
@@ -300,11 +356,13 @@ class VaultFile:
     stem_key: str  # casefolded stem, the wikilink lookup key
     kind: str  # "note" | "attachment"
     # Artifacts only. ``title`` is the display label; ``page_dir`` marks an
-    # ``index.html`` standing in for its folder; ``missing`` a dangling link.
+    # ``index.html`` standing in for its folder; ``missing`` a dangling link;
+    # ``summary`` the one line the sidebar's hover preview shows.
     title: str = ""
     mtime: float = 0.0
     page_dir: bool = False
     missing: bool = False
+    summary: str = ""
 
     @property
     def depth(self) -> int:
@@ -450,6 +508,7 @@ class VaultIndex:
                     mtime=meta[1] if meta else 0.0,
                     page_dir=page_dir,
                     missing=meta is None,
+                    summary=html_page_summary(path) if meta else "",
                 )
             )
             return True
@@ -576,6 +635,8 @@ class VaultIndex:
                 "ext": item.path.suffix.lower(),
                 "mtime": item.mtime,
             }
+            if item.summary:
+                node["summary"] = item.summary
             if item.missing:
                 node["missing"] = True
                 try:
