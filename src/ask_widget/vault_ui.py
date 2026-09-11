@@ -25,10 +25,11 @@ from . import __version__
 from .config import AppConfig
 from .launcher_ui import glass_script, theme_settings, theme_style
 
-# SF Symbols' sidebar.left: the one glyph both sidebar toggles share.
-SIDEBAR_ICON = (
-    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">'
-    '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/></svg>'
+# The sidebar's pin: filled while the sidebar is pinned, outlined while it floats and comes out from the left edge.
+PIN_ICON = (
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true"><path class="pin-head" d="M6.75 2.25v3.5L4.75 8.5h6.5l-2-2.75v-3.5z"/>'
+    '<path d="M5.75 2.25h4.5M8 8.5v5.25"/></svg>'
 )
 
 # The tree's glyphs: a folder that opens with its <details>, and the hover card's rows.
@@ -136,24 +137,24 @@ main,body.native main{{position:relative;padding:0;overflow:hidden}}
 #reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
 /* Artifacts are named by sentence-length titles: a wider sidebar, one line each, and the whole title in the hover card. */
 body.kind-html .shell{{grid-template-columns:290px minmax(0,1fr)}}
-/* Collapsible sidebar: hide from the brand row, bring back from the reader's corner, or ⌘\\ anywhere. */
-.side-toggle{{display:grid;place-items:center;flex:none;width:26px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}} .side-toggle:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .side-toggle svg{{width:16px;height:16px}}
-/* The corner button is glass lying on the reader's page, so it takes the page's tone (data-page-tone, from the widget), not the app's. */
-#side-show{{position:absolute;top:12px;left:12px;z-index:2;display:none;width:30px;height:30px;border:1px solid rgb(255 255 255/.55);border-radius:9px;background:rgb(255 255 255/.2);color:rgb(13 13 13/.62);box-shadow:0 6px 18px rgb(0 0 0/.1),inset 0 1px 0 rgb(255 255 255/.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);transition:background-color .2s ease}} body.native #side-show{{top:36px}}
-#side-show:hover{{background:rgb(255 255 255/.74);color:rgb(13 13 13)}} body[data-page-tone=dark] #side-show{{border-color:rgb(255 255 255/.14);background:rgb(22 22 22/.24);color:rgb(255 255 255/.78);box-shadow:0 6px 18px rgb(0 0 0/.3),inset 0 1px 0 rgb(255 255 255/.1)}} body[data-page-tone=dark] #side-show:hover{{background:rgb(30 30 30/.74);color:#fff}}
-@media(prefers-reduced-transparency:reduce){{#side-show{{background:rgb(255 255 255/.96);backdrop-filter:none;-webkit-backdrop-filter:none}} body[data-page-tone=dark] #side-show{{background:rgb(36 36 36/.96)}}}}
-body.side-collapsed .shell{{grid-template-columns:minmax(0,1fr)}} body.side-collapsed aside{{display:none}} body.side-collapsed #side-show{{display:grid}}
-@media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}} body.side-collapsed .shell{{grid-template-rows:minmax(0,1fr)}}}}
+/* Sidebar: pinned, it sits in the grid; unpinned, it floats over the reader and comes out when the pointer rests on the
+   left edge (#side-edge, laid over the reader because its iframe would swallow the pointer), as in Zen's compact mode. */
+.side-toggle{{display:grid;place-items:center;flex:none;width:26px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}} .side-toggle:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .side-toggle svg{{width:16px;height:16px}} #side-pin[aria-pressed=true] .pin-head{{fill:currentColor}}
+@media(max-width:800px){{.shell,body.kind-html .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:block}}}}
+#side-edge{{position:fixed;top:0;bottom:0;left:0;z-index:39;display:none;width:8px}} body.side-unpinned #side-edge{{display:block}}
+body.side-unpinned .shell,body.side-unpinned.kind-html .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
+body.side-unpinned #vault-side{{position:fixed;top:0;bottom:0;left:0;z-index:40;width:min(260px,86vw);height:auto;max-height:none;visibility:hidden;transform:translateX(-100%)}} body.side-unpinned.kind-html #vault-side{{width:min(290px,86vw)}}
+body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
-</style><style id=sidebar-theme>{sidebar_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-hide class=side-toggle type=button title="Hide sidebar (⌘\\)" aria-label="Hide sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button></div>
+</style><style id=sidebar-theme>{sidebar_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Vaults"><a href="/vault"{notes_active}>Notes</a><a href="/vault?vault=html"{html_active}>Artifacts</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
 <nav id=tree aria-label="{vault_name} {units}"><div class=none>Loading…</div></nav>
 <div class=aside-foot><a href="/">← Launcher</a> · <span id=vault-count>v{version}</span></div></aside>
-<main id=reader-pane><button id=side-show class=side-toggle type=button title="Show sidebar (⌘\\)" aria-label="Show sidebar" aria-controls=vault-side>{SIDEBAR_ICON}</button><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
-<iframe id=reader name=reader src="{initial}" title="Reader"></iframe></main></div><div id=peek role=tooltip hidden></div>
+<main id=reader-pane><div id=reader-empty><div>{empty_hint}<br><small>Select any passage inside it to ask.</small></div></div>
+<iframe id=reader name=reader src="{initial}" title="Reader"></iframe></main></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 <script src=/app-menu.js></script>
 <script>
 const KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; let ROOT={root_json}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
@@ -181,18 +182,23 @@ function renderTree(){{if(!TREE)return;hidePeek();NODES.clear();const top=HTML?T
 function currentSrc(){{try{{const l=reader.contentWindow.location;if(!l||!l.href||l.href==='about:blank')return '';return new URLSearchParams(l.search).get('src')||''}}catch(e){{return ''}}}}
 function highlight(src){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:'nearest'}})}}
 async function loadTree(){{try{{const d=await api('/api/vault/tree?vault='+KIND);ROOT=d.root;TREE=d.tree;$('#vault-count').textContent=d.files+' '+UNIT+(d.files===1?'':'s')+(d.missing?' · '+d.missing+' missing':'')+(d.truncated?' (truncated)':'');renderTree()}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}} <a href="/#settings">Open Settings</a></div>`;$('#vault-count').textContent=HTML?'no Artifacts folder':'no vault'}}}}
-// MARK: sidebar — remembered across both vaults; ⌘\\ also works while focus is inside the reader.
-const SIDE_KEY='askw:vault:sidebar'; if(recall(SIDE_KEY)==='collapsed')document.body.classList.add('side-collapsed');
-function setSide(collapsed,focus){{document.body.classList.toggle('side-collapsed',collapsed);store(SIDE_KEY,collapsed?'collapsed':'');if(focus)$(collapsed?'#side-show':'#side-hide').focus()}}
-function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setSide(!document.body.classList.contains('side-collapsed'),false)}}}}
-// Focus follows to the other button only for a keyboard press (detail 0): after a mouse click WebKit would ring it.
-$('#side-hide').onclick=e=>setSide(true,e.detail===0); $('#side-show').onclick=e=>setSide(false,e.detail===0); document.addEventListener('keydown',sideKey);
-// Mirror the reader page's tone (the widget's data-askw-page) onto the corner button; the app theme stands in when the page has none.
-let toneWatch=null; function syncTone(){{let t='';try{{t=reader.contentDocument.documentElement.getAttribute('data-askw-page')||''}}catch(e){{}}document.body.dataset.pageTone=t||(glassDark()?'dark':'light')}} syncTone();
-reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey);if(toneWatch)toneWatch.disconnect();toneWatch=new MutationObserver(syncTone);toneWatch.observe(reader.contentDocument.documentElement,{{attributes:true,attributeFilter:['data-askw-page']}})}}catch(e){{}}syncTone();const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'Artifacts':'Vault');store(KEY+'last',src)}});
+// MARK: sidebar — pinned or unpinned, remembered across both vaults ("collapsed" is the old word for unpinned). Unpinned,
+// it comes out after a beat on the left edge and goes a moment after the pointer leaves, unless it is in use: a row menu
+// open, the + panel open, or typing in one of its fields. ⌘\\ pins and unpins, also while focus is inside the reader.
+const SIDE_KEY='askw:vault:sidebar', side=$('#vault-side'), pin=$('#side-pin'), edge=$('#side-edge'); let sideOver=false, sideTimer=0;
+function pinned(){{return !document.body.classList.contains('side-unpinned')}}
+function sideOut(out){{document.body.classList.toggle('side-out',out);side.inert=!pinned()&&!out;if(!out)hidePeek()}}
+function inUse(){{const a=document.activeElement,p=$('#add-panel');return !!((window.OnyxMenu&&OnyxMenu.isOpen())||(p&&!p.hidden)||(a&&side.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)))}}
+function sideLater(){{clearTimeout(sideTimer);if(pinned())return;sideTimer=setTimeout(function check(){{if(pinned()||sideOver)return;if(inUse()){{sideTimer=setTimeout(check,400);return}}sideOut(false)}},400)}}
+function setPinned(on){{document.body.classList.toggle('side-unpinned',!on);store(SIDE_KEY,on?'':'unpinned');pin.setAttribute('aria-pressed',String(on));pin.title=(on?'Unpin':'Pin')+' sidebar (⌘\\\\)';clearTimeout(sideTimer);sideOut(!on&&(sideOver||inUse()));if(!on&&!sideOver)sideLater()}}
+function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setPinned(!pinned())}}}}
+pin.onclick=()=>setPinned(!pinned()); document.addEventListener('keydown',sideKey);
+edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),120)}}); edge.addEventListener('mouseleave',e=>{{if(!side.contains(e.relatedTarget))clearTimeout(sideTimer)}});
+side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}); side.addEventListener('mouseleave',()=>{{sideOver=false;sideLater()}}); side.addEventListener('focusout',()=>{{if(!sideOver)sideLater()}});
+reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'Artifacts':'Vault');store(KEY+'last',src)}});
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
 async function applyFilter(){{const q=filter.value.trim();if(q.length<2){{renderTree();return}}try{{const d=await api('/api/vault/search?vault='+KIND+'&q='+encodeURIComponent(q));hidePeek();NODES.clear();d.items.forEach(i=>NODES.set(i.path,{{n:i,crumbs:(i.folder||'').split('/').filter(Boolean)}}));tree.innerHTML='<ul class="root results">'+d.items.map(i=>`<li><a class=file target=reader href="${{esc(viewHref(i.path))}}" data-path="${{esc(i.path)}}"><span class=lbl>${{esc(HTML?(i.title||i.name):label(i))}}</span><small>${{esc(i.folder||'/')}}</small></a></li>`).join('')+(d.items.length?'':`<li class=none>No ${{UNIT}}s match.</li>`)+'</ul>';highlight(currentSrc())}}catch(e){{tree.innerHTML=`<div class=none>${{esc(e.message)}}</div>`}}}}
-document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement&&document.activeElement.tagName);if(e.key==='/'&&!typing&&!e.metaKey&&!e.ctrlKey){{e.preventDefault();filter.focus();filter.select()}}else if(e.key==='Escape'&&document.activeElement===filter){{filter.value='';applyFilter();filter.blur()}}}});
+document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement&&document.activeElement.tagName);if(e.key==='/'&&!typing&&!e.metaKey&&!e.ctrlKey){{e.preventDefault();if(!pinned())sideOut(true);filter.focus();filter.select()}}else if(e.key==='Escape'&&document.activeElement===filter){{filter.value='';applyFilter();filter.blur()}}}});
 // MARK: row menu — the app's rendered menu (static/app-menu.js). The server says what a row really is (its real file, and
 // the link on the way); ⌥ turns each Reveal into a Copy. A mousedown while the answer is in flight means it came too late.
 let menuSeq=0; document.addEventListener('mousedown',()=>{{menuSeq++}},true);
@@ -248,5 +254,6 @@ tree.addEventListener('mouseover',e=>{{const row=e.target.closest('#tree .file')
 tree.addEventListener('mouseout',e=>{{const row=e.target.closest('#tree .file');if(row&&!row.contains(e.relatedTarget)){{clearTimeout(peekTimer);peekTimer=setTimeout(hidePeek,90)}}}});
 tree.addEventListener('focusin',e=>{{const row=e.target.closest('#tree .file');if(row&&row.matches(':focus-visible'))wantPeek(row,200)}});
 for(const ev of ['focusout','scroll','click','contextmenu'])tree.addEventListener(ev,hidePeek,{{passive:true}}); document.addEventListener('keydown',e=>{{if(e.key==='Escape')hidePeek()}}); window.addEventListener('blur',hidePeek);
+if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||''))setPinned(false);
 loadTree().then(()=>{{if(!INITIAL_SRC&&ROOT){{const last=recall(KEY+'last');if(last)reader.src=viewHref(last)}}}});
 </script></body></html>"""

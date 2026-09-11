@@ -410,7 +410,7 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
-    def test_vault_sidebar_collapses_and_context_pill_rests_as_an_icon(self) -> None:
+    def test_vault_sidebar_pins_from_the_reader_and_context_pill_rests_as_an_icon(self) -> None:
         vault = self.root / "vault"
         vault.mkdir()
         note = vault / "Alpha.md"
@@ -428,28 +428,26 @@ class BrowserSmokeTests(unittest.TestCase):
             reader = page.frame_locator("iframe[name=reader]")
             reader.locator("h1").wait_for()
             side, pane = page.locator("#vault-side"), page.locator("#reader-pane")
-            show = page.get_by_role("button", name="Show sidebar")
+            # Named for what it does while visible; tracked by id after, since hidden it is inert and leaves the a11y tree.
+            expect(page.get_by_role("button", name="Pin sidebar")).to_have_attribute("aria-pressed", "true")
+            pin = page.locator("#side-pin")
             self.assertTrue(side.is_visible())
-            self.assertFalse(show.is_visible())
 
-            hide = page.get_by_role("button", name="Hide sidebar")
-            hide.focus()
-            hide.press("Enter")  # from the keyboard, focus follows to the button that brings it back
-            self.assertFalse(side.is_visible())
+            pin.focus()
+            pin.press("Enter")  # unpinned from the keyboard: the pointer is elsewhere, so it goes at once
+            expect(pin).to_have_attribute("aria-pressed", "false")
+            expect(side).to_be_hidden()
             self.assertEqual(pane.evaluate("e => e.getBoundingClientRect().width"), 1280)
-            self.assertTrue(show.evaluate("e => e === document.activeElement"))
-            show.click()  # by mouse, focus stays put: WebKit would draw a ring on the handed-off button
-            self.assertFalse(page.get_by_role("button", name="Hide sidebar").evaluate("e => e === document.activeElement"))
-            page.get_by_role("button", name="Hide sidebar").click()
             page.reload(wait_until="networkidle")
             reader.locator("h1").wait_for()
-            self.assertFalse(side.is_visible())  # remembered
+            expect(side).to_be_hidden()  # remembered
 
             reader.locator("body").press("Control+Backslash")  # from inside the reader
             expect(side).to_be_visible()
+            expect(pin).to_have_attribute("aria-pressed", "true")
             reader.locator("body").press("Control+Backslash")
             expect(side).to_be_hidden()
-            show.click()
+            reader.locator("body").press("Control+Backslash")
             expect(side).to_be_visible()
 
             # The context folder rests as an icon; its name slides out on hover.
@@ -690,10 +688,6 @@ class BrowserSmokeTests(unittest.TestCase):
             "<!doctype html><title>Night</title><body style='background:#1a1a1a;color:#ddd'><p>Night page.</p></body>",
             encoding="utf-8",
         )
-        html_vault = self.root / "Artifacts"
-        (html_vault / "Pages").mkdir(parents=True)
-        (html_vault / "Pages" / "cream.html").symlink_to(cream)
-        self.app.state.storage.update_settings({"html_vault_root": str(html_vault)}, model_default="sonnet")
         alpha = "e => { const m = getComputedStyle(e).backgroundColor.match(/[\\d.]+/g); return m.length > 3 ? +m[3] : 1; }"
 
         page_errors: list[str] = []
@@ -716,18 +710,6 @@ class BrowserSmokeTests(unittest.TestCase):
                     "() => { const m = getComputedStyle(document.querySelector('.askw-pill')).backgroundColor.match(/[\\d.]+/g); return m.length < 4 || +m[3] >= 0.7; }"
                 )
                 page.close()
-
-            # The vault's corner button mirrors the reader page's tone, not the dark app's.
-            page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme="dark")
-            page.on("pageerror", lambda error: page_errors.append(str(error)))
-            page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
-            page.locator("#tree a.file", has_text="Cream").click()
-            page.frame_locator("iframe[name=reader]").get_by_text("Cream page.").wait_for()
-            page.wait_for_function("() => document.body.dataset.pageTone === 'light'")
-            page.get_by_role("button", name="Hide sidebar").click()
-            show = page.get_by_role("button", name="Show sidebar")
-            self.assertLessEqual(show.evaluate(alpha), 0.3)
-            self.assertEqual(show.evaluate("e => getComputedStyle(e).color"), "rgba(13, 13, 13, 0.62)")
             browser.close()
 
         self.assertEqual(page_errors, [])
@@ -844,6 +826,84 @@ class BrowserSmokeTests(unittest.TestCase):
                     self.assertFalse(page.locator("#vault-filter").evaluate(prevented))
                     self.assertTrue(passage.evaluate(prevented))
                     self.assertFalse(reader.locator("a", has_text="Notes").evaluate(prevented))
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_vault_sidebar_unpins_to_the_edge_and_pins_back(self) -> None:
+        # Unpinned, the sidebar floats over the reader: out after a beat on the left edge, gone once the
+        # pointer leaves, unless it is in use. Both engines: the app is WebKit.
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Pages").mkdir(parents=True)
+        (artifacts / "Pages" / "one.html").write_text("<title>One</title><p>First page.</p>", encoding="utf-8")
+        self.app.state.storage.update_settings({"html_vault_root": str(artifacts)}, model_default="sonnet")
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 700})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+                    side, pin = page.locator("#vault-side"), page.locator("#side-pin")
+
+                    def reader_x() -> float:
+                        return page.locator("#reader").bounding_box()["x"]
+
+                    # Pinned by default: docked beside the reader.
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    self.assertGreater(reader_x(), 250)
+
+                    # Unpinned from its own pin: the reader takes the width; the sidebar stays while
+                    # the pointer is on it and goes once it leaves.
+                    pin.click()
+                    expect(pin).to_have_attribute("aria-pressed", "false")
+                    self.assertEqual(reader_x(), 0)
+                    expect(side).to_be_visible()
+                    page.mouse.move(700, 350)
+                    expect(side).to_be_hidden()
+
+                    # A beat on the left edge brings it out; on it, it stays; off it, it goes.
+                    page.mouse.move(3, 350)
+                    expect(side).to_be_visible()
+                    page.mouse.move(120, 350)
+                    page.wait_for_timeout(700)
+                    expect(side).to_be_visible()
+                    page.mouse.move(700, 350)
+                    expect(side).to_be_hidden()
+
+                    # In use holds it out: "/" brings it out to type in, Escape lets it go ...
+                    page.keyboard.press("/")
+                    expect(page.locator("#vault-filter")).to_be_focused()
+                    page.wait_for_timeout(700)
+                    expect(side).to_be_visible()
+                    page.keyboard.press("Escape")
+                    expect(side).to_be_hidden()
+
+                    # ... and so does a row's menu, until it closes.
+                    page.mouse.move(3, 350)
+                    expect(side).to_be_visible()
+                    page.locator("#tree a.file", has_text="One").click(button="right")
+                    menu = page.get_by_role("menu")
+                    expect(menu).to_be_visible()
+                    page.mouse.move(700, 350)
+                    page.wait_for_timeout(700)
+                    expect(side).to_be_visible()
+                    page.keyboard.press("Escape")
+                    expect(menu).to_be_hidden()
+                    expect(side).to_be_hidden()
+
+                    # Remembered across a reload; ⌘\ pins it back, and that is remembered too.
+                    page.reload(wait_until="networkidle")
+                    expect(pin).to_have_attribute("aria-pressed", "false")
+                    expect(side).to_be_hidden()
+                    page.keyboard.press("Meta+Backslash")
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    expect(side).to_be_visible()
+                    self.assertGreater(reader_x(), 250)
+                    page.reload(wait_until="networkidle")
+                    expect(pin).to_have_attribute("aria-pressed", "true")
                     browser.close()
 
         self.assertEqual(page_errors, [])
