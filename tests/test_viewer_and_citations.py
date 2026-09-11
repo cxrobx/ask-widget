@@ -9,7 +9,18 @@ from reportlab.pdfgen import canvas
 
 from ask_widget.citations import extract_citations
 from ask_widget.vault import VaultIndex
-from ask_widget.launcher_ui import BASE_RGB, blur_radius, glass_script, theme_style
+from ask_widget.launcher_ui import (
+    BASE_RGB,
+    READABLE_CONTRAST,
+    SIDEBAR_LABEL,
+    SIDEBAR_READABLE,
+    SIDEBAR_TINT,
+    blur_radius,
+    glass_alphas,
+    glass_script,
+    sidebar_contrast,
+    theme_style,
+)
 from ask_widget.viewer import (
     RangeNotSatisfiable,
     ViewerError,
@@ -310,3 +321,25 @@ class RangeAndGlassTests(unittest.TestCase):
         for theme, (r, g, b) in BASE_RGB.items():
             self.assertIn(f"[{r},{g},{b}]", script, theme)
             self.assertIn(f"--bg-primary:{r} {g} {b}", style, theme)
+
+    def test_sidebar_labels_stay_readable_over_any_backdrop(self) -> None:
+        for theme in ("dark", "light"):
+            floor = SIDEBAR_READABLE[theme]
+            # The floor is the tightest alpha that clears AA, not a padded guess.
+            self.assertGreaterEqual(sidebar_contrast(floor, theme), READABLE_CONTRAST, theme)
+            self.assertLess(sidebar_contrast(floor - 0.01, theme), READABLE_CONTRAST, theme)
+            for step in range(101):
+                sidebar = glass_alphas(step / 100, theme == "dark")[1]
+                self.assertGreaterEqual(sidebar, floor, (theme, step))
+                self.assertGreaterEqual(sidebar_contrast(sidebar, theme), READABLE_CONTRAST, (theme, step))
+        self.assertEqual(SIDEBAR_READABLE, {"dark": 0.79, "light": 0.84})
+        self.assertEqual(glass_alphas(0, True), (1, 1, 1))  # opaque still means opaque
+        # The floor is derived from these tokens; if the palette moves, so must they.
+        style = theme_style({})
+        self.assertIn("--bg-sidebar:42 43 43", style)
+        self.assertEqual(SIDEBAR_TINT["dark"], 43)
+        self.assertIn(f"--bg-sidebar:{SIDEBAR_TINT['light']} {SIDEBAR_TINT['light']} {SIDEBAR_TINT['light']}", style)
+        for theme in ("dark", "light"):
+            label = SIDEBAR_LABEL[theme]
+            self.assertIn(f"--secondary:{label} {label} {label}", style)
+        self.assertIn("dark?0.79:0.84", glass_script({}))

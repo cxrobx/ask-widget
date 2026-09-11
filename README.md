@@ -27,8 +27,11 @@ selection → Ask Widget → local FastAPI service → Claude CLI (claude.ai sub
   runtime, with `NSVisualEffectView` as the fallback), alpha-aware
   sidebar/content/card tints over it, persistent System/Light/Dark themes, and
   one transparency slider that drives both the tints and the blur radius
-  (10–48, 24 at the default). The window opens opaque and turns to glass after
-  the first paint; macOS **Reduce Transparency** is honoured live.
+  (10–48, 24 at the default). The sidebar never gets thinner than the opacity
+  that keeps its labels at WCAG AA contrast over any backdrop (79% dark, 84%
+  light), so a bright window behind it can't wash the list out. The window
+  opens opaque and turns to glass after the first paint; macOS **Reduce
+  Transparency** is honoured live.
 - A reading library with recent documents, recent answers, search, per-document
   reading position, and Markdown note export.
 - HTML, Markdown, plain-text, and text-based PDF readers. Trusted local HTML keeps

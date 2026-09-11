@@ -35,13 +35,60 @@ def blur_radius(transparency: float) -> int:
     return round(BLUR_MIN + t * (BLUR_MAX - BLUR_MIN))
 
 
+# The sidebar's readability floor. cxtasks lets its dark sidebar thin to 10% —
+# the Codex character — which is glass over a dark desktop and unreadable over a
+# bright one: seen over a green terminal block, where the labels washed out. The
+# NSVisualEffectView material used to lay a tint of its own under the pane; the
+# raw blur has none, so the pane's own alpha is all that stands between the text
+# and the desktop. The sidebar therefore never goes thinner than the alpha that
+# keeps its label text (--secondary) at WCAG AA 4.5:1 over the WORST backdrop
+# for the theme: pure white behind dark mode, pure black behind light. Derived
+# from the palette rather than tuned, so moving a token moves the floor with it.
+SIDEBAR_TINT = {"dark": 43, "light": 255}  # --bg-sidebar (dark's brightest channel)
+SIDEBAR_LABEL = {"dark": 205, "light": 93}  # --secondary
+WORST_BACKDROP = {"dark": 255, "light": 0}
+READABLE_CONTRAST = 4.5
+
+
+def _luminance(grey: float) -> float:
+    c = grey / 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def contrast_ratio(a: float, b: float) -> float:
+    """WCAG contrast between two sRGB greys (0–255)."""
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def sidebar_contrast(alpha: float, theme: str) -> float:
+    """Label contrast with the sidebar at ``alpha`` over the theme's worst backdrop.
+
+    WebKit composites alpha in gamma-encoded sRGB, so the mix is linear in 0–255.
+    """
+    composite = SIDEBAR_TINT[theme] * alpha + WORST_BACKDROP[theme] * (1 - alpha)
+    return contrast_ratio(SIDEBAR_LABEL[theme], composite)
+
+
+def _readable_floor(theme: str) -> float:
+    return next(
+        (step / 100 for step in range(101) if sidebar_contrast(step / 100, theme) >= READABLE_CONTRAST),
+        1.0,
+    )
+
+
+SIDEBAR_READABLE = {theme: _readable_floor(theme) for theme in ("dark", "light")}
+
+
 def glass_alphas(transparency: float, dark: bool) -> tuple[float, float, float]:
     pane_floor = 0.25 if dark else 0.55
     sidebar_boost = 1.9 if dark else 1.6
     sidebar_floor = 0.10 if dark else 0.45
     pane = 1 - transparency * (1 - pane_floor)
     sidebar_t = min(1, transparency * sidebar_boost)
-    sidebar = 1 - sidebar_t * (1 - sidebar_floor)
+    # cxtasks' curve, clamped at the readability floor: as glassy as it can be
+    # while the labels stay legible over anything.
+    sidebar = max(1 - sidebar_t * (1 - sidebar_floor), SIDEBAR_READABLE["dark" if dark else "light"])
     surface = pane + (1 - pane) * 0.5
     return pane, sidebar, surface
 
@@ -93,9 +140,10 @@ def glass_script(settings: dict[str, Any] | None) -> str:
     """
     glass, _theme = theme_settings(settings)
     light, dark = BASE_RGB["light"], BASE_RGB["dark"]
+    floor_dark, floor_light = SIDEBAR_READABLE["dark"], SIDEBAR_READABLE["light"]
     return f"""const GLASS={{t:{glass}/100,ready:false,reduce:false,sent:null,onchange:null}};const glassScheme=matchMedia('(prefers-color-scheme:dark)');
 function glassDark(){{const t=document.documentElement.dataset.theme;return t==='dark'||(t!=='light'&&glassScheme.matches)}}
-function glassAlphas(t,dark){{const pane=1-t*(1-(dark?.25:.55)),s=Math.min(1,t*(dark?1.9:1.6));return{{pane,sidebar:1-s*(1-(dark?.10:.45)),surface:pane+(1-pane)*.5}}}}
+function glassAlphas(t,dark){{const pane=1-t*(1-(dark?.25:.55)),s=Math.min(1,t*(dark?1.9:1.6));return{{pane,sidebar:Math.max(1-s*(1-(dark?.10:.45)),dark?{floor_dark}:{floor_light}),surface:pane+(1-pane)*.5}}}}
 function glassRadius(t){{t=Number.isFinite(t)?Math.min(1,Math.max(0,t)):0;return Math.round({BLUR_MIN}+t*({BLUR_MAX}-{BLUR_MIN}))}}
 function glassBridge(){{return window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.askwGlass}}
 function sendGlass(eff){{const h=glassBridge();if(!GLASS.ready||!h)return;const dark=glassDark(),enabled=eff>0,radius=glassRadius(eff),prev=GLASS.sent;if(prev&&prev.enabled===enabled&&prev.radius===radius&&prev.dark===dark)return;const radiusOnly=!!(prev&&prev.enabled&&enabled&&prev.dark===dark);GLASS.sent={{enabled,radius,dark}};Promise.resolve(h.postMessage({{enabled,radius,radiusOnly,rgb:dark?[{dark[0]},{dark[1]},{dark[2]}]:[{light[0]},{light[1]},{light[2]}]}})).catch(()=>{{}})}}

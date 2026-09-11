@@ -14,6 +14,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from ask_widget.app import create_app
 from ask_widget.config import AppConfig
+from ask_widget.launcher_ui import glass_alphas
 from ask_widget.storage import Storage
 
 
@@ -355,6 +356,13 @@ class BrowserSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#vault-count").inner_text(), "1 page")
             self.assertEqual(page.locator(".vault-switch a.active").inner_text(), "HTML")
             self.assertNotEqual(page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--pane-alpha')"), "")
+            # The live slider (JS) and the first paint (Python) must be one curve.
+            for t in (0, 0.1, 0.38, 0.7, 1):
+                for dark in (True, False):
+                    js = page.evaluate("([t, dark]) => glassAlphas(t, dark)", [t, dark])
+                    expected = glass_alphas(t, dark)
+                    for key, value in zip(("pane", "sidebar", "surface"), expected):
+                        self.assertAlmostEqual(js[key], value, places=9, msg=(t, dark, key))
             link = page.locator("#tree a.file", has_text="Who holds the plan")
             self.assertEqual(link.count(), 1)
             link.click()
