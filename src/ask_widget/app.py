@@ -41,7 +41,6 @@ from .runner import _sse, stream_answer
 from .citations import open_source
 from .config import AppConfig
 from .diagnostics import build_diagnostics
-from .launcher_ui import launcher_page
 from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
 from .providers import find_claude, find_codex, provider_catalogs, provider_status
 from .storage import Storage
@@ -365,11 +364,6 @@ def create_app(config: AppConfig) -> FastAPI:
         }
         return JSONResponse(body, headers=cors(origin))
 
-    @app.get("/", response_class=HTMLResponse)
-    async def launcher():
-        settings = app.state.storage.settings(model_default=config.model)
-        return HTMLResponse(launcher_page(config, settings))
-
     @app.get("/quick", response_class=HTMLResponse)
     async def quick_read(request: Request, text: str, folder: str | None = None):
         if not _host_allowed(request.headers.get("host", ""), config.port):
@@ -524,24 +518,66 @@ def create_app(config: AppConfig) -> FastAPI:
         csp = f"{script_src}; connect-src 'self'; object-src 'none'; base-uri 'none'"
         return HTMLResponse(out, headers={"Content-Security-Policy": csp})
 
-    @app.get("/vault", response_class=HTMLResponse)
-    async def vault_view(
+    def _tag_vaults(items: list[dict], key: str) -> None:
+        """Say which vault each reading-history row lives in, and where.
+
+        History keys a document by its realpath, but the shell lists it under
+        its vault path: a page in Artifacts by its link, a note under a linked
+        folder by the link's side. ``vault_path`` is that row, so the reader
+        opens it there and the sidebar can highlight it; ``vault_folder`` is
+        the folder it sits in, for saying where it lives.
+        """
+        indexes = [
+            (kind, app.state.vault.get(root, kind))
+            for kind in ("notes", "html")
+            if (root := _vault_root(app, kind)) is not None
+        ]
+        for item in items:
+            item["vault"] = item["vault_path"] = item["vault_folder"] = None
+            source = str(item.get(key) or "")
+            if not source.startswith("/"):
+                continue
+            for kind, index in indexes:
+                row = index.by_real(source)
+                if row is not None:
+                    item["vault"], item["vault_path"] = kind, str(row.path)
+                    item["vault_folder"] = row.entry_rel.rpartition("/")[0] if kind == "html" else row.folder
+                    break
+
+    async def _shell(
         request: Request,
-        src: str | None = None,
-        history: str | None = None,
-        history_action: str | None = None,
-        vault_kind: str = Query("notes", alias="vault"),
-    ):
+        kind: str,
+        *,
+        src: str | None,
+        folder: str | None,
+        history: str | None,
+        history_action: str | None,
+    ) -> HTMLResponse:
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return HTMLResponse(_error_page("Refused: host not allowed."), status_code=403)
-        kind = "html" if vault_kind == "html" else "notes"
         settings = app.state.storage.settings(model_default=config.model)
-        root = _vault_root(app, kind)
-        reader_query = None
-        if src and root is not None:
+        params: dict[str, str] | None = None
+        if src and kind == "library":
+            # Library reads anything. A page that lives in a vault opens as its
+            # row there (Finder hands over the real file), so it is highlighted
+            # and reads with that vault's context; anything else keeps the
+            # folder it came with.
+            found: dict = {"source": src}
+            if not viewer.is_remote(src):
+                await asyncio.to_thread(_tag_vaults, [found], "source")
+            notes_root = _vault_root(app)
+            if found.get("vault") == "notes" and notes_root is not None:
+                params = {"src": found["vault_path"], "folder": str(notes_root)}
+            elif found.get("vault") == "html":
+                params = {"src": found["vault_path"]}
+            else:
+                params = {"src": src, **({"folder": folder} if folder else {})}
+        elif src and (root := _vault_root(app, kind)) is not None:
             # The Obsidian vault is its own context; a page in Artifacts gets the
             # real folder behind its link, which /view works out from the path.
             params = {"src": src} if kind == "html" else {"src": src, "folder": str(root)}
+        reader_query = None
+        if params is not None:
             if history:
                 params["history"] = history
             if history_action:
@@ -551,13 +587,35 @@ def create_app(config: AppConfig) -> FastAPI:
             vault_page(
                 config,
                 settings,
-                root=root,
-                src=src if root is not None else None,
+                src=params["src"] if params else None,
                 reader_query=reader_query,
                 kind=kind,
                 sidebar=current_sidebar_theme(),
             )
         )
+
+    # The app opens on Library; Notes and Artifacts are the same page, switched in place.
+    @app.get("/", response_class=HTMLResponse)
+    async def library_view(
+        request: Request,
+        src: str | None = None,
+        folder: str | None = None,
+        history: str | None = None,
+        history_action: str | None = None,
+    ):
+        return await _shell(request, "library", src=src, folder=folder, history=history, history_action=history_action)
+
+    @app.get("/vault", response_class=HTMLResponse)
+    async def vault_view(
+        request: Request,
+        src: str | None = None,
+        folder: str | None = None,
+        history: str | None = None,
+        history_action: str | None = None,
+        vault_kind: str = Query("notes", alias="vault"),
+    ):
+        kind = vault_kind if vault_kind in {"html", "library"} else "notes"
+        return await _shell(request, kind, src=src, folder=folder, history=history, history_action=history_action)
 
     @app.get("/_fs/{capability}/{path:path}")
     async def fs_asset(request: Request, capability: str, path: str):
@@ -661,6 +719,9 @@ def create_app(config: AppConfig) -> FastAPI:
             action=action if action in {"ask", "eli5", "prove"} else None,
             since=since,
         )
+        # Library's home and Recent conversations open each row where the sidebar lists it.
+        await asyncio.to_thread(_tag_vaults, data["documents"], "source")
+        await asyncio.to_thread(_tag_vaults, data["conversations"], "document_source")
         return JSONResponse({"ok": True, **data}, headers=cors(request.headers.get("origin")))
 
     @app.get("/api/history")

@@ -71,7 +71,6 @@ class ApiTests(unittest.TestCase):
             "history-model",
             "history-document",
             "history-date",
-            "history-action",
             "appearance-theme",
             "provider",
             "model",
@@ -83,7 +82,12 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn('role="listbox"', launcher.text)
         self.assertIn("background:rgb(var(--button-bg))", launcher.text)
         self.assertNotIn(".primary{border:0;background:rgb(var(--accent))", launcher.text)
-        self.assertIn("Question history", launcher.text)
+        # The launcher's pages are the shell's two dialogs now, and the shell opens on Library.
+        self.assertIn('<body class="kind-library', launcher.text)
+        self.assertIn('<dialog id=settings-modal', launcher.text)
+        self.assertIn("Recent conversations", launcher.text)
+        self.assertIn("id=history-action class=seg role=radiogroup", launcher.text)
+        self.assertIn('aria-label="Settings"', launcher.text)
         self.assertIn("Ask again", launcher.text)
         response = self.client.get(
             "/view", params={"src": str(self.document), "folder": str(self.root)}
@@ -342,7 +346,7 @@ class VaultApiTests(unittest.TestCase):
         self.assertIn(f'<iframe id=reader name=reader src="/view?{expected.replace("&", "&amp;")}"', page.text)
         self.assertIn("<title>Alpha.md — Vault</title>", page.text)
         self.assertIn("<title>Vault</title>", self.client.get("/vault").text)  # no page: the name once
-        self.assertIn('data-href=/vault>Vault</button>', self.client.get("/").text)
+        self.assertIn('<a href="/vault" data-kind=notes>Notes</a>', self.client.get("/").text)
         self.assertIn("id=vault-form", self.client.get("/").text)
         blank = self.client.get("/vault")
         self.assertIn('src="about:blank"', blank.text)
@@ -373,6 +377,16 @@ class VaultApiTests(unittest.TestCase):
 
         outside_note = self.client.get("/view", params={"src": str(self.outside / "L.md")})
         self.assertIn("[[M]]", outside_note.text)  # outside the vault: literal wikilink
+
+    def test_history_says_which_vault_a_document_lives_in_and_its_row_there(self) -> None:
+        # History keys a note by its real file; the shell lists it through the link, and says where.
+        self.set_vault(str(self.vault))
+        self.client.get("/view", params={"src": str(self.vault / "linked" / "L.md"), "folder": str(self.vault)})
+        doc = self.client.get("/api/library").json()["documents"][0]
+        self.assertEqual(doc["source"], str((self.outside / "L.md").resolve()))
+        self.assertEqual(
+            (doc["vault"], doc["vault_path"], doc["vault_folder"]), ("notes", str(self.vault / "linked" / "L.md"), "linked")
+        )
 
     def test_row_menu_entry_reads_the_notes_vault_by_default(self) -> None:
         self.set_vault(str(self.vault))
@@ -460,11 +474,32 @@ class HtmlVaultApiTests(unittest.TestCase):
         notes = self.client.get("/vault").text
         self.assertIn('<body class="kind-notes', notes)
         self.assertIn("body:not(.kind-html) #add-toggle", notes)
-        self.assertIn('data-href="/vault?vault=html">Artifacts</button>', self.client.get("/").text)
+        self.assertIn('<a href="/vault?vault=html" data-kind=html>Artifacts</a>', self.client.get("/").text)
 
         self.app.state.storage.update_settings({"html_vault_root": ""}, model_default="sonnet")
         unset = self.client.get("/api/vault/tree", params={"vault": "html"})
         self.assertEqual(unset.json()["error"], "No Artifacts folder is configured.")
+
+    def test_library_opens_a_real_file_as_its_row_and_a_loose_one_with_its_folder(self) -> None:
+        real = self.guide / "index.html"
+        self.assertEqual(self.client.get("/view", params={"src": str(self.page)}).status_code, 200)
+        doc = self.client.get("/api/library").json()["documents"][0]
+        self.assertEqual(doc["source"], str(real))
+        self.assertEqual((doc["vault"], doc["vault_path"], doc["vault_folder"]), ("html", str(self.page), "Architect/guides"))
+        # Finder hands over the real file; Library reads it as the page in Artifacts, with the link's context.
+        shell = self.client.get("/", params={"src": str(real)})
+        expected = urllib.parse.urlencode({"src": str(self.page)}, quote_via=urllib.parse.quote, safe="/")
+        self.assertIn(f'<iframe id=reader name=reader src="/view?{expected}"', shell.text)
+        self.assertIn('<body class="kind-library', shell.text)
+        self.assertIn("<title>index.html — Library</title>", shell.text)
+        self.assertIn("<section id=home aria-label=\"Library\" hidden>", shell.text)  # a page is open: no home page
+        # A document in neither vault keeps the folder it came with.
+        loose = self.context / "loose.md"
+        loose.write_text("# Loose\n", encoding="utf-8")
+        page = self.client.get("/", params={"src": str(loose), "folder": str(self.context)})
+        expected = urllib.parse.urlencode({"src": str(loose), "folder": str(self.context)}, quote_via=urllib.parse.quote, safe="/")
+        self.assertIn(f'src="/view?{expected.replace("&", "&amp;")}"', page.text)
+        self.assertIn("<section id=home aria-label=\"Library\">", self.client.get("/").text)  # nothing open: home
 
     def test_reader_uses_the_real_folder_behind_the_link_when_it_is_allowed(self) -> None:
         # Not yet an allowed root: the reader falls back to the default folder.

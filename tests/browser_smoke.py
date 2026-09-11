@@ -199,29 +199,29 @@ class BrowserSmokeTests(unittest.TestCase):
             response = page.goto(self.base_url, wait_until="networkidle")
             self.assertIsNotNone(response)
             self.assertEqual(response.status, 200)
-            self.assertEqual(
-                page.locator("#documents .empty").inner_text(),
-                "Documents you open will appear here.",
-            )
-            self.assertEqual(
-                page.locator("#conversations .empty").inner_text(),
-                "Your completed answers will be saved here.",
-            )
+            # The app opens on Library, and Library rests on its home page.
+            expect(page.locator(".vault-switch a.active")).to_have_text("Library")
+            expect(page.locator("#home-docs .home-empty")).to_have_text("Documents you open will appear here.")
+            expect(page.locator("#home-asks .home-empty")).to_have_text("Your completed answers will be saved here.")
 
             page.get_by_role("button", name="Settings", exact=True).click()
-            page.locator("#provider-status").wait_for()
-            self.assertIn("Using Claude", page.locator("#provider-status").inner_text())
+            expect(page.locator("#settings-modal")).to_be_visible()
+            expect(page.locator("#provider-status")).to_contain_text("Using Claude")
             self.assertEqual(page.locator("#model").input_value(), "sonnet")
+            page.keyboard.press("Escape")
+            expect(page.locator("#settings-modal")).to_be_hidden()
 
+            # Narrow, the sidebar stacks above the reader: three segments that fit, and the foot's two buttons.
             page.set_viewport_size({"width": 760, "height": 800})
             page.goto(self.base_url, wait_until="networkidle")
             page.evaluate("document.body.classList.add('native')")
-            nav_widths = page.locator("nav button").evaluate_all(
-                "buttons => buttons.map(button => button.getBoundingClientRect().width)"
+            segments = page.locator(".vault-switch a").evaluate_all(
+                "links => links.map(link => link.getBoundingClientRect().width)"
             )
-            self.assertEqual(len(nav_widths), 5)  # Diagnostics lives inside Settings
-            self.assertTrue(all(width < 160 for width in nav_widths), nav_widths)
-            self.assertLess(page.locator("aside").evaluate("aside => aside.offsetHeight"), 160)
+            self.assertEqual(len(segments), 3)
+            self.assertTrue(all(40 < width < 300 for width in segments), segments)
+            expect(page.locator("#open-history")).to_be_visible()
+            expect(page.locator("#open-settings")).to_be_visible()
 
             query = urllib.parse.urlencode(
                 {"src": str(self.document), "folder": str(self.root)}
@@ -996,9 +996,17 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(page.locator("#vault-count")).to_have_text("1 page")
                     expect(page.locator("#reader-empty")).to_contain_text("Pick a page from the sidebar.")  # none read yet
                     self.assertIn("vault=html", page.url)
-                    self.assertNotEqual(switch.evaluate(pill), at_notes)  # the pill went across
+                    # The pill went across, to the third segment. Read once it has moved and settled: Notes is the
+                    # middle segment, and WebKit reports a transition's first frame as where it started.
+                    page.wait_for_function(
+                        "from => getComputedStyle(document.querySelector('.vault-switch'), '::before').transform !== from",
+                        arg=at_notes,
+                    )
+                    page.wait_for_timeout(250)
                     link = page.locator(".vault-switch a.active").bounding_box()["width"]
                     self.assertAlmostEqual(switch.evaluate("e => parseFloat(getComputedStyle(e, '::before').width)"), link, delta=0.5)
+                    shift = switch.evaluate("e => new DOMMatrix(getComputedStyle(e, '::before').transform).m41")
+                    self.assertAlmostEqual(shift, 2 * (link + 2), delta=0.5)
 
                     page.locator("#tree a.file", has_text="Page one").click()
                     expect(reader.locator("#first")).to_have_text("First page.")
@@ -1026,6 +1034,113 @@ class BrowserSmokeTests(unittest.TestCase):
 
                     self.assertTrue(page.evaluate("window.__same === true"))
                     self.assertEqual(page.evaluate("__loading"), 0)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_library_is_home_and_settings_and_history_are_dialogs(self) -> None:
+        # The app opens on Library: both vaults' trees under their headings, and a home page of what was read and asked.
+        # Settings and Recent conversations are dialogs at the sidebar's foot; a setting applies as it changes, and a saved
+        # conversation opens in the reader beside the sidebar, never in place of it. Both engines: the app is WebKit.
+        notes = self.root / "vault"
+        notes.mkdir()
+        alpha = notes / "Alpha.md"
+        alpha.write_text("# Alpha\n\nA note.\n", encoding="utf-8")
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Pages").mkdir(parents=True)
+        one = artifacts / "Pages" / "one.html"
+        one.write_text("<title>Page one</title><p id=first>First page.</p>", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(notes), "html_vault_root": str(artifacts)}, model_default="sonnet")
+        storage.add_root(notes)
+        doc_id = storage.upsert_document(source=str(alpha.resolve()), title="Alpha", kind="markdown", folder=str(notes))
+        storage.start_conversation(
+            request_id="req-alpha", document_id=doc_id, document_source=str(alpha.resolve()), document_title="Alpha",
+            document_page=None, selection="A note.", context="", action="ask", question="What is this note?",
+            folder=str(notes), provider="claude", model="sonnet",
+        )
+        storage.finish_conversation("req-alpha", status="complete", answer="It is a note.")
+
+        def saved_theme() -> str:
+            return storage.settings(model_default="sonnet")["appearance_theme"]
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    storage.update_settings({"appearance_theme": "system"}, model_default="sonnet")
+                    storage.upsert_document(source=str(one.resolve()), title="Page one", kind="html", folder=str(self.root))
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(self.base_url, wait_until="networkidle")
+                    expect(page.locator("body")).to_have_class(re.compile(r"\bkind-library\b"))
+                    expect(page.locator("#tree .group-head .lbl")).to_have_text(["Notes", "Artifacts"])
+                    expect(page.locator("#tree a.file[data-vault=html]", has_text="Page one")).to_be_visible()
+                    expect(page.locator("#vault-count")).to_have_text("1 note · 1 page")
+                    cards = page.locator("#home-docs .home-card")
+                    expect(cards).to_have_count(2)
+                    expect(cards.first.locator(".t")).to_have_text("Page one")
+                    expect(cards.first.locator(".tag")).to_have_text("Artifact")
+                    expect(cards.nth(1).locator(".tag")).to_have_text("Note")
+                    expect(page.locator("#home-asks .home-ask")).to_contain_text("What is this note?")
+
+                    # A card reads in the reader beside the sidebar, highlighted in its tree; Library again goes home.
+                    cards.first.click()
+                    reader = page.frame_locator("iframe[name=reader]")
+                    expect(reader.locator("#first")).to_have_text("First page.")
+                    expect(page.locator("#home")).to_be_hidden()
+                    expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(one))
+                    page.locator(".vault-switch a", has_text="Library").click()
+                    expect(page.locator("#home")).to_be_visible()
+                    self.assertEqual(urllib.parse.urlparse(page.url).path, "/")
+
+                    # Settings: the cog's dialog. The theme applies at once and is saved, and there is no Save button.
+                    page.get_by_role("button", name="Settings", exact=True).click()
+                    dialog = page.locator("#settings-modal")
+                    expect(dialog).to_be_visible()
+                    self.assertEqual(dialog.get_by_role("button", name=re.compile("^Save")).count(), 0)
+                    page.select_option("#appearance-theme", "dark")
+                    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                    for _ in range(50):
+                        if saved_theme() == "dark":
+                            break
+                        time.sleep(0.1)
+                    self.assertEqual(saved_theme(), "dark")
+                    # A number out of range is refused and put back.
+                    first = page.locator("#first-activity")
+                    expect(first).not_to_have_value("")
+                    before = first.input_value()
+                    first.fill("5")
+                    first.press("Tab")
+                    expect(first).to_have_value(before)
+                    page.keyboard.press("Escape")
+                    expect(dialog).to_be_hidden()
+
+                    # Recent conversations: the clock's dialog. One conversation opens in place of the list, and
+                    # Continue puts it in the reader beside the sidebar.
+                    page.get_by_role("button", name="Recent conversations", exact=True).click()
+                    recent = page.locator("#history-modal")
+                    expect(recent).to_be_visible()
+                    row = recent.locator(".hist-row", has_text="What is this note?")
+                    expect(row).to_be_visible()
+                    recent.locator("#history-action [role=radio]", has_text="ELI5").click()
+                    expect(recent.locator(".hist-row")).to_have_count(0)
+                    recent.locator("#history-action [role=radio]", has_text="All").click()
+                    row.click()
+                    expect(page.locator("#history-detail-answer")).to_have_text("It is a note.")
+                    recent.get_by_role("button", name="Continue", exact=True).click()
+                    expect(recent).to_be_hidden()
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    search = page.locator("iframe[name=reader]").evaluate("f => f.contentWindow.location.search")
+                    self.assertIn("history=req-alpha", search)
+                    self.assertIn("history_action=continue", search)
+                    expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(alpha))
+
+                    # The launcher's old links name a dialog, and land on it.
+                    page.goto(self.base_url + "/#diagnostics", wait_until="networkidle")
+                    expect(page.locator("#settings-modal")).to_be_visible()
+                    self.assertNotIn("#", page.url)
                     browser.close()
 
         self.assertEqual(page_errors, [])

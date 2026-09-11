@@ -1028,8 +1028,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         }
     }
 
-    @objc private func goHome() {
-        webView?.load(URLRequest(url: URL(string: "\(baseURL)/")!))
+    @objc private func goLibrary() {
+        switchVault("library", path: "/")
     }
     @objc private func goVault() {
         switchVault("notes", path: "/vault")
@@ -1037,13 +1037,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func goHTMLVault() {
         switchVault("html", path: "/vault?vault=html")
     }
-    /// On the vault shell the other vault comes in place, so the sidebar never reloads (a load
-    /// blanks the glass window for a frame); from any other page, or if the shell can't, it loads.
+    @objc private func openSettings() {
+        shellCall("onyxShell.openSettings()", fallback: "/#settings")
+    }
+    @objc private func openRecentConversations() {
+        shellCall("onyxShell.openHistory()", fallback: "/#history")
+    }
+    /// On the shell (Library, Notes, Artifacts) a view comes in place, so the sidebar never reloads
+    /// (a load blanks the glass window for a frame); from any other page, or if the shell can't, it loads.
     private func switchVault(_ kind: String, path: String) {
+        shellCall("onyxVault.switchTo('\(kind)')", fallback: path)
+    }
+    /// Runs one of the shell's entry points (`window.onyxVault`, `window.onyxShell`) in place, or loads
+    /// `fallback` when the page isn't the shell or the call didn't take.
+    private func shellCall(_ call: String, fallback: String) {
         guard let webView else { return }
-        let load = { _ = webView.load(URLRequest(url: URL(string: "\(baseURL)\(path)")!)) }
-        guard webView.url?.path == "/vault" else { load(); return }
-        webView.evaluateJavaScript("!!(window.onyxVault && onyxVault.switchTo('\(kind)'))") { result, _ in
+        let load = { _ = webView.load(URLRequest(url: URL(string: "\(baseURL)\(fallback)")!)) }
+        guard ["/", "/vault"].contains(webView.url?.path ?? "") else { load(); return }
+        let entry = call.prefix { $0 != "." }
+        webView.evaluateJavaScript("!!(window.\(entry) && \(call))") { result, _ in
             if (result as? Bool) != true { load() }
         }
     }
@@ -1133,8 +1145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             .contains(url.pathExtension.lowercased())
     }
 
+    /// A document from Finder or File ▸ Open reads in Library, beside the sidebar; a page that lives in a vault
+    /// opens as its row there (the service maps the real file back to it).
     private func openDocumentURL(_ documentURL: URL) {
-        var components = URLComponents(string: "\(baseURL)/view")!
+        var components = URLComponents(string: "\(baseURL)/")!
         components.queryItems = [URLQueryItem(name: "src", value: documentURL.path)]
         if let url = components.url {
             webView?.load(URLRequest(url: url))
@@ -1173,6 +1187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         ))
         appMenu.addItem(menuItem("Check for Updates…", #selector(checkForUpdates), ""))
         appMenu.addItem(.separator())
+        appMenu.addItem(menuItem("Settings…", #selector(openSettings), ","))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(
             title: "Hide Onyx", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"
         ))
@@ -1185,9 +1201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         let fileMenu = NSMenu(title: "File")
         fileItem.submenu = fileMenu
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
-        fileMenu.addItem(menuItem("Launcher Home", #selector(goHome), "n"))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(menuItem("Library", #selector(goLibrary), "n"))
         fileMenu.addItem(menuItem("Vault", #selector(goVault), "V"))
         fileMenu.addItem(menuItem("Artifacts", #selector(goHTMLVault), "H"))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(menuItem("Recent Conversations", #selector(openRecentConversations), "y"))
 
         let editItem = NSMenuItem()
         main.addItem(editItem)

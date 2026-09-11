@@ -32,8 +32,9 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
   light), so a bright window behind it can't wash the list out. The window
   opens opaque and turns to glass after the first paint; macOS **Reduce
   Transparency** is honoured live.
-- A reading library with recent documents, recent answers, search, per-document
-  reading position, and Markdown note export.
+- **Library**, where the app opens: both vaults' trees in one sidebar, and a
+  home page of recently opened documents (notes, artifacts, anything else) and
+  recent asks. Per-document reading position and Markdown note export.
 - HTML, Markdown, plain-text, and text-based PDF readers. Trusted local HTML keeps
   its buttons and scripts; PDF selections retain their page number for prompts
   and evidence.
@@ -51,11 +52,14 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
 - A bounded, expiring local answer cache keyed by document version, model,
   context folder, selection, and page.
 - Persistent SQLite history in WAL mode with schema versioning.
-- A dedicated, searchable History workspace with native provider, model,
-  document, date, and action filters. Saved entries can be asked again with the
-  current model, edited before asking, or restored as a visible conversation.
-- Settings for window glass, provider, model, reasoning effort, response detail, caching, history, timeouts,
-  private URL access, and trusted context roots.
+- **Recent conversations**, a searchable dialog (the clock at the sidebar's
+  foot, or ⌘Y) with question-type, provider, model, document, and date filters.
+  Saved entries can be asked again with the current model, edited before asking,
+  or restored as a visible conversation, each in the reader beside the sidebar.
+- **Settings**, a dialog behind the cog at the sidebar's foot (or ⌘,), as in
+  cxtasks: window glass, provider, model, reasoning effort, response detail,
+  caching, history, timeouts, private URL access, and trusted context roots.
+  Each setting applies as it changes; there are no Save buttons.
 - Diagnostics for both CLI installations, both subscription sessions, the
   selected model, database, default folder, and an optional live provider probe.
 - Native **File ▸ Open Document…**, file-association support, and a macOS
@@ -121,9 +125,11 @@ loaded directly from `src/`, so normal edits do not trigger a reinstall.
 
 ## Use the reader
 
-Open the app and choose a local document or paste an HTTPS URL. For a local
-document, choose the context folder containing the source material the selected provider is
-allowed to inspect.
+The app opens on **Library**. Pick a note or page from the sidebar or a card on
+the home page, or type a local path or HTTPS URL into its **Open** field. For a
+document outside your vaults, set the context folder under that field to the
+source material the selected provider is allowed to inspect; notes and artifacts
+bring their own.
 
 Then:
 
@@ -144,9 +150,11 @@ shared passage automatically.
 
 ### Vault mode
 
-**Vault** in the sidebar (or **File ▸ Vault**, ⌘⇧V) opens a persistent folder
-tree beside the reader. Set the folder under **Settings ▸ Vault**; it defaults to
-`~/Documents/CX`. Saving it also adds the folder to the allowed context roots, so
+The **Library · Notes · Artifacts** switch at the top of the sidebar (or **File ▸
+Library**, ⌘N; **File ▸ Vault**, ⌘⇧V; **File ▸ Artifacts**, ⌘⇧H) changes view in
+place. **Notes** is a persistent folder tree of your vault beside the reader;
+**Library** shows it and Artifacts together, each under its own heading. Set the
+folder under **Settings ▸ Vaults**; it defaults to `~/Documents/CX`. Saving it also adds the folder to the allowed context roots, so
 answers can cite the notes themselves — remove it there and the tree keeps
 working, but the reader's context folder falls back to the default.
 
@@ -188,9 +196,8 @@ Appearance → Match vault sidebar appearance**; see the plugin's README.
 
 ### Artifacts
 
-**Artifacts** in the sidebar (or **File ▸ Artifacts**, ⌘⇧H, or the Notes | Artifacts
-switch at the top of either vault) browses a folder of **symlinks to HTML pages
-anywhere on your Mac** — the HTML counterpart of an Obsidian vault. It defaults to
+**Artifacts** (on the switch at the top of the sidebar, or **File ▸ Artifacts**,
+⌘⇧H) browses a folder of **symlinks to HTML pages anywhere on your Mac** — the HTML counterpart of an Obsidian vault. It defaults to
 `~/Documents/Artifacts`; change it under **Settings ▸ Vaults**.
 
 - **Top-level folders are projects.** A folder is listed once it holds a page,
@@ -232,7 +239,8 @@ reason over their text.
 ### Open from Finder or Alfred
 
 Once the app is installed, a supported document can be opened through Finder's
-**Open With ▸ Onyx** menu. Onyx also provides **Services ▸ Open in
+**Open With ▸ Onyx** menu; it reads in Library, beside the sidebar, and a page
+that lives in a vault opens as its row there. Onyx also provides **Services ▸ Open in
 Onyx** for HTML, Markdown, text, and PDF files. If the Service is hidden,
 enable it under **System Settings ▸ Keyboard ▸ Keyboard Shortcuts ▸ Services ▸
 Files and Folders**.
@@ -268,6 +276,15 @@ Serve the page over HTTP rather than `file://` for predictable browser behavior.
 
 ## Library, storage, and settings
 
+**Library** is where the app opens. Its sidebar holds both vaults' trees, and
+until you open something the reader's place holds its home page: an **Open**
+field, **Recently opened** (each tagged Note, Artifact, or by kind, with where it
+lives), and **Recent asks**, each of which opens its conversation. Choosing
+Library again from Library returns to the home page. **Settings** (the cog at the
+sidebar's foot, or ⌘,) and **Recent conversations** (the clock beside it, or ⌘Y)
+are dialogs; the old launcher links `/#settings`, `/#diagnostics`, and
+`/#history` open them.
+
 The app stores its database at:
 
 ```text
@@ -280,8 +297,8 @@ SQLite's backup API and leaves the original untouched.
 
 Saved data includes settings, trusted roots, recent documents, reading
 positions, requests, answers, citations, tool traces, errors, timing, and links
-between original questions, reruns, edits, and continuations. Open **History**
-to search or reuse them. Turn off **Save reading history** in Settings to stop
+between original questions, reruns, edits, and continuations. Open **Recent
+conversations** to search or reuse them. Turn off **Save reading history** in Settings to stop
 persisting new conversations.
 Browser/WKWebView answer-cache entries live in local storage and obey the cache
 TTL and maximum-entry settings.
@@ -431,12 +448,13 @@ ask-widget/
 │   ├── codex_runner.py       Codex headless JSONL lifecycle and SSE translation
 │   ├── citations.py          evidence validation and source opening
 │   ├── diagnostics.py        provider/runtime/database diagnostics
-│   ├── launcher_ui.py        library, settings, diagnostics, and shared glass
+│   ├── launcher_ui.py        shared glass, theme tokens, and the sidebar grid
+│   ├── panels_ui.py          Settings and Recent conversations dialogs
 │   ├── providers.py          subscription auth and live model discovery
 │   ├── runner.py             subscription-only provider dispatch
 │   ├── storage.py            SQLite schema and queries
 │   ├── vault.py              vault index (notes + HTML): tree, wikilinks, titles, links
-│   ├── vault_ui.py           vault shell: Notes | HTML tree beside the reader iframe
+│   ├── vault_ui.py           the app's shell: Library · Notes · Artifacts beside the reader
 │   └── viewer.py             secure HTML/Markdown/text/PDF readers
 ├── static/ask.js             selection UI and streamed answer panel
 ├── tests/                    API, security, storage, viewer, and runner tests
