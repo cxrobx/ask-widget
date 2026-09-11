@@ -4,7 +4,7 @@ import { TFolder, type App } from "obsidian";
 export interface SidebarThemeSnapshot {
   mode: "light" | "dark";
   styles: Record<string, Record<string, string>>;
-  folders: { name: string; color: string; guide?: string }[];
+  folders: { name: string; color: string; guide?: string; hover?: string }[];
 }
 
 const TYPE = ["color", "font-family", "font-size", "font-weight", "font-style", "letter-spacing", "line-height", "text-transform"];
@@ -12,7 +12,7 @@ const ROW = [...TYPE, "padding-top", "padding-bottom", "border-radius"];
 const BORDER = ["top", "right", "bottom", "left"].flatMap((side) => ["color", "width", "style"].map((kind) => `border-${side}-${kind}`));
 // Each key and property is on the server's allowlist (sidebar_theme.ELEMENTS).
 const ELEMENTS: Record<string, [string, string[]]> = {
-  pane: [".nav-files-container", ["color", "font-family", "font-size", "font-weight", "letter-spacing", "line-height", "background-color"]],
+  pane: [":scope", ["color", "font-family", "font-size", "font-weight", "letter-spacing", "line-height", "background-color"]],
   folder: [".onyx-sample-folder > .nav-folder-title", ROW],
   file: [".onyx-sample-file > .nav-file-title", ROW],
   active: [".onyx-sample-active > .nav-file-title", ["color", "background-color", "font-weight", "border-radius"]],
@@ -29,15 +29,23 @@ export function safeValue(value: string): string | null {
 }
 
 const TRANSPARENT = /^(transparent|rgba\([^)]*,\s*0\))$/;
+const LIVE = '.workspace-leaf-content[data-type="file-explorer"]';
 
-/** Top-level folders as the explorer lists them, so a positional rainbow snippet colours our copy the same way. */
+/** Top-level folders in the explorer's own order, so a positional rainbow (AnuPpuccin's nth-child) lands the same. */
 function topFolders(app: App): string[] {
-  const live = Array.from(document.querySelectorAll<HTMLElement>(
-    ".nav-files-container .nav-folder.mod-root > .nav-folder-children > .nav-folder > .nav-folder-title",
-  )).map((title) => title.dataset.path ?? "").filter(Boolean);
-  if (live.length) return live;
-  return app.vault.getRoot().children.filter((child): child is TFolder => child instanceof TFolder)
+  const live = Array.from(document.querySelectorAll<HTMLElement>(`${LIVE} .nav-files-container > div > .nav-folder > .nav-folder-title`))
+    .map((title) => title.dataset.path ?? "").filter(Boolean);
+  const vault = app.vault.getRoot().children.filter((child): child is TFolder => child instanceof TFolder)
     .map((folder) => folder.path).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  // The explorer is a virtual list; a folder scrolled out of it is not in the DOM, so fill in from the vault.
+  return [...live, ...vault.filter((name) => !live.includes(name))];
+}
+
+/** Obsidian's virtual list opens every list with a 1px × 0.1px pusher — hence AnuPpuccin's nth-child(11n+2). */
+function list(parent: HTMLElement, cls = ""): HTMLElement {
+  const el = parent.createDiv(cls ? { cls } : undefined);
+  el.createDiv().style.cssText = "width:1px;height:0.1px;margin-bottom:0";
+  return el;
 }
 
 function row(parent: HTMLElement, kind: "folder" | "file", path: string, extra = ""): HTMLElement {
@@ -47,35 +55,40 @@ function row(parent: HTMLElement, kind: "folder" | "file", path: string, extra =
   // createSvg adds its cls as class tokens: a space-separated string throws, so it takes a list.
   if (kind === "folder") self.createDiv({ cls: "tree-item-icon collapse-icon" }).createSvg("svg", { cls: ["svg-icon", "right-triangle"] });
   self.createDiv({ cls: `tree-item-inner nav-${kind}-title-content`, text: path.split("/").pop() ?? path });
+  if (kind === "folder") row(list(item, "tree-item-children nav-folder-children"), "file", `${path}/Onyx sample.md`);
   return item;
 }
 
-/** Measure the file explorer after the vault's theme and snippets resolve. Reads styles only — never note contents. */
+/**
+ * Measure the file explorer after the vault's theme and snippets resolve. Reads styles only — never note contents.
+ *
+ * The copy has Obsidian's own shape (see list/row), and sits inside the real explorer pane when one is open, so the
+ * pane's background and every ancestor-scoped rule (a border layout's cream pane inside a black frame) resolve as
+ * they do there. With no explorer open, it gets the same chain of workspace wrappers in the left sidebar.
+ */
 export function captureSidebarTheme(app: App): SidebarThemeSnapshot {
-  const host = document.createElement("div");
-  host.className = "workspace-leaf-content";
-  host.dataset.type = "file-explorer";
-  host.setAttribute("aria-hidden", "true");
-  host.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;visibility:hidden;pointer-events:none";
-  const container = host.createDiv({ cls: "nav-files-container" });
-  const root = container.createDiv().createDiv({ cls: "tree-item nav-folder mod-root" });
-  root.createDiv({ cls: "tree-item-self nav-folder-title" }).dataset.path = "/";
-  const top = root.createDiv({ cls: "tree-item-children nav-folder-children" });
+  let mount = document.querySelector<HTMLElement>(LIVE);
+  let scaffold: HTMLElement | null = null;
+  if (!mount) {
+    scaffold = (document.querySelector(".workspace-split.mod-left-split") ?? document.body).createDiv({ cls: "workspace-tabs" });
+    mount = scaffold.createDiv({ cls: "workspace-tab-container" }).createDiv({ cls: "workspace-leaf" })
+      .createDiv({ cls: "workspace-leaf-content" });
+    mount.dataset.type = "file-explorer";
+  }
+  const container = mount.createDiv({ cls: "nav-files-container onyx-sidebar-sample" });
+  container.setAttribute("aria-hidden", "true");
+  container.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;visibility:hidden;pointer-events:none";
+  const top = list(container);
   const names = topFolders(app);
-  const folderItems = (names.length ? names : ["Onyx sample"]).map((name, index) => {
-    const item = row(top, "folder", name, index === 0 ? "onyx-sample-folder" : "");
-    row(item.createDiv({ cls: "tree-item-children nav-folder-children" }), "file", `${name}/Onyx sample.md`);
-    return item;
-  });
+  const folderItems = (names.length ? names : ["Onyx sample"]).map((name, index) =>
+    row(top, "folder", name, index === 0 ? "onyx-sample-folder" : ""));
   row(top, "file", "Onyx sample.md", "onyx-sample-file");
   row(top, "file", "Onyx active.md", "onyx-sample-active").querySelector(".nav-file-title")?.addClass("is-active");
-  host.createDiv({ cls: "search-input-container onyx-sample-search" }).createEl("input", { type: "search" });
-  // Inside the left sidebar, so sidebar-scoped theme variables apply as they do to the real explorer.
-  (document.querySelector(".workspace-split.mod-left-split") ?? document.body).appendChild(host);
+  container.createDiv({ cls: "search-input-container onyx-sample-search" }).createEl("input", { type: "search" });
   try {
     const styles: SidebarThemeSnapshot["styles"] = {};
     for (const [key, [selector, properties]] of Object.entries(ELEMENTS)) {
-      const element = host.querySelector<HTMLElement>(selector);
+      const element = selector === ":scope" ? container : container.querySelector<HTMLElement>(selector);
       if (!element) continue;
       const computed = getComputedStyle(element);
       const declarations: Record<string, string> = {};
@@ -85,9 +98,9 @@ export function captureSidebarTheme(app: App): SidebarThemeSnapshot {
       }
       styles[key] = declarations;
     }
-    // Themes often leave the explorer transparent over the sidebar surface: use the first opaque layer behind it.
+    // The explorer is usually transparent over its pane: take the first opaque layer behind it.
     if (!styles.pane["background-color"] || TRANSPARENT.test(styles.pane["background-color"])) {
-      let layer: HTMLElement | null = container;
+      let layer: HTMLElement | null = container.parentElement;
       let found = "";
       while (layer && !found) {
         const background = getComputedStyle(layer).backgroundColor;
@@ -97,7 +110,7 @@ export function captureSidebarTheme(app: App): SidebarThemeSnapshot {
       if (found && safeValue(found)) styles.pane["background-color"] = found;
       else delete styles.pane["background-color"];
     }
-    // Hover lives in the theme's variables, not on any resting row: resolve them on a probe inside the copy.
+    // Hover lives in the theme's variables, not on any resting row: resolve them on a probe in the copy.
     const probe = container.createDiv();
     probe.style.cssText = "background-color:var(--nav-item-background-hover);color:var(--nav-item-color-hover)";
     const hover = getComputedStyle(probe);
@@ -106,16 +119,25 @@ export function captureSidebarTheme(app: App): SidebarThemeSnapshot {
     if (safeValue(hover.color)) styles.hover.color = hover.color;
     if (!styles.file?.color && styles.pane.color) (styles.file ??= {}).color = styles.pane.color;
     const folders = names.map((name, index) => {
-      const title = getComputedStyle(folderItems[index].querySelector<HTMLElement>(".nav-folder-title")!).color;
-      const guide = getComputedStyle(folderItems[index].querySelector<HTMLElement>(".nav-folder-children")!);
-      const tint: SidebarThemeSnapshot["folders"][number] = { name, color: safeValue(title) ?? "" };
+      const title = folderItems[index].querySelector<HTMLElement>(":scope > .nav-folder-title")!;
+      const titleStyle = getComputedStyle(title);
+      const guide = getComputedStyle(folderItems[index].querySelector<HTMLElement>(":scope > .nav-folder-children")!);
+      const tint: SidebarThemeSnapshot["folders"][number] = { name, color: safeValue(titleStyle.color) ?? "" };
       if (guide.borderLeftStyle !== "none" && parseFloat(guide.borderLeftWidth) > 0 && safeValue(guide.borderLeftColor)) {
         tint.guide = guide.borderLeftColor;
       }
+      // A rainbow theme tints each folder's hover in its own colour (AnuPpuccin sets it on the title). Read it
+      // as a background on a probe inside the title: the raw variable keeps the theme's newlines and tabs.
+      const tintProbe = title.createDiv();
+      tintProbe.style.cssText = "background-color:var(--nav-item-background-hover)";
+      const folderHover = getComputedStyle(tintProbe).backgroundColor;
+      tintProbe.remove();
+      if (!TRANSPARENT.test(folderHover) && safeValue(folderHover) && folderHover !== styles.hover["background-color"]) tint.hover = folderHover;
       return tint;
     }).filter((tint) => tint.color && tint.name.length <= 255 && !/[\x00-\x1f]/.test(tint.name)).slice(0, 256);
     return { mode: document.body.classList.contains("theme-dark") ? "dark" : "light", styles, folders };
   } finally {
-    host.remove();
+    container.remove();
+    scaffold?.remove();
   }
 }

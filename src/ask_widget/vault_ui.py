@@ -241,7 +241,7 @@ let SIDE_THEME={sidebar_state};
 function applyTints(){{const on=document.body.classList.contains('obsidian-tree'),list=SIDE_THEME.folders||[],byName=new Map(list.map(f=>[f.name.toLowerCase(),f]));
 tree.querySelectorAll(':scope > ul.root > li > details').forEach((d,i)=>{{const li=d.parentElement,name=(d.querySelector(':scope > summary .lbl')||{{}}).textContent||'';
 const f=on&&list.length?((!HTML&&byName.get(name.toLowerCase()))||list[i%list.length]):null;
-if(f){{li.style.setProperty('--folder-color',f.color);li.style.setProperty('--guide-color',f.guide||f.color)}}else{{li.style.removeProperty('--folder-color');li.style.removeProperty('--guide-color')}}}})}}
+for(const [prop,value] of [['--folder-color',f&&f.color],['--guide-color',f&&(f.guide||f.color)],['--folder-hover',f&&f.hover]]){{if(value)li.style.setProperty(prop,value);else li.style.removeProperty(prop)}}}})}}
 async function syncSidebarTheme(){{if(document.hidden)return;try{{const d=await api('/api/sidebar-theme');if(d.revision===SIDE_THEME.revision)return;SIDE_THEME=d;$('#sidebar-theme').textContent=d.css||'';document.body.classList.toggle('obsidian-tree',!!d.css);applyTints()}}catch(e){{}}}}
 setInterval(syncSidebarTheme,3000); document.addEventListener('visibilitychange',syncSidebarTheme);
 // MARK: hover card — a page's whole title, its one line, where it lives, what it is. The first hover waits a beat; after

@@ -77,14 +77,15 @@ def validate_snapshot(value: Any) -> dict[str, Any]:
         raise ValueError("Sidebar theme has an invalid folder list.")
     tints: list[dict[str, str]] = []
     for folder in folders:
-        if not isinstance(folder, dict) or set(folder) - {"name", "color", "guide"}:
+        if not isinstance(folder, dict) or set(folder) - {"name", "color", "guide", "hover"}:
             raise ValueError("Sidebar theme has an invalid folder entry.")
         name = folder.get("name")
         if not isinstance(name, str) or not name or len(name) > 255 or re.search(r"[\x00-\x1f]", name):
             raise ValueError("Sidebar theme has an invalid folder name.")
         tint = {"name": name, "color": _value(folder.get("color"), "folder colour")}
-        if folder.get("guide") is not None:
-            tint["guide"] = _value(folder["guide"], "guide colour")
+        for key in ("guide", "hover"):  # its indent line, and a rainbow theme's own-colour hover
+            if folder.get(key) is not None:
+                tint[key] = _value(folder[key], f"folder {key} colour")
         tints.append(tint)
     result = {"mode": value["mode"], "styles": clean, "folders": tints}
     if len(json.dumps(result).encode()) > MAX_SNAPSHOT_BYTES:
@@ -128,10 +129,13 @@ def stylesheet(snapshot: dict[str, Any] | None) -> str:
         + (f";opacity:{styles['chevron']['opacity']}" if "opacity" in styles.get("chevron", {}) else "") + "}",
     ]
     hover = styles.get("hover", {})
-    if hover:
-        rules.append(f"{s} #tree .file:hover,{s} #tree summary:hover{{{_decls(hover, 'background-color')}}}")
-        if "color" in hover:
-            rules.append(f"{s} #tree .file:hover{{color:{hover['color']}}}")
+    hover_bg = hover.get("background-color")
+    # A folder row hovers in its own colour when the theme gives it one (--folder-hover, per folder).
+    rules.append(f"{s} #tree summary:hover{{background-color:var(--folder-hover,{hover_bg or 'rgb(var(--ink)/.045)'})}}")
+    if hover_bg:
+        rules.append(f"{s} #tree .file:hover{{background-color:{hover_bg}}}")
+    if "color" in hover:
+        rules.append(f"{s} #tree .file:hover{{color:{hover['color']}}}")
     if styles.get("active"):
         rules.append(f"{s} #tree a.file.active{{{_decls(styles['active'])}}}")
     if styles.get("search"):

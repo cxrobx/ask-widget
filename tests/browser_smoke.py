@@ -558,7 +558,8 @@ class BrowserSmokeTests(unittest.TestCase):
                 "guide": {"border-left-color": "rgb(147, 161, 161)", "border-left-width": "1px", "border-left-style": "solid"},
             },
             # Listed out of the tree's order: Notes must match by name, not by position.
-            "folders": [{"name": "Projects", "color": teal}, {"name": "Archive", "color": red}, {"name": "Inbox", "color": orange}],
+            "folders": [{"name": "Projects", "color": teal}, {"name": "Archive", "color": red},
+                        {"name": "Inbox", "color": orange, "hover": "rgba(203, 75, 22, 0.1)"}],
         })
         color = "e => getComputedStyle(e).color"
 
@@ -575,6 +576,8 @@ class BrowserSmokeTests(unittest.TestCase):
             # The dark app's chrome reads on the cream pane: dark ink, not white.
             self.assertEqual(page.locator(".brand-name").evaluate(color), "rgb(7, 54, 66)")
             self.assertEqual(inbox.evaluate(color), orange)
+            inbox.hover()  # a folder hovers in its own colour
+            expect(inbox).to_have_css("background-color", "rgba(203, 75, 22, 0.1)")
             self.assertEqual(page.locator("#tree details[data-path$='Archive'] > summary").evaluate(color), red)
             self.assertEqual(page.locator("#tree details[data-path$='Projects'] > summary").evaluate(color), teal)
             inbox.click()  # Notes starts folded; open Inbox to see its guide and child folder
@@ -607,9 +610,12 @@ class BrowserSmokeTests(unittest.TestCase):
 
     @unittest.skipUnless(PLUGIN_ESBUILD.exists(), "needs the Obsidian plugin's dev dependencies (npm ci)")
     def test_plugin_sidebar_capture_runs_and_the_service_accepts_it(self) -> None:
-        # The capture only ever ran inside Obsidian, so a DOM-helper misuse (createSvg with a
-        # spaced class string) shipped. Run the real module against Obsidian's helpers, as
-        # strict as Obsidian's, on an explorer with a positional rainbow snippet.
+        # The capture only ever ran inside Obsidian, and each way it went wrong there is pinned here:
+        # a createSvg with a spaced class string (threw); a root-folder wrapper Obsidian doesn't have,
+        # under which AnuPpuccin's subfolder-inherit rule wiped every top-level colour; mounting on
+        # the black frame instead of inside the cream pane; and colours the scheme defines across
+        # lines, which a raw variable read keeps. The explorer is built as Obsidian builds it (a
+        # spacer opens every list) and styled the way AnuPpuccin's simple rainbow styles it.
         shim = self.root / "obsidian-shim.js"
         shim.write_text("export class TFolder {}\n", encoding="utf-8")
         bundle = subprocess.run(
@@ -628,21 +634,30 @@ class BrowserSmokeTests(unittest.TestCase):
             Element.prototype.createSvg = function (tag, o) { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); apply(el, o, true); this.appendChild(el); return el; };
             Element.prototype.addClass = function (...c) { this.classList.add(...c); };
         """
-        tree = lambda names: "".join(  # noqa: E731 — the live explorer, top-level folders only
-            f'<div class="tree-item nav-folder"><div class="tree-item-self nav-folder-title" data-path="{n}">{n}</div></div>' for n in names
+        spacer = '<div style="width:1px;height:0.1px;margin-bottom:0"></div>'
+        folders = "".join(
+            f'<div class="tree-item nav-folder is-collapsed"><div class="tree-item-self nav-folder-title" data-path="{name}">'
+            f'<div class="tree-item-icon collapse-icon"></div><div class="tree-item-inner">{name}</div></div></div>'
+            for name in ("Archive", "Inbox", "Projects")
+        )
+        schemes = "".join(f"--ctp-{i}: {rgb};" for i, rgb in enumerate(("220\n\t,\n\t50\n,\n47", "203\n\t,\n\t75\n,\n22", "42\n\t,\n\t161\n,\n152")))
+        rainbow = "".join(
+            f".nav-folder-children > .nav-folder:nth-child({i + 2}), .nav-files-container > div > .nav-folder:nth-child({i + 2}) "
+            f"{{ --rainbow: var(--ctp-{i}); }}\n" for i in range(3)
         )
         explorer = f"""<!doctype html><style>
-            body {{ --nav-item-background-hover: rgba(0, 0, 0, 0.05); font: 13px Menlo, monospace; }}
-            .mod-left-split {{ background: rgb(253, 246, 227); color: rgb(7, 54, 66); }}
-            .nav-folder-title {{ color: rgb(88, 110, 117); padding: 4px 0; }} .nav-file-title {{ color: rgb(7, 54, 66); }}
-            .nav-file-title.is-active {{ background: rgb(238, 232, 213); }} .nav-folder-children {{ border-left: 1px solid rgb(147, 161, 161); }}
-            .search-input-container input {{ border-radius: 999px; }}
-            .nav-files-container > div > .nav-folder > .nav-folder-children > .nav-folder:nth-child(1) > .nav-folder-title {{ color: rgb(220, 50, 47); }}
-            .nav-files-container > div > .nav-folder > .nav-folder-children > .nav-folder:nth-child(2) > .nav-folder-title {{ color: rgb(203, 75, 22); }}
-            .nav-files-container > div > .nav-folder > .nav-folder-children > .nav-folder:nth-child(2) > .nav-folder-children {{ border-left-color: rgb(203, 75, 22); }}
-            </style><body class="theme-light"><div class="workspace-split mod-left-split"><div class="nav-files-container"><div>
-            <div class="tree-item nav-folder mod-root"><div class="tree-item-children nav-folder-children">{tree(["Archive", "Inbox", "Projects"])}</div></div>
-            </div></div></div></body>"""
+            body {{ --nav-item-background-hover: rgba(0, 0, 0, 0.05); font: 13px Menlo, monospace; {schemes} }}
+            .mod-left-split {{ background: rgb(0, 0, 0); }} .workspace-tab-container {{ background: rgb(253, 246, 227); color: rgb(7, 54, 66); }}
+            .nav-folder-title {{ padding: 4px 0; }} .nav-file-title {{ color: rgb(7, 54, 66); }}
+            .nav-file-title.is-active {{ background: rgb(238, 232, 213); }} .search-input-container input {{ border-radius: 999px; }}
+            {rainbow}
+            .rainbow-inherit .nav-files-container .nav-folder.nav-folder .nav-folder {{ --rainbow: inherit; }}
+            .nav-files-container > div > .nav-folder .nav-folder-title {{ color: rgb(var(--rainbow)); --nav-item-background-hover: rgba(var(--rainbow), 0.1); }}
+            .nav-files-container .nav-folder > .nav-folder-children {{ border-left: 1px solid rgba(var(--rainbow), 0.5); }}
+            </style><body class="theme-light rainbow-inherit"><div class="workspace-split mod-left-split"><div class="workspace-tabs">
+            <div class="workspace-tab-container"><div class="workspace-leaf"><div class="workspace-leaf-content" data-type="file-explorer">
+            <div class="nav-files-container node-insert-event"><div>{spacer}{folders}</div></div>
+            </div></div></div></div></div></body>"""
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -651,19 +666,18 @@ class BrowserSmokeTests(unittest.TestCase):
             page.add_script_tag(content=helpers)
             page.add_script_tag(content=bundle.stdout)
             snapshot = page.evaluate("() => OnyxSidebar.captureSidebarTheme({ vault: { getRoot: () => ({ children: [] }) } })")
-            self.assertEqual(page.locator(".onyx-sample-folder").count(), 0)  # the hidden copy is gone again
+            self.assertEqual(page.locator(".onyx-sidebar-sample, .onyx-sample-folder").count(), 0)  # the copy is gone again
             browser.close()
 
         self.assertEqual(snapshot["mode"], "light")
-        self.assertEqual(snapshot["styles"]["pane"]["background-color"], "rgb(253, 246, 227)")
+        self.assertEqual(snapshot["styles"]["pane"]["background-color"], "rgb(253, 246, 227)")  # the pane, not the frame
         self.assertEqual(snapshot["styles"]["active"]["background-color"], "rgb(238, 232, 213)")
         self.assertEqual(snapshot["styles"]["hover"]["background-color"], "rgba(0, 0, 0, 0.05)")
-        self.assertEqual(
-            snapshot["folders"],
-            [{"name": "Archive", "color": "rgb(220, 50, 47)", "guide": "rgb(147, 161, 161)"},
-             {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgb(203, 75, 22)"},
-             {"name": "Projects", "color": "rgb(88, 110, 117)", "guide": "rgb(147, 161, 161)"}],
-        )
+        self.assertEqual(snapshot["folders"], [  # the rainbow, in the explorer's order, with its own-colour hovers
+            {"name": "Archive", "color": "rgb(220, 50, 47)", "guide": "rgba(220, 50, 47, 0.5)", "hover": "rgba(220, 50, 47, 0.1)"},
+            {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgba(203, 75, 22, 0.5)", "hover": "rgba(203, 75, 22, 0.1)"},
+            {"name": "Projects", "color": "rgb(42, 161, 152)", "guide": "rgba(42, 161, 152, 0.5)", "hover": "rgba(42, 161, 152, 0.1)"},
+        ])
         vault = self.root / "CX"
         vault.mkdir()
         with urllib.request.urlopen(self.base_url + "/api/session") as response:  # as the plugin gets its token

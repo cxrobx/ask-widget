@@ -32,7 +32,7 @@ def snapshot(color: str = "rgb(7, 54, 66)", folder: str = "rgb(203, 75, 22)") ->
         },
         "folders": [
             {"name": "Archive", "color": "rgb(220, 50, 47)"},
-            {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgb(203, 75, 22)"},
+            {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgb(203, 75, 22)", "hover": "rgba(203, 75, 22, 0.1)"},
             {"name": "Projects", "color": "rgb(42, 161, 152)"},
         ],
     }
@@ -74,6 +74,9 @@ class SidebarThemeTests(unittest.TestCase):
         # Folder and guide colours come per folder, with the captured ones as the fallback.
         self.assertIn("color:var(--folder-color,rgb(203, 75, 22))", css)
         self.assertIn("var(--guide-color,rgb(238, 232, 213))", css)
+        # A folder row hovers in its own colour when the theme gives it one; files keep the plain hover.
+        self.assertIn("body.obsidian-tree #tree summary:hover{background-color:var(--folder-hover,rgba(0, 0, 0, 0.05))}", css)
+        self.assertIn("body.obsidian-tree #tree .file:hover{background-color:rgba(0, 0, 0, 0.05)}", css)
         self.assertIn('font-family:"JetBrains Mono", monospace', css)
         self.assertIn("body.obsidian-tree #vault-filter{background-color:rgb(238, 232, 213);border-radius:999px}", css)
         self.assertEqual(stylesheet(None), "")
@@ -114,7 +117,8 @@ class SidebarThemeTests(unittest.TestCase):
                 self.assertEqual(response.headers["access-control-allow-origin"], "app://obsidian.md")
                 theme = client.get("/api/sidebar-theme").json()
                 self.assertTrue(theme["available"])
-                self.assertEqual(theme["folders"][1], {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgb(203, 75, 22)"})
+                self.assertEqual(theme["folders"][1], {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgb(203, 75, 22)",
+                                                       "hover": "rgba(203, 75, 22, 0.1)"})
                 for page, kind in (("/vault", "notes"), ("/vault?vault=html", "html")):  # both sidebars, from the first paint
                     html = client.get(page).text
                     self.assertIn(f'<body class="kind-{kind} obsidian-tree">', html)
