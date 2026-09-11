@@ -193,7 +193,7 @@ private final class WindowGlass {
         guard number > 0 else { return }
         let status = setBlur(connection(), UInt32(truncatingIfNeeded: number), Int32(radius))
         if status != 0 {
-            NSLog("Ask Widget glass: CGSSetWindowBackgroundBlurRadius(%d) returned %d", radius, status)
+            NSLog("Ask Widget glass: CGSSetWindowBackgroundBlurRadius(%ld) returned %d", radius, status)
         }
     }
 }
@@ -544,7 +544,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         ]
         let rootsFile = home.appendingPathComponent(".config/ask-widget/allow-roots")
         if let raw = try? String(contentsOf: rootsFile, encoding: .utf8) {
-            for line in raw.split(whereSeparator: \Character.isNewline) {
+            // A closure, not `\Character.isNewline`: Swift 5.10 (CI's macos-14) cannot
+            // pass a key path where a rethrowing closure is expected.
+            for line in raw.split(whereSeparator: { $0.isNewline }) {
                 let value = line.trimmingCharacters(in: .whitespaces)
                 guard !value.isEmpty, !value.hasPrefix("#") else { continue }
                 let expanded = (value as NSString).expandingTildeInPath
@@ -898,7 +900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             if body["radiusOnly"] as? Bool == true {
                 glass.setRadius(radius)
             } else {
-                let rgb = (body["rgb"] as? [NSNumber])?.map(\.doubleValue)
+                let rgb = (body["rgb"] as? [NSNumber])?.map { $0.doubleValue }
                 let base = rgb?.count == 3 ? srgb(rgb!.map { min(255, max(0, $0)) }) : launchBaseColor()
                 glass.setState(enabled: body["enabled"] as? Bool ?? false, radius: radius, base: base)
             }
@@ -941,7 +943,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 return
             }
             if kind == "html" {
-                replyHandler(panel.urls.map(\.path), nil)
+                replyHandler(panel.urls.map { $0.path }, nil)
             } else {
                 replyHandler(panel.url?.path, nil)
             }
