@@ -150,7 +150,7 @@ body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-side
 @media(prefers-reduced-transparency:reduce){{body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
 /* Motion: out with an ease-out slide; away with a quicker ease-in one, hidden only once it is off. Reduce Motion fades in place. */
-body.side-unpinned #vault-side{{transition:transform .18s cubic-bezier(.4,0,1,1),visibility 0s linear .18s}} body.side-unpinned.side-out #vault-side{{transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.side-still #vault-side{{transition:none!important}}
+body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.side-unpinned.side-out #vault-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.side-still #vault-side{{transition:none!important}}
 @media(prefers-reduced-motion:reduce){{body.side-unpinned #vault-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.side-unpinned.side-out #vault-side{{opacity:1;transition:opacity .15s linear,visibility 0s}}}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
@@ -200,7 +200,7 @@ function sideLater(){{clearTimeout(sideTimer);if(pinned())return;sideTimer=setTi
 function setPinned(on){{document.body.classList.toggle('side-unpinned',!on);store(SIDE_KEY,on?'':'unpinned');pin.setAttribute('aria-pressed',String(on));pin.title=(on?'Unpin':'Pin')+' sidebar (⌘\\\\)';clearTimeout(sideTimer);sideOut(!on&&(sideOver||inUse()));if(!on&&!sideOver)sideLater()}}
 function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setPinned(!pinned())}}}}
 pin.onclick=()=>setPinned(!pinned()); document.addEventListener('keydown',sideKey);
-edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),120)}}); edge.addEventListener('mouseleave',e=>{{if(side.contains(e.relatedTarget))return;clearTimeout(sideTimer);if(document.body.classList.contains('side-out'))sideLater()}});
+edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),40)}}); edge.addEventListener('mouseleave',e=>{{if(side.contains(e.relatedTarget))return;clearTimeout(sideTimer);if(document.body.classList.contains('side-out'))sideLater()}});
 side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}); side.addEventListener('mouseleave',()=>{{sideOver=false;sideLater()}}); side.addEventListener('focusout',()=>{{if(!sideOver)sideLater()}});
 reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}const src=currentSrc();empty.hidden=!!src;if(!src)return;highlight(src);history.replaceState(null,'','/vault?'+(HTML?'vault=html&':'')+'src='+encodeURIComponent(src));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+(HTML?'Artifacts':'Vault');store(KEY+'last',src)}});
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
