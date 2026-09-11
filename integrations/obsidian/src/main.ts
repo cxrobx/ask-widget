@@ -17,6 +17,7 @@ import {
 import { AskWidgetPanel, VIEW_TYPE_ASK_WIDGET } from "./panel";
 import { AskService, ServiceError } from "./service";
 import { AskWidgetSettingTab, DEFAULT_SETTINGS, type AskWidgetSettings } from "./settings";
+import { captureMarkdownTheme } from "./markdown-theme";
 
 type Action = "eli5" | "prove" | "ask";
 
@@ -29,6 +30,9 @@ const ACTION_TITLES: Record<Action, string> = {
 export default class AskWidgetPlugin extends Plugin {
   settings: AskWidgetSettings = { ...DEFAULT_SETTINGS };
   service!: AskService;
+  private themeTimer = 0;
+  private themeSync: Promise<void> | null = null;
+  private themeStopped = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -36,6 +40,18 @@ export default class AskWidgetPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_ASK_WIDGET, (leaf) => new AskWidgetPanel(leaf, this));
     this.addSettingTab(new AskWidgetSettingTab(this.app, this));
+
+    this.app.workspace.onLayoutReady(() => {
+      if (this.themeStopped) return;
+      this.scheduleMarkdownTheme();
+      this.registerEvent(this.app.workspace.on("css-change", () => this.scheduleMarkdownTheme()));
+      const observer = new MutationObserver(() => this.scheduleMarkdownTheme());
+      observer.observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
+      this.register(() => observer.disconnect());
+      // Reconnect after service restarts; also catches appearance plugins that do
+      // not emit css-change. Background failures stay quiet and retry later.
+      this.registerInterval(window.setInterval(() => this.scheduleMarkdownTheme(), 30_000));
+    });
 
     for (const action of ["eli5", "prove", "ask"] as Action[]) {
       this.addCommand({
@@ -84,6 +100,8 @@ export default class AskWidgetPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.themeStopped = true;
+    window.clearTimeout(this.themeTimer);
     // Leaves are left in place; Obsidian detaches views of an unloaded plugin.
   }
 
@@ -94,6 +112,32 @@ export default class AskWidgetPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
     this.service.setBaseUrl(this.settings.serviceUrl);
+    this.scheduleMarkdownTheme();
+  }
+
+  private scheduleMarkdownTheme(): void {
+    window.clearTimeout(this.themeTimer);
+    if (this.themeStopped) return;
+    this.themeTimer = window.setTimeout(() => {
+      if (this.themeSync) { this.scheduleMarkdownTheme(); return; }
+      void this.syncMarkdownTheme().catch(() => { /* Reconnect on the next sync. */ });
+    }, 350);
+  }
+
+  async syncMarkdownTheme(): Promise<void> {
+    if (this.themeStopped) return;
+    if (this.themeSync) return this.themeSync;
+    const root = this.vaultPath();
+    if (!root) throw new Error("Markdown appearance sync requires a local vault.");
+    this.themeSync = (async () => {
+      const snapshot = await captureMarkdownTheme(this.app);
+      if (!this.themeStopped) await this.service.syncMarkdownTheme(root, snapshot);
+    })();
+    try {
+      await this.themeSync;
+    } finally {
+      this.themeSync = null;
+    }
   }
 
   vaultPath(): string | null {

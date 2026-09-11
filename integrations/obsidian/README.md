@@ -52,6 +52,31 @@ note at the cited line; anything outside opens in your editor through the
 service. **Stop** cancels, **Retry** re-runs, and the follow-up box continues the
 same conversation.
 
+## Markdown appearance
+
+The plugin automatically shares this vault's computed reading styles with Ask
+Widget on startup and when the theme changes. Font settings and CSS snippets
+are included. Open Markdown readers update in place within a few seconds;
+the last successful snapshot is saved by the service and survives closing
+Obsidian or restarting Ask Widget. If the service is offline, the plugin retries
+every 30 seconds without opening the app.
+
+In Ask Widget, **Settings → Vault** selects the source vault. Its styles apply
+to Markdown documents opened in the app, including the Vault reader. Other open
+vaults keep separate snapshots and cannot overwrite the selected vault's style.
+**Settings → Appearance → Match vault Markdown appearance** is enabled by
+default; turn it off to restore the original reader appearance. With no snapshot,
+the reader keeps its default styles. The app chrome, floating answer panel,
+PDFs, plain text, and authored HTML keep their existing appearance.
+
+To sync immediately, use **Ask Widget plugin settings → Markdown appearance →
+Sync now**. Update both the service and plugin when installing this feature.
+
+The snapshot covers ordinary Markdown typography, colors, spacing, links,
+lists, quotes, code blocks, and tables. It does not copy whole stylesheets,
+embedded font files, syntax-highlighting rules, custom callout renderers, or
+note-specific `cssclasses`. Fonts must be available on the computer.
+
 ## Develop
 
 ```bash

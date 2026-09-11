@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Extra browser origins allowed to reach /ask and the JSON APIs, beyond the
 # built-in localhost set. The Obsidian plugin's renderer origin is the default.
@@ -36,6 +36,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "request_timeout": 120,
     "glass_transparency": 38,
     "appearance_theme": "system",
+    "markdown_follow_obsidian": True,
     # Browsed read-only in Vault mode; "" disables the vault view.
     "vault_root": str(Path.home() / "Documents" / "CX"),
     "allowed_origins": ["app://obsidian.md"],
@@ -91,6 +92,11 @@ class Storage:
                 path TEXT PRIMARY KEY,
                 builtin INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS markdown_themes (
+                vault_root TEXT PRIMARY KEY,
+                snapshot_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,7 +243,7 @@ class Storage:
                 if value < lower or value > upper:
                     raise ValueError(f"{key} must be between {lower} and {upper}.")
                 clean[key] = value
-        for key in ("history_enabled", "allow_private_remote"):
+        for key in ("history_enabled", "allow_private_remote", "markdown_follow_obsidian"):
             if key in patch:
                 clean[key] = bool(patch[key])
         if "allowed_origins" in patch:
@@ -279,6 +285,24 @@ class Storage:
                 )
             self._db.commit()
         return self.settings(model_default=model_default)
+
+    def save_markdown_theme(self, root: Path, snapshot: dict[str, Any]) -> None:
+        encoded = json.dumps(snapshot, sort_keys=True)
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO markdown_themes(vault_root, snapshot_json, updated_at) VALUES(?, ?, ?) "
+                "ON CONFLICT(vault_root) DO UPDATE SET snapshot_json=excluded.snapshot_json, "
+                "updated_at=excluded.updated_at WHERE snapshot_json != excluded.snapshot_json",
+                (str(root.resolve()), encoded, time.time()),
+            )
+            self._db.commit()
+
+    def markdown_theme(self, root: Path) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT snapshot_json FROM markdown_themes WHERE vault_root=?", (str(root.resolve()),)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
 
     def sync_builtin_roots(self, roots: tuple[Path, ...]) -> None:
         now = time.time()

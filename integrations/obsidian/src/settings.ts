@@ -75,6 +75,23 @@ export class AskWidgetSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Markdown appearance")
+      .setDesc("Automatically shares this vault’s reading styles with Ask Widget. The app uses the styles from its configured vault and keeps them when Obsidian is closed.")
+      .addButton((button) =>
+        button.setButtonText("Sync now").onClick(async () => {
+          button.setDisabled(true);
+          try {
+            await this.plugin.syncMarkdownTheme();
+            new Notice("Markdown appearance synced. Open notes update automatically.");
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : String(error));
+          } finally {
+            button.setDisabled(false);
+          }
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Connection")
       .setDesc("Check that the service is running and reports a compatible version.")
       .addButton((button) =>

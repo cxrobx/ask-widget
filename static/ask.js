@@ -1116,6 +1116,32 @@
     }).catch(function () { updatePill(); });
   }
 
+  // Markdown appearance changes in place: preserve selection, scroll, and answers.
+  function initMarkdownTheme() {
+    if (document.body.getAttribute('data-askw-document-kind') !== 'markdown' || !metaSrc()) return;
+    var style = document.getElementById('askw-markdown-theme');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'askw-markdown-theme';
+      document.head.appendChild(style);
+    }
+    var pending = false;
+    function refresh() {
+      if (pending || document.hidden) return;
+      pending = true;
+      fetch(SERVER + '/api/markdown-theme', { cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error('Theme unavailable');
+        return r.json();
+      }).then(function (theme) {
+        if (typeof theme.css === 'string' && style.textContent !== theme.css) style.textContent = theme.css;
+      }).catch(function () { /* Keep the last good appearance while offline. */ })
+        .finally(function () { pending = false; });
+    }
+    refresh();
+    window.setInterval(refresh, 2000);
+    document.addEventListener('visibilitychange', refresh);
+  }
+
   // ============================================================ live reload
   // Only /view pages seed <meta name="askw-src">; on those, poll the file's stat
   // signature and reload when it settles on a new value, so edits from another
@@ -1292,6 +1318,7 @@
     wire();
     initFolder().then(initHistoryReplay);
     initLiveReload();
+    initMarkdownTheme();
     initPosition();
     initAutoSelection();
   }

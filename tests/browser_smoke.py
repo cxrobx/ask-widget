@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import uvicorn
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from ask_widget.app import create_app
 from ask_widget.config import AppConfig
@@ -118,6 +118,52 @@ class BrowserSmokeTests(unittest.TestCase):
         self.thread.join(timeout=10)
         self.catalog_patch.stop()
         self.temp.cleanup()
+
+    def test_markdown_theme_updates_in_place_and_can_be_disabled(self) -> None:
+        storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(self.root)}, model_default="sonnet")
+        theme = {"mode": "dark", "styles": {
+            "content": {"color": "rgb(196, 197, 181)", "background-color": "rgb(26, 26, 26)",
+                        "font-family": "Georgia, serif", "font-size": "19px", "max-width": "700px"},
+            "h1": {"color": "rgb(88, 209, 235)", "font-size": "38px"},
+            "th": {"color": "rgb(196, 197, 181)", "background-color": "rgb(21, 21, 21)"},
+        }}
+        storage.save_markdown_theme(self.root, theme)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 800}, color_scheme="light")
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.goto(self.base_url + "/view?src=" + urllib.parse.quote(str(self.document)), wait_until="networkidle")
+            self.assertEqual(page.locator("main").evaluate("e => getComputedStyle(e).color"), "rgb(196, 197, 181)")
+            self.assertEqual(page.locator("main").evaluate("e => getComputedStyle(e).fontSize"), "19px")
+            self.assertEqual(page.locator("h1").evaluate("e => getComputedStyle(e).color"), "rgb(88, 209, 235)")
+            self.assertEqual(page.locator("body").evaluate("e => getComputedStyle(e).backgroundColor"), "rgb(26, 26, 26)")
+            widget_font = page.locator(".askw-pill").evaluate("e => getComputedStyle(e).fontFamily")
+            self.assertNotIn("Georgia", widget_font)
+            page.evaluate("""() => {
+                window.themeTestSentinel = 42;
+                const range = document.createRange(); range.selectNodeContents(document.querySelector('main p'));
+                getSelection().removeAllRanges(); getSelection().addRange(range);
+            }""")
+            selection = page.evaluate("getSelection().toString()")
+            theme["styles"]["content"]["color"] = "rgb(20, 30, 40)"
+            theme["styles"]["content"]["background-color"] = "rgb(245, 240, 230)"
+            theme["mode"] = "light"
+            session = page.request.get(self.base_url + "/api/session").json()
+            response = page.request.post(self.base_url + "/api/markdown-theme", data={
+                "token": session["token"], "vault_root": str(self.root), "snapshot": theme,
+            })
+            self.assertEqual(response.status, 200)
+            expect(page.locator("main")).to_have_css("color", "rgb(20, 30, 40)", timeout=8000)
+            self.assertEqual(page.evaluate("window.themeTestSentinel"), 42)
+            self.assertEqual(page.evaluate("getSelection().toString()"), selection)
+            self.assertEqual(page.locator(".askw-pill").evaluate("e => getComputedStyle(e).fontFamily"), widget_font)
+            storage.update_settings({"markdown_follow_obsidian": False}, model_default="sonnet")
+            expect(page.locator("main")).to_have_css("font-size", "17px", timeout=8000)
+            self.assertEqual(page.locator("#askw-markdown-theme").text_content(), "")
+            self.assertEqual(errors, [])
+            browser.close()
 
     def test_launcher_reader_and_selection_widget(self) -> None:
         console_errors: list[str] = []

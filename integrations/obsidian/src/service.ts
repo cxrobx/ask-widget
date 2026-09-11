@@ -13,6 +13,7 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
 import { SseSplitter, type SseFrame } from "./sse";
+import type { MarkdownThemeSnapshot } from "./markdown-theme";
 
 export type ServiceErrorKind = "offline" | "incompatible" | "forbidden" | "timeout" | "aborted" | "error";
 
@@ -250,6 +251,19 @@ export class AskService {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: session.token, path }),
+    });
+  }
+
+  /** Passive sync must never launch/focus the app. A fresh token also handles restarts. */
+  async syncMarkdownTheme(vaultRoot: string, snapshot: MarkdownThemeSnapshot): Promise<void> {
+    const signal = AbortSignal.timeout(5000);
+    const session = await this.json<Session>("/api/session", { signal });
+    if (!session.token) throw new ServiceError("incompatible", "Update Ask Widget to sync Markdown appearance.");
+    await this.json("/api/markdown-theme", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: session.token, vault_root: vaultRoot, snapshot }),
+      signal,
     });
   }
 
