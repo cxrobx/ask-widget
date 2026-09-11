@@ -260,8 +260,9 @@ The same workflow searches Onyx from Alfred's bar and opens the pick in Onyx:
 Every word typed must match. Both search Notes and Artifacts together, from the
 folders set under **Settings ▸ Vaults**, and list pages the way the sidebar
 does: a guide folder is one page, and a page linked into Artifacts from inside
-the Notes vault shows once. The search is `integrations/alfred/onyx_search.py`,
-run by the system Python.
+the Notes vault shows once, under Notes, which is where Onyx files it when it
+opens. The search is `integrations/alfred/onyx_search.py`, run by the system
+Python.
 
 ### Opening a document directly
 

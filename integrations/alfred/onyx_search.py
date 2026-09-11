@@ -218,9 +218,14 @@ def configured_roots(environ=os.environ) -> dict:
 
 
 def collect(roots: dict) -> list:
-    """Every page in both vaults; a file reachable twice is listed once, Artifacts first."""
+    """Every page in both vaults; a file reachable twice is listed once.
+
+    Notes win, as they do when Onyx is handed a file (app.py ``_tag_vaults``): a
+    page linked into Artifacts from inside the Notes vault opens as a note, so
+    it is listed as one.
+    """
     pages, seen = [], set()
-    for vault, walk in (("html", walk_artifacts), ("notes", walk_notes)):
+    for vault, walk in (("notes", walk_notes), ("html", walk_artifacts)):
         root = roots.get(vault)
         if root is None:
             continue

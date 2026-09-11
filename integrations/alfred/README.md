@@ -27,7 +27,8 @@ does not have to be running.
 (**Settings ▸ Vaults**, falling back to `~/Documents/CX` and
 `~/Documents/Artifacts`) and lists pages the way Onyx's sidebar does: a guide
 folder is one page, and a page linked into Artifacts from inside the Notes
-vault shows once. It is a standalone copy of `vault.py`'s listing rules,
+vault shows once, under Notes, which is where Onyx files it when it opens. It
+is a standalone copy of `vault.py`'s listing rules,
 because Alfred runs it with the system Python (3.9), which cannot import the
 app. `tests/test_alfred_search.py` checks the copy against `vault.py` and runs
 it under `/usr/bin/python3`.

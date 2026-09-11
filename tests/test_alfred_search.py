@@ -111,9 +111,11 @@ class AlfredSearchTests(unittest.TestCase):
         self.assertIn("Linked/Outside Note.md", got)
         self.assertNotIn("Inbox/gone.md", got)
 
-    def test_a_page_in_both_vaults_is_listed_once_as_an_artifact(self) -> None:
+    def test_a_page_in_both_vaults_is_listed_once_where_onyx_files_it(self) -> None:
+        # Handed a file, Onyx looks for it in Notes before Artifacts (_tag_vaults), so the note wins.
         pages = [p for p in search.collect(self.roots) if p.path.endswith("playbook.html")]
-        self.assertEqual([(p.vault, p.label) for p in pages], [("html", "Late-Payment Playbook")])
+        self.assertEqual([(p.vault, p.rel) for p in pages], [("notes", "Resources/Playbook/playbook.html")])
+        self.assertIsNotNone(VaultIndex.build(Path(self.notes)).by_real(pages[0].path))
 
     # MARK: - onx
 
@@ -125,9 +127,12 @@ class AlfredSearchTests(unittest.TestCase):
         )
         self.assertEqual(self.labels(search.search_titles(pages, "claude domain")), ["Domain 1"])
         self.assertEqual(search.search_titles(pages, "zebra domain"), [])
-        [first] = search.search_titles(pages, "late payment")
-        self.assertTrue(first["subtitle"].startswith("Artifacts · Playbook · "), first["subtitle"])
-        self.assertEqual(first["arg"], os.path.join(self.artifacts, "Playbook", "playbook.html"))
+        [artifact] = search.search_titles(pages, "topic overview")
+        self.assertTrue(artifact["subtitle"].startswith("Artifacts · Guides · "), artifact["subtitle"])
+        self.assertEqual(artifact["arg"], os.path.join(self.artifacts, "Guides", "overview.html"))
+        [note] = search.search_titles(pages, "playbook")
+        self.assertTrue(note["subtitle"].startswith("Notes · Resources/Playbook · "), note["subtitle"])
+        self.assertEqual(note["arg"], os.path.join(self.notes, "Resources", "Playbook", "playbook.html"))
 
     def test_an_empty_title_query_lists_recent_pages_newest_first(self) -> None:
         newest = os.path.join(self.notes, "Inbox", "Quick Idea.md")
@@ -194,7 +199,7 @@ class AlfredSearchTests(unittest.TestCase):
             return json.loads(done.stdout)["items"]
 
         self.assertEqual(self.labels(run("titles", "overview")), ["Topic Overview"])
-        self.assertEqual(self.labels(run("content", "reminder day")), ["Late-Payment Playbook"])
+        self.assertEqual(self.labels(run("content", "reminder day")), ["playbook"])
         self.assertEqual(len(run("titles", "…")), len(search.search_titles(search.collect(self.roots), "")))
         [nothing] = run("content", "no such words anywhere")
         self.assertFalse(nothing["valid"])
