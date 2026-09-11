@@ -144,6 +144,17 @@ class VaultIndexTests(unittest.TestCase):
         self.assertEqual(len(limited), 1)
         self.assertTrue(truncated)
 
+    def test_a_real_file_maps_back_to_the_row_the_tree_lists_it_under(self) -> None:
+        # The reading history keys a document by its realpath; the sidebar lists it by its vault path.
+        linked = self.index.by_real(self.outside / "L.md")
+        self.assertIsNotNone(linked)
+        self.assertEqual(linked.rel, "linked/L.md")
+        plain = self.index.by_real((self.vault / "notes" / "A.md").resolve())
+        self.assertEqual(plain.rel, "notes/A.md")
+        self.assertIs(self.index.by_real(self.vault / "notes" / "A.md"), plain)  # either spelling finds it
+        self.assertIsNone(self.index.by_real(self.vault / "docs" / "img.png"))  # an attachment is not a row
+        self.assertIsNone(self.index.by_real(self.base / "elsewhere.md"))
+
     def test_cache_honours_ttl_and_invalidate(self) -> None:
         cache = VaultCache(ttl=60)
         first = cache.get(self.vault)
@@ -359,6 +370,13 @@ class HtmlVaultIndexTests(unittest.TestCase):
             vault_mod.create_folder(self.vault, "", "Scratch")
         with self.assertRaisesRegex(ValueError, "linked folder"):
             vault_mod.create_folder(self.vault, "Architect", "new")
+
+    def test_a_linked_pages_real_file_maps_back_to_its_row(self) -> None:
+        guide = self.topic / "guides" / "who-holds-the-plan" / "index.html"
+        self.assertEqual(self.index.by_real(guide).rel, "Architect/guides/who-holds-the-plan/index.html")
+        self.assertEqual(self.index.by_real(self.vault / "Scratch" / "zeta.html").rel, "Scratch/zeta.html")
+        self.assertIsNone(self.index.by_real(self.base / "nowhere" / "gone.html"))  # a dangling link is no row
+        self.assertIsNone(self.index.by_real(self.topic / "notes.md"))  # not a page
 
     def test_cache_keeps_one_index_per_kind(self) -> None:
         cache = VaultCache(ttl=60)

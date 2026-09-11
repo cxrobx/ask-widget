@@ -406,6 +406,7 @@ class VaultIndex:
     _by_rel: dict[str, VaultFile] = field(default_factory=dict, repr=False)
     _by_stem: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)
     _by_name: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)
+    _by_real: dict[str, VaultFile] | None = field(default=None, repr=False)
     _tree: dict[str, Any] = field(default_factory=dict, repr=False)
 
     # MARK: - Building
@@ -676,6 +677,23 @@ class VaultIndex:
 
     def tree_json(self) -> dict[str, Any]:
         return self._tree
+
+    def by_real(self, path: Path | str) -> VaultFile | None:
+        """The row a real file shows as: the inverse of ``entry_paths``' ``real``.
+
+        The reading history keys a document by its realpath (``/view`` resolves
+        it), so a page in Artifacts comes back as the file its link points at,
+        and a note under a symlinked folder as the file outside the vault. This
+        finds the row the tree lists it under. Built on first use, since most
+        index builds are never asked and each row costs a realpath.
+        """
+        if self._by_real is None:
+            by_real: dict[str, VaultFile] = {}
+            for item in self.notes:
+                if not item.missing:
+                    by_real.setdefault(os.path.realpath(item.path), item)
+            self._by_real = by_real
+        return self._by_real.get(os.path.realpath(path))
 
     def _pick(self, candidates: list[VaultFile], source: Path | None) -> VaultFile | None:
         if not candidates:
