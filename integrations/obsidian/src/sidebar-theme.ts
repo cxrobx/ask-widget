@@ -44,7 +44,8 @@ function row(parent: HTMLElement, kind: "folder" | "file", path: string, extra =
   const item = parent.createDiv({ cls: `tree-item nav-${kind} ${extra}`.trim() });
   const self = item.createDiv({ cls: `tree-item-self is-clickable nav-${kind}-title${kind === "folder" ? " mod-collapsible" : ""}` });
   self.dataset.path = path;
-  if (kind === "folder") self.createDiv({ cls: "tree-item-icon collapse-icon" }).createSvg("svg", { cls: "svg-icon right-triangle" });
+  // createSvg adds its cls as class tokens: a space-separated string throws, so it takes a list.
+  if (kind === "folder") self.createDiv({ cls: "tree-item-icon collapse-icon" }).createSvg("svg", { cls: ["svg-icon", "right-triangle"] });
   self.createDiv({ cls: `tree-item-inner nav-${kind}-title-content`, text: path.split("/").pop() ?? path });
   return item;
 }

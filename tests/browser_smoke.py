@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import socket
+import subprocess
 import tempfile
 import threading
 import time
 import unittest
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +24,8 @@ from ask_widget.runner import _sse
 from ask_widget.storage import Storage
 
 LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "AskWidget.swift"
+PLUGIN_SRC = Path(__file__).resolve().parent.parent / "integrations" / "obsidian" / "src"
+PLUGIN_ESBUILD = PLUGIN_SRC.parent / "node_modules" / ".bin" / "esbuild"
 
 
 def stock_menu_guard() -> str:
@@ -601,6 +606,76 @@ class BrowserSmokeTests(unittest.TestCase):
             browser.close()
 
         self.assertEqual(page_errors, [])
+
+    @unittest.skipUnless(PLUGIN_ESBUILD.exists(), "needs the Obsidian plugin's dev dependencies (npm ci)")
+    def test_plugin_sidebar_capture_runs_and_the_service_accepts_it(self) -> None:
+        # The capture only ever ran inside Obsidian, so a DOM-helper misuse (createSvg with a
+        # spaced class string) shipped. Run the real module against Obsidian's helpers, as
+        # strict as Obsidian's, on an explorer with a positional rainbow snippet.
+        shim = self.root / "obsidian-shim.js"
+        shim.write_text("export class TFolder {}\n", encoding="utf-8")
+        bundle = subprocess.run(
+            [str(PLUGIN_ESBUILD), str(PLUGIN_SRC / "sidebar-theme.ts"), "--bundle", "--format=iife",
+             "--global-name=OnyxSidebar", f"--alias:obsidian={shim}"],
+            capture_output=True, text=True, check=False, cwd=PLUGIN_SRC.parent,
+        )
+        self.assertEqual(bundle.returncode, 0, bundle.stderr)
+        helpers = """
+            // Obsidian's DOM helpers: createEl/createDiv take a spaced cls string; createSvg adds tokens.
+            const apply = (el, o, strict) => { if (typeof o === 'string') o = {cls: o}; if (!o) return;
+              if (o.cls) { if (Array.isArray(o.cls)) el.classList.add(...o.cls); else if (strict) el.classList.add(o.cls); else el.className = o.cls; }
+              if (o.text) el.textContent = o.text; if (o.type) el.setAttribute('type', o.type); };
+            Element.prototype.createEl = function (tag, o) { const el = document.createElement(tag); apply(el, o, false); this.appendChild(el); return el; };
+            Element.prototype.createDiv = function (o) { return this.createEl('div', o); };
+            Element.prototype.createSvg = function (tag, o) { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); apply(el, o, true); this.appendChild(el); return el; };
+            Element.prototype.addClass = function (...c) { this.classList.add(...c); };
+        """
+        tree = lambda names: "".join(  # noqa: E731 — the live explorer, top-level folders only
+            f'<div class="tree-item nav-folder"><div class="tree-item-self nav-folder-title" data-path="{n}">{n}</div></div>' for n in names
+        )
+        explorer = f"""<!doctype html><style>
+            body {{ --nav-item-background-hover: rgba(0, 0, 0, 0.05); font: 13px Menlo, monospace; }}
+            .mod-left-split {{ background: rgb(253, 246, 227); color: rgb(7, 54, 66); }}
+            .nav-folder-title {{ color: rgb(88, 110, 117); padding: 4px 0; }} .nav-file-title {{ color: rgb(7, 54, 66); }}
+            .nav-file-title.is-active {{ background: rgb(238, 232, 213); }} .nav-folder-children {{ border-left: 1px solid rgb(147, 161, 161); }}
+            .search-input-container input {{ border-radius: 999px; }}
+            .nav-files-container > div > .nav-folder > .nav-folder-children > .nav-folder:nth-child(1) > .nav-folder-title {{ color: rgb(220, 50, 47); }}
+            .nav-files-container > div > .nav-folder > .nav-folder-children > .nav-folder:nth-child(2) > .nav-folder-title {{ color: rgb(203, 75, 22); }}
+            .nav-files-container > div > .nav-folder > .nav-folder-children > .nav-folder:nth-child(2) > .nav-folder-children {{ border-left-color: rgb(203, 75, 22); }}
+            </style><body class="theme-light"><div class="workspace-split mod-left-split"><div class="nav-files-container"><div>
+            <div class="tree-item nav-folder mod-root"><div class="tree-item-children nav-folder-children">{tree(["Archive", "Inbox", "Projects"])}</div></div>
+            </div></div></div></body>"""
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_content(explorer)
+            page.add_script_tag(content=helpers)
+            page.add_script_tag(content=bundle.stdout)
+            snapshot = page.evaluate("() => OnyxSidebar.captureSidebarTheme({ vault: { getRoot: () => ({ children: [] }) } })")
+            self.assertEqual(page.locator(".onyx-sample-folder").count(), 0)  # the hidden copy is gone again
+            browser.close()
+
+        self.assertEqual(snapshot["mode"], "light")
+        self.assertEqual(snapshot["styles"]["pane"]["background-color"], "rgb(253, 246, 227)")
+        self.assertEqual(snapshot["styles"]["active"]["background-color"], "rgb(238, 232, 213)")
+        self.assertEqual(snapshot["styles"]["hover"]["background-color"], "rgba(0, 0, 0, 0.05)")
+        self.assertEqual(
+            snapshot["folders"],
+            [{"name": "Archive", "color": "rgb(220, 50, 47)", "guide": "rgb(147, 161, 161)"},
+             {"name": "Inbox", "color": "rgb(203, 75, 22)", "guide": "rgb(203, 75, 22)"},
+             {"name": "Projects", "color": "rgb(88, 110, 117)", "guide": "rgb(147, 161, 161)"}],
+        )
+        vault = self.root / "CX"
+        vault.mkdir()
+        with urllib.request.urlopen(self.base_url + "/api/session") as response:  # as the plugin gets its token
+            token = json.load(response)["token"]
+        request = urllib.request.Request(
+            self.base_url + "/api/sidebar-theme", method="POST", headers={"Content-Type": "application/json"},
+            data=json.dumps({"token": token, "vault_root": str(vault), "snapshot": snapshot}).encode(),
+        )
+        with urllib.request.urlopen(request) as response:  # raises on 400: something off the service's allowlist
+            self.assertEqual(response.status, 200)
 
     def test_glass_icons_take_the_page_tone_not_the_app_theme(self) -> None:
         # A dark app over a cream page (the usual Artifacts case) must get light
