@@ -22,10 +22,13 @@ selection → Ask Widget → local FastAPI service → Claude CLI (claude.ai sub
 - A native **Ask Widget.app** with its own frozen Python service. The installed
   app does not depend on this checkout, a project virtual environment, or a
   system Python.
-- The same macOS glass material model as cxtasks: a native
-  `NSVisualEffectView`, transparent WebView, alpha-aware sidebar/content/card
-  layers, persistent System/Light/Dark themes, and a glass-level control. The
-  document reader and floating answer UI use the same translucent materials.
+- The same macOS glass as cxtasks and cxmail: a plain Gaussian blur of the
+  desktop behind the window (`CGSSetWindowBackgroundBlurRadius`, resolved at
+  runtime, with `NSVisualEffectView` as the fallback), alpha-aware
+  sidebar/content/card tints over it, persistent System/Light/Dark themes, and
+  one transparency slider that drives both the tints and the blur radius
+  (10–48, 24 at the default). The window opens opaque and turns to glass after
+  the first paint; macOS **Reduce Transparency** is honoured live.
 - A reading library with recent documents, recent answers, search, per-document
   reading position, and Markdown note export.
 - HTML, Markdown, plain-text, and text-based PDF readers. Trusted local HTML keeps
@@ -159,6 +162,35 @@ Back button walks the history. Press `/` to focus the filter box, Escape to clea
 it. Symlinked vault folders are followed and keep their vault-visible paths, so
 links between notes inside them stay in the vault.
 
+### HTML Vault
+
+**HTML Vault** in the sidebar (or **File ▸ HTML Vault**, ⌘⇧H, or the Notes | HTML
+switch at the top of either vault) browses a folder of **symlinks to HTML pages
+anywhere on your Mac** — the HTML counterpart of an Obsidian vault. It defaults to
+`~/Documents/HTML Vault`; change it under **Settings ▸ Vaults**.
+
+- **Top-level folders are projects**, listed even while empty. Link a whole
+  folder (say a topic in `~/learnings`) and every page added to it later shows up
+  on its own.
+- **Pages are listed by their `<title>`**, with how long ago each changed. Below
+  the project level a folder containing `index.html` is one page, so a guide
+  folder reads as a single entry; its `index.inline.html` twin, audio, and notes
+  stay out of the list.
+- **A link whose target is gone stays listed, struck through, as *missing*.**
+- **+** links more in: HTML files or a folder through the native picker, or a
+  pasted path or `file://` URL, into a project you choose; it can also create
+  folders. A linked `index.html` is named after its folder.
+- Questions use **the real folder behind the link** as their context — a page
+  under a linked topic folder can cite that topic's notes. Linking something adds
+  that folder to the allowed context roots (never your home folder or `/`);
+  remove it in Settings to take the access back.
+
+Guides that narrate with `<audio src="audio/….m4a">` play in the reader: media
+tags are rewritten to document capabilities, and `/_fs` answers byte ranges,
+which WebKit requires before it will play media. A `file://…/index.html#section`
+link keeps its fragment, and the fragment wins over the remembered scroll
+position.
+
 ### Supported documents
 
 | Source | Behavior |
@@ -228,6 +260,8 @@ TTL and maximum-entry settings.
 Saving a **Vault folder** in Settings also registers it as an allowed context
 root, which is what lets a question asked inside a note cite that note's
 neighbours. Clearing the field hides Vault mode and leaves the root in place.
+The **HTML vault folder** is not registered itself — it holds only links — but
+each folder linked into it is (see HTML Vault above).
 
 Additional trusted roots can be managed in Settings. The launcher also reads
 `~/.config/ask-widget/allow-roots` at startup for compatibility; use one path per
@@ -297,6 +331,10 @@ deliberately narrow:
    service; plugins and base-URL changes remain blocked.
 10. File citations are displayed only after canonicalizing them and proving they
     exist inside the active context folder.
+11. The HTML Vault writes only symlinks and folders, and only inside the vault's
+    own folders: never through a linked folder (that would write into the tree it
+    points at), never over an existing entry, never a link to something that
+    contains the vault. Link targets are never modified.
 
 Both executables are launched directly, not through an interactive shell.
 Before launch, Anthropic/OpenAI API-key and alternate-provider environment
@@ -364,12 +402,12 @@ ask-widget/
 │   ├── codex_runner.py       Codex headless JSONL lifecycle and SSE translation
 │   ├── citations.py          evidence validation and source opening
 │   ├── diagnostics.py        provider/runtime/database diagnostics
-│   ├── launcher_ui.py        library, settings, and diagnostics UI
+│   ├── launcher_ui.py        library, settings, diagnostics, and shared glass
 │   ├── providers.py          subscription auth and live model discovery
 │   ├── runner.py             subscription-only provider dispatch
 │   ├── storage.py            SQLite schema and queries
-│   ├── vault.py              vault index: tree, wikilink resolution, containment
-│   ├── vault_ui.py           vault shell: note tree beside the reader iframe
+│   ├── vault.py              vault index (notes + HTML): tree, wikilinks, titles, links
+│   ├── vault_ui.py           vault shell: Notes | HTML tree beside the reader iframe
 │   └── viewer.py             secure HTML/Markdown/text/PDF readers
 ├── static/ask.js             selection UI and streamed answer panel
 ├── tests/                    API, security, storage, viewer, and runner tests

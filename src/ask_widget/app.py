@@ -34,7 +34,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .runner import _sse, stream_answer
@@ -166,10 +166,14 @@ def _resolve_folder(app: FastAPI, raw: str | None) -> Path | None:
     return None
 
 
-def _vault_root(app: FastAPI) -> Path | None:
-    """The configured vault folder (lexical, normalized) or None when unset/missing."""
+def _vault_root(app: FastAPI, kind: str = "notes") -> Path | None:
+    """A configured vault folder (lexical, normalized) or None when unset/missing.
+
+    ``kind`` is "notes" (the Obsidian vault) or "html" (the HTML vault).
+    """
     config: AppConfig = app.state.config
-    raw = str(app.state.storage.settings(model_default=config.model).get("vault_root") or "").strip()
+    key = "html_vault_root" if kind == "html" else "vault_root"
+    raw = str(app.state.storage.settings(model_default=config.model).get(key) or "").strip()
     if not raw:
         return None
     root = vault.normalize(Path(raw).expanduser())
@@ -177,6 +181,34 @@ def _vault_root(app: FastAPI) -> Path | None:
         return root if root.is_absolute() and root.is_dir() else None
     except OSError:
         return None
+
+
+def _vault_missing_error(app: FastAPI, kind: str) -> str:
+    if kind != "html":
+        return "No vault folder is configured."
+    config: AppConfig = app.state.config
+    raw = str(app.state.storage.settings(model_default=config.model).get("html_vault_root") or "").strip()
+    if not raw:
+        return "No HTML vault folder is configured."
+    return f"The HTML vault folder does not exist yet: {raw}"
+
+
+def _register_context_root(app: FastAPI, folder: Path) -> Path | None:
+    """Allow ``folder`` as a context root — unless it is the whole disk or home.
+
+    Linking a page into the HTML vault is the user saying "I want to read this
+    with Ask", and its folder is where the evidence lives, so it joins the
+    allowed roots (visible and removable in Settings). Home and ``/`` would
+    quietly open everything, so a link from there keeps its default context.
+    """
+    try:
+        resolved = folder.resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not resolved.is_dir() or resolved == Path(resolved.anchor) or resolved == Path.home().resolve():
+        return None
+    app.state.storage.add_root(resolved)
+    return resolved
 
 
 def _register_vault_root(app: FastAPI) -> None:
@@ -401,6 +433,14 @@ def create_app(config: AppConfig) -> FastAPI:
                 # realpath used for history, positions, and live reload.
                 lexical = vault.normalize(candidate)
                 path = candidate.resolve()
+                html_root = _vault_root(app, "html")
+                if not folder and html_root is not None and vault.is_inside(lexical, html_root):
+                    # An HTML-vault page reads with the real folder behind its
+                    # link as context; the vault itself holds only symlinks.
+                    context = vault.html_context_folder(lexical, html_root)
+                    context_path = _resolve_folder(app, str(context)) if context else None
+                    if context_path is not None:
+                        seed = str(context_path)
                 root = _vault_root(app)
                 index = None
                 if root is not None and vault.is_inside(lexical, root):
@@ -467,21 +507,32 @@ def create_app(config: AppConfig) -> FastAPI:
         src: str | None = None,
         history: str | None = None,
         history_action: str | None = None,
+        vault_kind: str = Query("notes", alias="vault"),
     ):
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return HTMLResponse(_error_page("Refused: host not allowed."), status_code=403)
+        kind = "html" if vault_kind == "html" else "notes"
         settings = app.state.storage.settings(model_default=config.model)
-        root = _vault_root(app)
+        root = _vault_root(app, kind)
         reader_query = None
         if src and root is not None:
-            params = {"src": src, "folder": str(root)}
+            # The Obsidian vault is its own context; an HTML-vault page gets the
+            # real folder behind its link, which /view works out from the path.
+            params = {"src": src} if kind == "html" else {"src": src, "folder": str(root)}
             if history:
                 params["history"] = history
             if history_action:
                 params["history_action"] = history_action
             reader_query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote, safe="/")
         return HTMLResponse(
-            vault_page(config, settings, root=root, src=src if root is not None else None, reader_query=reader_query)
+            vault_page(
+                config,
+                settings,
+                root=root,
+                src=src if root is not None else None,
+                reader_query=reader_query,
+                kind=kind,
+            )
         )
 
     @app.get("/_fs/{capability}/{path:path}")
@@ -496,8 +547,27 @@ def create_app(config: AppConfig) -> FastAPI:
         if result is None:
             return Response("Not found", status_code=404)
         abspath, ctype = result
-        data = await asyncio.to_thread(abspath.read_bytes)
-        return Response(content=data, media_type=ctype, headers={"Cache-Control": "no-cache"})
+        headers = {"Cache-Control": "no-cache", "Accept-Ranges": "bytes"}
+        try:
+            size = (await asyncio.to_thread(abspath.stat)).st_size
+            span = viewer.byte_range(request.headers.get("range"), size)
+        except viewer.RangeNotSatisfiable:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+        except OSError:
+            return Response("Not found", status_code=404)
+        if span is None:
+            data = await asyncio.to_thread(abspath.read_bytes)
+            return Response(content=data, media_type=ctype, headers=headers)
+        start, end = span
+
+        def read_span() -> bytes:
+            with open(abspath, "rb") as handle:
+                handle.seek(start)
+                return handle.read(end - start + 1)
+
+        data = await asyncio.to_thread(read_span)
+        headers["Content-Range"] = f"bytes {start}-{start + len(data) - 1}/{size}"
+        return Response(content=data, status_code=206, media_type=ctype, headers=headers)
 
     @app.get("/_mtime")
     async def doc_mtime(request: Request, src: str, cap: str):
@@ -621,22 +691,25 @@ def create_app(config: AppConfig) -> FastAPI:
         )
 
     @app.get("/api/vault/tree")
-    async def vault_tree_api(request: Request):
+    async def vault_tree_api(request: Request, vault_kind: str = Query("notes", alias="vault")):
         if denied := api_forbidden(request):
             return denied
         headers = cors(request.headers.get("origin"))
-        root = _vault_root(app)
+        kind = "html" if vault_kind == "html" else "notes"
+        root = _vault_root(app, kind)
         if root is None:
             return JSONResponse(
-                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=headers
+                {"ok": False, "error": _vault_missing_error(app, kind)}, status_code=400, headers=headers
             )
-        index = await asyncio.to_thread(app.state.vault.get, root)
+        index = await asyncio.to_thread(app.state.vault.get, root, kind)
         return JSONResponse(
             {
                 "ok": True,
                 "root": str(root),
+                "vault": kind,
                 "built_at": index.built_at,
-                "files": len(index.notes),
+                "files": len([item for item in index.notes if not item.missing]),
+                "missing": len([item for item in index.notes if item.missing]),
                 "truncated": index.truncated,
                 "tree": index.tree_json(),
             },
@@ -644,27 +717,111 @@ def create_app(config: AppConfig) -> FastAPI:
         )
 
     @app.get("/api/vault/search")
-    async def vault_search_api(request: Request, q: str = "", limit: int = 50):
+    async def vault_search_api(
+        request: Request, q: str = "", limit: int = 50, vault_kind: str = Query("notes", alias="vault")
+    ):
         if denied := api_forbidden(request):
             return denied
         headers = cors(request.headers.get("origin"))
-        root = _vault_root(app)
+        kind = "html" if vault_kind == "html" else "notes"
+        root = _vault_root(app, kind)
         if root is None:
             return JSONResponse(
-                {"ok": False, "error": "No vault folder is configured."}, status_code=400, headers=headers
+                {"ok": False, "error": _vault_missing_error(app, kind)}, status_code=400, headers=headers
             )
         q = q[:200]
         limit = max(1, min(limit, 200))
-        index = await asyncio.to_thread(app.state.vault.get, root)
+        index = await asyncio.to_thread(app.state.vault.get, root, kind)
         items, truncated = index.search(q, limit=limit)
         return JSONResponse(
             {
                 "ok": True,
                 "q": q,
-                "items": [{"name": item.name, "path": str(item.path), "folder": item.folder} for item in items],
+                "items": [
+                    {
+                        "name": item.name,
+                        "title": item.label if kind == "html" else "",
+                        "path": str(item.path),
+                        "folder": item.entry_rel.rpartition("/")[0] if kind == "html" else item.folder,
+                    }
+                    for item in items
+                ],
                 "truncated": truncated,
             },
             headers=headers,
+        )
+
+    async def _html_vault_body(request: Request) -> tuple[dict, Path] | JSONResponse:
+        """Shared guard for the two HTML-vault write routes: token, JSON, root."""
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"ok": False, "error": "invalid JSON object"}, status_code=400)
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        root = _vault_root(app, "html")
+        if root is None:
+            return JSONResponse({"ok": False, "error": _vault_missing_error(app, "html")}, status_code=400)
+        return body, root
+
+    @app.post("/api/vault/html/folder")
+    async def html_vault_folder_api(request: Request):
+        guarded = await _html_vault_body(request)
+        if isinstance(guarded, JSONResponse):
+            return guarded
+        body, root = guarded
+        try:
+            folder = vault.create_folder(root, str(body.get("parent") or ""), str(body.get("name") or ""))
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        app.state.vault.invalidate()
+        return JSONResponse(
+            {"ok": True, "path": str(folder), "rel": folder.relative_to(root).as_posix()},
+            headers=cors(request.headers.get("origin")),
+        )
+
+    @app.post("/api/vault/html/link")
+    async def html_vault_link_api(request: Request):
+        guarded = await _html_vault_body(request)
+        if isinstance(guarded, JSONResponse):
+            return guarded
+        body, root = guarded
+        targets = body.get("targets")
+        if not isinstance(targets, list):
+            targets = [body.get("target")]
+        if not targets or len(targets) > 50 or not all(isinstance(t, str) and t for t in targets):
+            return JSONResponse({"ok": False, "error": "Choose one to fifty HTML files or folders."}, status_code=400)
+        name = body.get("name") if len(targets) == 1 and isinstance(body.get("name"), str) else None
+        linked: list[str] = []
+        errors: list[str] = []
+        context_roots: list[str] = []
+        for target in targets:
+            try:
+                link = vault.create_link(root, str(body.get("parent") or ""), target, name or None)
+            except (OSError, ValueError) as exc:
+                errors.append(f"{Path(target).name}: {exc}")
+                continue
+            linked.append(str(link))
+            context = vault.html_context_folder(link, root)
+            added = _register_context_root(app, context) if context else None
+            if added is not None and str(added) not in context_roots:
+                context_roots.append(str(added))
+        app.state.vault.invalidate()
+        status = 200 if linked else 400
+        return JSONResponse(
+            {
+                "ok": bool(linked),
+                "linked": linked,
+                "context_roots": context_roots,
+                "errors": errors,
+                "error": "; ".join(errors) if errors and not linked else None,
+            },
+            status_code=status,
+            headers=cors(request.headers.get("origin")),
         )
 
     @app.get("/api/settings")

@@ -9,8 +9,11 @@ from reportlab.pdfgen import canvas
 
 from ask_widget.citations import extract_citations
 from ask_widget.vault import VaultIndex
+from ask_widget.launcher_ui import BASE_RGB, blur_radius, glass_script, theme_style
 from ask_widget.viewer import (
+    RangeNotSatisfiable,
     ViewerError,
+    byte_range,
     load_local_document,
     parse_flat_frontmatter,
     prepare_html,
@@ -253,3 +256,57 @@ class ViewerAndCitationTests(unittest.TestCase):
             self.assertEqual(len(citations), 1)
             self.assertEqual(citations[0]["label"], "src/app.py:3")
             self.assertIn("important evidence", citations[0]["snippet"])
+
+
+class RangeAndGlassTests(unittest.TestCase):
+    def test_byte_range_follows_rfc_9110_for_single_ranges(self) -> None:
+        self.assertIsNone(byte_range(None, 10))
+        self.assertEqual(byte_range("bytes=0-1", 10), (0, 1))
+        self.assertEqual(byte_range("bytes=5-", 10), (5, 9))
+        self.assertEqual(byte_range("bytes=-3", 10), (7, 9))
+        self.assertEqual(byte_range("bytes=-20", 10), (0, 9))
+        self.assertEqual(byte_range("bytes=8-100", 10), (8, 9))
+        self.assertEqual(byte_range(" Bytes = 2 - 4 ", 10), (2, 4))
+        for ignored in ("items=0-1", "bytes=0-1,3-4", "bytes=abc", "bytes=-", "bytes=3-1", "bytes", "bytes=1"):
+            self.assertIsNone(byte_range(ignored, 10), ignored)
+        for unsatisfiable, size in (("bytes=10-", 10), ("bytes=10-12", 10), ("bytes=-0", 10), ("bytes=0-", 0)):
+            with self.assertRaises(RangeNotSatisfiable, msg=unsatisfiable):
+                byte_range(unsatisfiable, size)
+
+    def test_media_tags_are_rewritten_to_capability_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "audio").mkdir()
+            for name in ("one.m4a", "clip.webm", "en.vtt"):
+                (root / "audio" / name).write_bytes(b"x")
+            html, assets = prepare_html(
+                str(root / "guide.html"),
+                html_text=(
+                    '<body><audio controls preload="none" src="audio/one.m4a"></audio>'
+                    "<video src='audio/clip.webm'><track src=\"audio/en.vtt\"></video></body>"
+                ),
+                server_origin="http://127.0.0.1:8899",
+                folder=str(root),
+                asset_token="cap",
+            )
+            self.assertEqual(
+                assets, {str((root / "audio" / n).resolve()) for n in ("one.m4a", "clip.webm", "en.vtt")}
+            )
+            self.assertNotIn('src="audio/one.m4a"', html)
+            self.assertIn('<audio controls preload="none" src="http://127.0.0.1:8899/_fs/cap/', html)
+
+    def test_blur_radius_is_the_cxtasks_curve(self) -> None:
+        self.assertEqual(blur_radius(0), 10)
+        self.assertEqual(blur_radius(0.38), 24)  # the default slider lands where cxtasks pins it
+        self.assertEqual(blur_radius(1), 48)
+        self.assertEqual(blur_radius(7), 48)
+        self.assertEqual(blur_radius(float("nan")), 10)  # a corrupt value must not reach the bridge as NaN
+        script = glass_script({"glass_transparency": 38})
+        self.assertIn("Math.round(10+t*(48-10))", script)
+        self.assertIn("requestAnimationFrame(()=>requestAnimationFrame(startGlass))", script)
+        self.assertIn("window.askwReduceTransparency=", script)
+        # The opaque colours the page sends must be the --bg-primary tokens it paints.
+        style = theme_style({})
+        for theme, (r, g, b) in BASE_RGB.items():
+            self.assertIn(f"[{r},{g},{b}]", script, theme)
+            self.assertIn(f"--bg-primary:{r} {g} {b}", style, theme)

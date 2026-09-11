@@ -7,7 +7,7 @@ The widget needs three things a foreign page won't give it on its own:
     which would 404 — and render unstyled — if served naively);
   * the **widget `<script>` injected**.
 
-`prepare_html` does all three: it rewrites `<link>/<script>/<img>/<source>` asset
+`prepare_html` does all three: it rewrites `<link>/<script>/<img>/<source>/<audio>/<video>/<track>` asset
 refs to absolute URLs (remote → the original site; local → a `/_fs/...` route that
 serves the file from disk), strips any `<base>`/CSP that would break same-origin
 anchors or block the widget, and injects the widget script before `</body>`.
@@ -35,13 +35,15 @@ from markdown_it.token import Token
 if TYPE_CHECKING:  # vault.py imports from this module; keep the runtime import one-way
     from .vault import VaultIndex
 
-# Match a <link|script|img|source ...> tag's first href/src value. The quote class
-# is symmetric (group 2 = opening quote, back-referenced as the closing quote) so
-# single-quoted attributes are handled too. These docs are generated and
-# well-formed, so a scoped regex beats dragging in an HTML parser that would
-# round-trip-mangle the markup.
+# Match a <link|script|img|source|audio|video|track ...> tag's first href/src
+# value. The quote class is symmetric (group 2 = opening quote, back-referenced as
+# the closing quote) so single-quoted attributes are handled too. These docs are
+# generated and well-formed, so a scoped regex beats dragging in an HTML parser
+# that would round-trip-mangle the markup. Media tags are here because study
+# guides narrate with a bare `<audio src="audio/x.m4a">`, which would otherwise
+# resolve against /view and 404.
 _ASSET_RE = re.compile(
-    r"""(<(?:link|script|img|source)\b[^>]*?\b(?:href|src)=(["']))(.*?)\2""",
+    r"""(<(?:link|script|img|source|audio|video|track)\b[^>]*?\b(?:href|src)=(["']))(.*?)\2""",
     re.IGNORECASE,
 )
 # Used to neutralize a viewed document's own scripts when the caller has not
@@ -81,10 +83,58 @@ ASSET_CONTENT_TYPES = {
     ".ttf": "font/ttf",
     ".otf": "font/otf",
     ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
     ".webm": "video/webm",
     ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".flac": "audio/flac",
     ".wav": "audio/wav",
+    ".vtt": "text/vtt",
 }
+
+
+class RangeNotSatisfiable(ValueError):
+    """A ``Range`` header that asks for bytes the file does not have (HTTP 416)."""
+
+
+def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """Parse one ``Range: bytes=…`` header into an inclusive ``(start, end)``.
+
+    WebKit will not play ``<audio>``/``<video>`` from a server that ignores
+    ranges: it opens with ``bytes=0-1`` and gives up on a plain 200. So /_fs
+    answers single ranges with 206. Returns None when the whole file should be
+    sent — no header, a unit other than bytes, a multi-range list, or a header
+    too malformed to mean anything (RFC 9110 lets a server ignore those).
+    Raises :class:`RangeNotSatisfiable` for a well-formed range past the end.
+    """
+    if not header:
+        return None
+    unit, sep, spec = header.partition("=")
+    if not sep or unit.strip().lower() != "bytes" or "," in spec:
+        return None
+    first, dash, last = spec.strip().partition("-")
+    if not dash:
+        return None
+    first, last = first.strip(), last.strip()
+    if not (first.isdigit() or first == "") or not (last.isdigit() or last == "") or (first == last == ""):
+        return None
+    if first == "":  # suffix: the last N bytes
+        length = int(last)
+        if length == 0 or size == 0:
+            raise RangeNotSatisfiable(header)
+        return max(0, size - length), size - 1
+    start = int(first)
+    if last and int(last) < start:
+        return None  # backwards, so malformed rather than unsatisfiable
+    if start >= size:
+        raise RangeNotSatisfiable(header)
+    end = int(last) if last else size - 1
+    return start, min(end, size - 1)
 
 
 class ViewerError(Exception):

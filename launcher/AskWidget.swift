@@ -27,6 +27,183 @@ private struct ServerLaunch {
     let label: String
 }
 
+/// Each theme's opaque window colour, as sRGB 0–255. Must track `--bg-primary`
+/// in `launcher_ui.py`: this paints the window before any page exists, and the
+/// page sends the same triple whenever glass goes off.
+private let baseRGB: (light: [Double], dark: [Double]) = ([247, 247, 247], [24, 24, 24])
+private let appearanceDefaultsKey = "appearanceTheme"
+
+private func srgb(_ components: [Double]) -> NSColor {
+    NSColor(
+        srgbRed: components[0] / 255, green: components[1] / 255,
+        blue: components[2] / 255, alpha: 1
+    )
+}
+
+private func appearance(forTheme theme: String?) -> NSAppearance? {
+    switch theme {
+    case "dark": return NSAppearance(named: .darkAqua)
+    case "light": return NSAppearance(named: .aqua)
+    default: return nil
+    }
+}
+
+// MARK: - Window glass
+
+/// Blur the desktop behind the window with a radius we choose.
+///
+/// `NSVisualEffectView` is not a blur. It is a material — Apple's radius, tint
+/// and saturation boost welded into one enum case with no dial on any of it —
+/// and in dark mode `.underWindowBackground` reads as flat milky grey that eats
+/// the colour and the shape of whatever is behind the window. The transparency
+/// slider only ever moved the tint painted on top; the smear underneath was
+/// fixed. `CGSSetWindowBackgroundBlurRadius` is a plain Gaussian at a radius we
+/// pass in, with no material, so the wallpaper stays itself and the page's
+/// pane tints (`--pane-alpha` …) are the only thing colouring it. Ported from
+/// cxtasks 767a8fb / cxmail 70087f5.
+///
+/// It is a private WindowServer symbol, so it is resolved with `dlsym` and never
+/// linked: a macOS that stops exporting it gives `nil`, not a dyld abort, and
+/// the window falls back to the material this app shipped before. Mac App Store
+/// distribution was never on the table for a launcher that spawns CLIs.
+///
+/// Switching blur source moved three jobs onto us that the material did for free:
+/// - **The launch gap.** A clear window around an empty WebView is bare
+///   wallpaper and three floating traffic lights. The window boots OPAQUE and the
+///   page arms glass after its first paint (`glass_script` in launcher_ui.py).
+/// - **The window's edges.** Clear to alpha 0.01, not 0, or AppKit chamfers the
+///   corners against the shadow; invalidate the shadow on every opacity flip; drop
+///   the radius to 0 BEFORE going opaque, or one frame paints a grey halo.
+/// - **Reduce Transparency.** A raw CGS blur reads no accessibility setting. It is
+///   read live, observed, and pins the window opaque whatever the slider says;
+///   the page pins its CSS alphas the same way.
+private final class WindowGlass {
+    private typealias ConnectionFn = @convention(c) () -> Int32
+    private typealias SetBlurFn = @convention(c) (Int32, UInt32, Int32) -> Int32
+
+    /// A sanity bound, not the design range (the page's curve sweeps 10–48).
+    private static let radiusBounds = 4...64
+
+    weak var window: NSWindow?
+    var onReduceTransparencyChange: ((Bool) -> Void)?
+    private let setBlur: SetBlurFn?
+    private let connection: ConnectionFn?
+    /// What the page last asked for. Kept apart from what is applied, so a
+    /// Reduce Transparency flip in either direction restores the user's glass.
+    private var desired: (enabled: Bool, radius: Int, base: NSColor)?
+    private var fallback: NSVisualEffectView?
+    private var observer: NSObjectProtocol?
+
+    init() {
+        let everywhere = UnsafeMutableRawPointer(bitPattern: -2)  // RTLD_DEFAULT
+        setBlur = dlsym(everywhere, "CGSSetWindowBackgroundBlurRadius")
+            .map { unsafeBitCast($0, to: SetBlurFn.self) }
+        // Renamed across OS versions; both still ship on some. The function is
+        // resolved once but called every time — the per-thread variant must be.
+        connection = (dlsym(everywhere, "CGSDefaultConnectionForThread")
+            ?? dlsym(everywhere, "CGSMainConnectionID"))
+            .map { unsafeBitCast($0, to: ConnectionFn.self) }
+    }
+
+    var isAvailable: Bool { setBlur != nil && connection != nil }
+
+    /// Read fresh every time: caching it is how the setting ends up needing a relaunch.
+    var reduceTransparency: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    }
+
+    func setState(enabled: Bool, radius: Int, base: NSColor) {
+        desired = (enabled, radius.clamped(to: Self.radiusBounds), base)
+        applyDesired()
+    }
+
+    /// The slider's continuous path: no window setup, just the radius.
+    func setRadius(_ radius: Int) {
+        guard var current = desired else { return }
+        current.radius = radius.clamped(to: Self.radiusBounds)
+        desired = current
+        if current.enabled && !reduceTransparency && isAvailable {
+            applyRadius(current.radius)
+        }
+    }
+
+    /// The opaque state: at launch, and whenever glass is off.
+    func paintOpaque(_ base: NSColor) {
+        guard let window else { return }
+        applyRadius(0)
+        window.isOpaque = true
+        window.backgroundColor = base
+        window.invalidateShadow()
+    }
+
+    func installObserver() {
+        guard observer == nil else { return }
+        // ⚠ `defaults write com.apple.universalaccess reduceTransparency` edits the
+        // plist WITHOUT posting this, so only the real System Settings toggle fires it.
+        observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.applyDesired()
+            self.onReduceTransparencyChange?(self.reduceTransparency)
+        }
+    }
+
+    private func applyDesired() {
+        guard let desired else { return }
+        if desired.enabled && !reduceTransparency {
+            enable(radius: desired.radius)
+        } else {
+            paintOpaque(desired.base)
+        }
+    }
+
+    private func enable(radius: Int) {
+        guard let window else { return }
+        window.isOpaque = false
+        window.backgroundColor = NSColor.clear.withAlphaComponent(0.01)
+        window.hasShadow = true
+        window.invalidateShadow()
+        if isAvailable {
+            applyRadius(radius)
+        } else {
+            installFallback(in: window)
+        }
+    }
+
+    /// The material, once, behind everything — only when the CGS symbol is gone.
+    private func installFallback(in window: NSWindow) {
+        guard fallback == nil, let content = window.contentView else { return }
+        let material = NSVisualEffectView(frame: content.bounds)
+        material.material = .underWindowBackground
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.autoresizingMask = [.width, .height]
+        content.addSubview(material, positioned: .below, relativeTo: nil)
+        fallback = material
+        NSLog("Ask Widget glass: CGS blur unavailable; using NSVisualEffectView")
+    }
+
+    private func applyRadius(_ radius: Int) {
+        guard let setBlur, let connection, let window else { return }
+        // Assigned only once the window is ordered in; 0 or less would blur
+        // some other window or nothing at all.
+        let number = window.windowNumber
+        guard number > 0 else { return }
+        let status = setBlur(connection(), UInt32(truncatingIfNeeded: number), Int32(radius))
+        if status != 0 {
+            NSLog("Ask Widget glass: CGSSetWindowBackgroundBlurRadius(%d) returned %d", radius, status)
+        }
+    }
+}
+
+private extension Int {
+    func clamped(to range: ClosedRange<Int>) -> Int {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     WKUIDelegate, WKScriptMessageHandlerWithReply
 {
@@ -41,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     private var pendingDocumentURL: URL?
     private var pendingQuickText: String?
     private var keyDownMonitor: Any?
+    private let glass = WindowGlass()
     private let zoomLevels: [CGFloat] = [
         0.50, 0.67, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00,
     ]
@@ -56,6 +234,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.servicesProvider = self
+        // The last theme a page chose, so the launch window and its title bar
+        // come up in it rather than flashing the system appearance first.
+        NSApp.appearance = appearance(
+            forTheme: UserDefaults.standard.string(forKey: appearanceDefaultsKey)
+        )
+        glass.onReduceTransparencyChange = { [weak self] on in
+            // The window half has already applied; this is the CSS half.
+            self?.webView?.evaluateJavaScript(
+                "window.askwReduceTransparency && window.askwReduceTransparency(\(on))"
+            )
+        }
+        glass.installObserver()
         buildMenu()
         installKeyboardShortcuts()
         buildLoadingWindow()
@@ -508,6 +698,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         configuration.userContentController.addScriptMessageHandler(
             self, contentWorld: .page, name: "askwClipboard"
         )
+        configuration.userContentController.addScriptMessageHandler(
+            self, contentWorld: .page, name: "askwGlass"
+        )
         // WebKit does not consistently expose the Clipboard API to localhost
         // pages. Give interactive local HTML a browser-compatible writeText()
         // backed by the native pasteboard. The message handler replies with a
@@ -551,10 +744,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         view.navigationDelegate = self
         view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
-        // Match cxtasks' material stack: AppKit supplies the desktop blur and
-        // the page supplies only alpha-aware pane tints. A CSS backdrop filter
-        // cannot see beyond the WebView, so transparency without this native
-        // layer would expose a sharp, unreadable desktop instead of glass.
+        // The window supplies the desktop blur (WindowGlass) and the page only
+        // alpha-aware pane tints, so the WebView must paint nothing of its own.
+        // A CSS backdrop-filter cannot see past the WebView, so transparency
+        // without the native blur would expose a sharp, unreadable desktop.
         view.underPageBackgroundColor = .clear
         view.setValue(false, forKey: "drawsBackground")
         view.load(URLRequest(url: URL(string: "\(baseURL)/")!))
@@ -563,19 +756,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isOpaque = false
-        window.backgroundColor = .clear
         window.title = "Ask Widget"
-        let material = glassMaterialView()
+        // Opaque until the page has painted and arms the glass itself.
+        glass.window = window
+        glass.paintOpaque(launchBaseColor())
+        let container = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
-        material.addSubview(view)
+        container.addSubview(view)
         NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: material.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: material.trailingAnchor),
-            view.topAnchor.constraint(equalTo: material.topAnchor),
-            view.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-        window.contentView = material
+        window.contentView = container
         window.setContentSize(NSSize(width: 1200, height: 860))
         window.minSize = NSSize(width: 720, height: 520)
         window.center()
@@ -602,13 +796,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             defer: false
         )
         window.titlebarAppearsTransparent = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
         window.title = "Ask Widget"
         window.isMovableByWindowBackground = true
         window.center()
+        // A plain opaque splash: there is no page yet to tint the glass, and a
+        // blurred window with nothing painted on it reads as a rendering bug.
+        glass.window = window
+        glass.paintOpaque(launchBaseColor())
 
-        let root = glassMaterialView()
+        let root = NSView()
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
         spinner.startAnimation(nil)
@@ -640,14 +836,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func glassMaterialView() -> NSVisualEffectView {
-        let material = NSVisualEffectView()
-        material.material = .underWindowBackground
-        material.blendingMode = .behindWindow
-        // Keep the glass stable while the user works in another window, as in
-        // cxtasks; following window-active state turns inactive glass flat grey.
-        material.state = .active
-        return material
+    /// The window colour before any page has spoken: the theme's `--bg-primary`.
+    private func launchBaseColor() -> NSColor {
+        let dark = (window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+            .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return srgb(dark ? baseRGB.dark : baseRGB.light)
     }
 
     private func updateStatus(_ text: String) {
@@ -676,45 +869,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             return
         }
         if message.name == "askwAppearance" {
-            let appearance: NSAppearance?
-            switch body["theme"] as? String {
-            case "dark":
-                appearance = NSAppearance(named: .darkAqua)
-            case "light":
-                appearance = NSAppearance(named: .aqua)
-            default:
-                appearance = nil
-            }
+            let theme = body["theme"] as? String
+            let chosen = appearance(forTheme: theme)
             // Native menus (including HTML <select> popups) resolve their
             // colors from NSApp, while the title bar resolves from the window.
             // Keep both halves on the same explicit appearance.
-            NSApp.appearance = appearance
-            window.appearance = appearance
+            NSApp.appearance = chosen
+            window.appearance = chosen
+            UserDefaults.standard.set(
+                ["dark", "light"].contains(theme ?? "") ? theme : "system",
+                forKey: appearanceDefaultsKey
+            )
             replyHandler(true, nil)
+            return
+        }
+        if message.name == "askwGlass" {
+            let state: [String: Any] = [
+                "reduceTransparency": glass.reduceTransparency,
+                "available": glass.isAvailable,
+            ]
+            // Only the shell page drives the window; a document in the reader
+            // iframe has no say over it.
+            guard body["query"] as? Bool != true, message.frameInfo.isMainFrame else {
+                replyHandler(state, nil)
+                return
+            }
+            let radius = (body["radius"] as? NSNumber)?.intValue ?? 24
+            if body["radiusOnly"] as? Bool == true {
+                glass.setRadius(radius)
+            } else {
+                let rgb = (body["rgb"] as? [NSNumber])?.map(\.doubleValue)
+                let base = rgb?.count == 3 ? srgb(rgb!.map { min(255, max(0, $0)) }) : launchBaseColor()
+                glass.setState(enabled: body["enabled"] as? Bool ?? false, radius: radius, base: base)
+            }
+            replyHandler(state, nil)
             return
         }
         let kind = body["kind"] as? String ?? "folder"
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
-        if kind == "file" {
+        switch kind {
+        case "file":
             panel.canChooseFiles = true
             panel.canChooseDirectories = false
             panel.allowedContentTypes = supportedDocumentTypes()
             panel.prompt = "Open"
             panel.message = "Choose an HTML, Markdown, text, or PDF document"
-        } else {
+        case "html":
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = true
+            panel.allowedContentTypes = htmlDocumentTypes()
+            panel.prompt = "Link"
+            panel.message = "Choose HTML pages to link into the HTML Vault"
+        default:
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
             panel.canCreateDirectories = false
             panel.prompt = "Use Folder"
             panel.message = "Choose the context folder the selected provider should read"
         }
+        if let prompt = body["prompt"] as? String, !prompt.isEmpty { panel.prompt = prompt }
+        if let text = body["message"] as? String, !text.isEmpty { panel.message = text }
         if let initial = body["initial"] as? String, !initial.isEmpty,
            FileManager.default.fileExists(atPath: initial) {
             panel.directoryURL = URL(fileURLWithPath: initial)
         }
         panel.begin { response in
-            replyHandler(response == .OK ? panel.url?.path : nil, nil)
+            guard response == .OK else {
+                replyHandler(nil, nil)
+                return
+            }
+            if kind == "html" {
+                replyHandler(panel.urls.map(\.path), nil)
+            } else {
+                replyHandler(panel.url?.path, nil)
+            }
         }
     }
 
@@ -776,6 +1006,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
     @objc private func goVault() {
         webView?.load(URLRequest(url: URL(string: "\(baseURL)/vault")!))
+    }
+    @objc private func goHTMLVault() {
+        webView?.load(URLRequest(url: URL(string: "\(baseURL)/vault?vault=html")!))
     }
     @objc private func openInBrowser() {
         NSWorkspace.shared.open(webView?.url ?? URL(string: "\(baseURL)/")!)
@@ -840,6 +1073,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             guard response == .OK, let url = panel.url else { return }
             self?.openDocumentURL(url)
         }
+    }
+
+    private func htmlDocumentTypes() -> [UTType] {
+        var types: [UTType] = [.html]
+        if let htm = UTType(filenameExtension: "htm"), !types.contains(htm) { types.append(htm) }
+        return types
     }
 
     private func supportedDocumentTypes() -> [UTType] {
@@ -911,6 +1150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
         fileMenu.addItem(menuItem("Launcher Home", #selector(goHome), "n"))
         fileMenu.addItem(menuItem("Vault", #selector(goVault), "V"))
+        fileMenu.addItem(menuItem("HTML Vault", #selector(goHTMLVault), "H"))
 
         let editItem = NSMenuItem()
         main.addItem(editItem)

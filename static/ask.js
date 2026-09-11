@@ -1195,10 +1195,30 @@
     setInterval(checkDoc, 3000);
   }
 
+  // A plain HTML page that paints no background of its own used to sit on the
+  // window's material, which tinted it. The window is now a raw desktop blur, so
+  // such a page would put its text straight on the wallpaper. Give it the page
+  // canvas a browser would. Only at the top level — inside the vault shell the
+  // pane behind the reader supplies the tint — and never for Ask Widget's own
+  // reading shells, whose translucency is deliberate.
+  function guardTransparentCanvas() {
+    if (window.top !== window || document.body.hasAttribute('data-askw-document-kind')) return;
+    var clear = function (el) {
+      var style = getComputedStyle(el);
+      return style.backgroundImage === 'none' && /^(transparent|rgba\([^)]*,\s*0\))$/.test(style.backgroundColor);
+    };
+    if (clear(document.documentElement) && clear(document.body)) {
+      document.documentElement.style.backgroundColor = 'Canvas';
+    }
+  }
+
   function initPosition() {
     var source = documentSource();
     if (!source) return;
     fetch(SERVER + '/api/document?source=' + encodeURIComponent(source)).then(function (r) { return r.json(); }).then(function (d) {
+      // A #fragment (a guide's "#predict" link) is where the reader asked to
+      // land; the remembered scroll position must not override it.
+      if (location.hash) return;
       if (d.document && d.document.scroll_y > 0 && !sessionStorage.getItem('askw:reload')) {
         requestAnimationFrame(function () { window.scrollTo(0, d.document.scroll_y); });
       }
@@ -1310,6 +1330,7 @@
   // ============================================================ boot
   function boot() {
     injectStyle();
+    guardTransparentCanvas();
     applyAppearance('system');
     if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
       if (appearanceTheme === 'system') applyAppearance('system');

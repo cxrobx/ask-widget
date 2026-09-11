@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
+from ask_widget import vault as vault_mod
 from ask_widget.vault import VaultCache, VaultIndex, is_inside, normalize, read_attachment_folder
 
 
@@ -152,6 +154,175 @@ class VaultIndexTests(unittest.TestCase):
         cache.invalidate()
         self.assertIsNot(cache.get(self.vault), current)
         self.assertIsNot(cache.get(self.outside), current)
+
+
+def make_html_vault(base: Path) -> tuple[Path, Path]:
+    """An HTML vault: a real project, a linked topic, a dangling link, a guide tree."""
+    vault = base / "HTML Vault"
+    topic = base / "learnings" / "topics" / "architect"
+    guides = topic / "guides"
+    for folder in (vault / "Scratch" / "drafts", vault / "Empty Project", guides / "who-holds-the-plan" / "audio",
+                   guides / "debugging-method", guides / "site" / "sub"):
+        folder.mkdir(parents=True)
+    (topic / "agent-sdk-onepager.html").write_text("<title>Agent SDK one-pager</title>", encoding="utf-8")
+    (topic / "notes.md").write_text("# notes\n", encoding="utf-8")
+    who = guides / "who-holds-the-plan"
+    (who / "index.html").write_text(
+        "<html><head><title>\n  Who holds\n the <b>plan</b> &amp; why </title></head></html>", encoding="utf-8"
+    )
+    (who / "index.inline.html").write_text("<title>Who holds the plan (inline)</title>", encoding="utf-8")
+    (who / "audio" / "one.m4a").write_bytes(b"m4a")
+    (guides / "debugging-method" / "index.html").write_text("<title>Debugging method</title>", encoding="utf-8")
+    (guides / "site" / "index.html").write_text("<title>A site</title>", encoding="utf-8")
+    (guides / "site" / "sub" / "page.html").write_text("<title>Deep page</title>", encoding="utf-8")
+    (vault / "Architect").symlink_to(topic, target_is_directory=True)
+    (vault / "Scratch" / "zeta.html").write_text("<title>Alpha scratch</title>", encoding="utf-8")
+    (vault / "Scratch" / "untitled.htm").write_text("<p>no title</p>", encoding="utf-8")
+    (vault / "Scratch" / "readme.md").write_text("# not html\n", encoding="utf-8")
+    (vault / "Scratch" / "gone.html").symlink_to(base / "nowhere" / "gone.html")
+    (vault / "Scratch" / "loop").symlink_to(vault, target_is_directory=True)
+    return vault, topic
+
+
+class HtmlVaultIndexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.vault, self.topic = make_html_vault(self.base)
+        self.index = VaultIndex.build(self.vault, kind="html")
+        self.tree = self.index.tree_json()
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def child(self, node: dict, name: str) -> dict:
+        return next(c for c in node["children"] if c["name"] == name)
+
+    def test_top_level_folders_are_projects_even_when_empty(self) -> None:
+        self.assertEqual([c["name"] for c in self.tree["children"]], ["Architect", "Empty Project", "Scratch"])
+        self.assertEqual(self.child(self.tree, "Empty Project")["children"], [])
+        # Your own empty folders show; empty folders inside a linked tree do not.
+        scratch = self.child(self.tree, "Scratch")
+        self.assertEqual(self.child(scratch, "drafts")["children"], [])
+        (self.topic / "empty-in-link").mkdir()
+        rebuilt = VaultIndex.build(self.vault, kind="html").tree_json()
+        architect_names = [c["name"] for c in self.child(rebuilt, "Architect")["children"]]
+        self.assertNotIn("empty-in-link", architect_names)
+        guides = self.child(self.child(rebuilt, "Architect"), "guides")
+        self.assertNotIn("dir", {c["kind"] for c in guides["children"]})  # page folders are pages
+        architect = self.child(self.tree, "Architect")
+        self.assertTrue(architect["symlink"])
+        self.assertTrue(architect["linked"])
+        self.assertTrue(self.child(architect, "guides")["linked"])  # inherited: another tree
+        self.assertFalse(self.child(self.tree, "Scratch")["linked"])
+
+    def test_a_folder_with_an_index_page_is_one_page_titled_by_its_title(self) -> None:
+        guides = self.child(self.child(self.tree, "Architect"), "guides")
+        self.assertEqual(
+            [(c["kind"], c["title"]) for c in guides["children"]],
+            [("file", "A site"), ("file", "Debugging method"), ("file", "Who holds the plan & why")],
+        )
+        who = self.child(guides, "who-holds-the-plan")
+        self.assertEqual(who["path"], str(self.vault / "Architect" / "guides" / "who-holds-the-plan" / "index.html"))
+        rels = {item.rel for item in self.index.files}
+        self.assertNotIn("Architect/guides/who-holds-the-plan/index.inline.html", rels)
+        self.assertNotIn("Architect/guides/site/sub/page.html", rels)  # reachable from the site itself
+        self.assertIn("Architect/agent-sdk-onepager.html", rels)
+        self.assertNotIn("Architect/notes.md", rels)
+
+    def test_labels_fall_back_and_sort_by_title(self) -> None:
+        scratch = self.child(self.tree, "Scratch")
+        self.assertEqual(
+            [c["title"] for c in scratch["children"] if c["kind"] == "file"], ["Alpha scratch", "gone.html", "untitled"]
+        )
+        missing = next(c for c in scratch["children"] if c.get("missing"))
+        self.assertEqual(missing["name"], "gone.html")
+        self.assertEqual(missing["target"], str(self.base / "nowhere" / "gone.html"))
+        self.assertGreater(self.child(scratch, "zeta.html")["mtime"], 0)
+        self.assertFalse(any(item.rel.startswith("Scratch/loop/") for item in self.index.files))
+
+    def test_search_matches_titles_and_skips_missing_links(self) -> None:
+        results, _ = self.index.search("who")
+        self.assertEqual([item.label for item in results], ["Who holds the plan & why"])
+        self.assertEqual(results[0].entry_rel, "Architect/guides/who-holds-the-plan")
+        self.assertEqual([item.label for item in self.index.search("alpha")[0]], ["Alpha scratch"])
+        self.assertEqual(self.index.search("gone")[0], [])
+
+    def test_title_changes_are_picked_up(self) -> None:
+        page = self.vault / "Scratch" / "zeta.html"
+        page.write_text("<title>Renamed page, longer</title>", encoding="utf-8")
+        rebuilt = VaultIndex.build(self.vault, kind="html")
+        labels = [item.label for item in rebuilt.files if item.name == "zeta.html"]
+        self.assertEqual(labels, ["Renamed page, longer"])
+
+    def test_context_folder_is_the_real_folder_behind_the_first_link(self) -> None:
+        who = self.vault / "Architect" / "guides" / "who-holds-the-plan" / "index.html"
+        self.assertEqual(vault_mod.html_context_folder(who, self.vault), self.topic.resolve())
+        (self.vault / "Scratch" / "who.html").symlink_to(self.topic / "guides" / "who-holds-the-plan" / "index.html")
+        self.assertEqual(
+            vault_mod.html_context_folder(self.vault / "Scratch" / "who.html", self.vault),
+            (self.topic / "guides" / "who-holds-the-plan").resolve(),
+        )
+        self.assertEqual(
+            vault_mod.html_context_folder(self.vault / "Scratch" / "zeta.html", self.vault),
+            (self.vault / "Scratch").resolve(),
+        )
+        self.assertIsNone(vault_mod.html_context_folder(self.base / "elsewhere.html", self.vault))
+        self.assertIsNone(vault_mod.html_context_folder(self.vault, self.vault))
+
+    def test_links_are_created_only_in_the_vaults_own_folders(self) -> None:
+        guide = self.topic / "guides" / "debugging-method" / "index.html"
+        before = guide.read_bytes()
+        link = vault_mod.create_link(self.vault, "Scratch", guide)
+        self.assertEqual(link, self.vault / "Scratch" / "debugging-method.html")  # not "index.html"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(Path(os.readlink(link)), guide)
+        self.assertEqual(guide.read_bytes(), before)
+        folder_link = vault_mod.create_link(self.vault, "", self.topic / "guides", "Guides")
+        self.assertTrue(folder_link.is_symlink() and folder_link.is_dir())
+        named = vault_mod.create_link(self.vault, "Scratch", self.topic / "agent-sdk-onepager.html", "SDK")
+        self.assertEqual(named.name, "SDK.html")
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            vault_mod.create_link(self.vault, "Scratch", guide)
+        with self.assertRaisesRegex(ValueError, "linked folder"):
+            vault_mod.create_link(self.vault, "Architect/guides", self.topic / "agent-sdk-onepager.html")
+        self.assertFalse((self.topic / "guides" / "agent-sdk-onepager.html").exists())
+        with self.assertRaisesRegex(ValueError, "Only HTML"):
+            vault_mod.create_link(self.vault, "Scratch", self.topic / "notes.md")
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            vault_mod.create_link(self.vault, "Scratch", self.base / "missing.html")
+        with self.assertRaisesRegex(ValueError, "already inside"):
+            vault_mod.create_link(self.vault, "Empty Project", self.vault / "Scratch" / "zeta.html")
+        with self.assertRaisesRegex(ValueError, "full path"):
+            vault_mod.create_link(self.vault, "Scratch", "relative/page.html")
+        with self.assertRaisesRegex(ValueError, "would loop"):
+            vault_mod.create_link(self.vault, "Scratch", self.base)
+        for bad in ("../outside", ".hidden", "Scratch/../..", "Nope"):
+            with self.assertRaises(ValueError, msg=bad):
+                vault_mod.create_link(self.vault, bad, guide, "x")
+        from_url = vault_mod.create_link(self.vault, "Empty Project", guide.as_uri())
+        self.assertEqual(from_url.name, "debugging-method.html")
+
+    def test_folders_are_created_with_plain_names(self) -> None:
+        made = vault_mod.create_folder(self.vault, "", "Claude Certified Architect")
+        self.assertTrue(made.is_dir() and not made.is_symlink())
+        self.assertTrue(vault_mod.create_folder(self.vault, "Claude Certified Architect", "Week 1").is_dir())
+        for bad in ("", ".secret", "a/b", "..", "x" * 300):
+            with self.assertRaises(ValueError, msg=bad):
+                vault_mod.create_folder(self.vault, "", bad)
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            vault_mod.create_folder(self.vault, "", "Scratch")
+        with self.assertRaisesRegex(ValueError, "linked folder"):
+            vault_mod.create_folder(self.vault, "Architect", "new")
+
+    def test_cache_keeps_one_index_per_kind(self) -> None:
+        cache = VaultCache(ttl=60)
+        html_index = cache.get(self.vault, "html")
+        notes_index = cache.get(self.vault)
+        self.assertIsNot(html_index, notes_index)
+        self.assertIs(cache.get(self.vault, "html"), html_index)
+        self.assertEqual(notes_index.kind, "notes")
+        self.assertIn("Scratch/readme.md", {item.rel for item in notes_index.files})
 
 
 if __name__ == "__main__":

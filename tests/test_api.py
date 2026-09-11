@@ -378,6 +378,153 @@ class VaultApiTests(unittest.TestCase):
         app.state.storage.close()
 
 
+class HtmlVaultApiTests(unittest.TestCase):
+    """The HTML vault: a folder of symlinks, browsed and extended from the shell."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name).resolve()
+        self.context = self.base / "context"
+        self.context.mkdir()
+        self.vault = self.base / "HTML Vault"
+        self.topic = self.base / "learnings" / "topics" / "architect"
+        self.guide = self.topic / "guides" / "who-holds-the-plan"
+        (self.guide / "audio").mkdir(parents=True)
+        (self.vault / "Mine").mkdir(parents=True)
+        (self.guide / "index.html").write_text(
+            '<html><head><title>Who holds the plan</title></head><body><section id="predict">'
+            '<p>Before you read.</p><audio controls preload="none" src="audio/one.m4a"></audio>'
+            "</section></body></html>",
+            encoding="utf-8",
+        )
+        self.audio = self.guide / "audio" / "one.m4a"
+        self.audio.write_bytes(bytes(range(256)) * 4)  # 1024 bytes
+        (self.vault / "Architect").symlink_to(self.topic, target_is_directory=True)
+        self.page = self.vault / "Architect" / "guides" / "who-holds-the-plan" / "index.html"
+        self.config = AppConfig(
+            default_folder=self.context,
+            allowed_roots=(self.context,),
+            port=8899,
+            data_dir=self.base / "data",
+        )
+        self.app = create_app(self.config)
+        self.app.state.storage.update_settings({"html_vault_root": str(self.vault)}, model_default="sonnet")
+        self.client_context = TestClient(self.app, base_url="http://127.0.0.1:8899")
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        self.temp.cleanup()
+
+    def post(self, url: str, body: dict, token: bool = True):
+        return self.client.post(url, json={**({"token": self.config.token} if token else {}), **body})
+
+    def test_tree_search_and_shell_use_titles_and_the_html_kind(self) -> None:
+        tree = self.client.get("/api/vault/tree", params={"vault": "html"}).json()
+        self.assertTrue(tree["ok"])
+        self.assertEqual(tree["vault"], "html")
+        self.assertEqual(tree["files"], 1)
+        architect = next(c for c in tree["tree"]["children"] if c["name"] == "Architect")
+        page = architect["children"][0]["children"][0]
+        self.assertEqual((page["title"], page["path"]), ("Who holds the plan", str(self.page)))
+        self.assertIn("Mine", [c["name"] for c in tree["tree"]["children"]])
+        search = self.client.get("/api/vault/search", params={"vault": "html", "q": "plan"}).json()
+        self.assertEqual([(i["title"], i["folder"]) for i in search["items"]], [("Who holds the plan", "Architect/guides")])
+
+        shell = self.client.get("/vault", params={"vault": "html", "src": str(self.page)})
+        self.assertEqual(shell.status_code, 200)
+        expected = urllib.parse.urlencode({"src": str(self.page)}, quote_via=urllib.parse.quote, safe="/")
+        self.assertIn(f'<iframe id=reader name=reader src="/view?{expected}"', shell.text)  # no vault folder
+        self.assertIn('const KIND="html"', shell.text)
+        self.assertIn("id=add-panel", shell.text)
+        self.assertIn('<a href="/vault?vault=html" class=active', shell.text)
+        self.assertNotIn("id=add-panel", self.client.get("/vault").text)
+        self.assertIn('data-href="/vault?vault=html">HTML Vault</button>', self.client.get("/").text)
+
+        self.app.state.storage.update_settings({"html_vault_root": ""}, model_default="sonnet")
+        unset = self.client.get("/api/vault/tree", params={"vault": "html"})
+        self.assertEqual(unset.json()["error"], "No HTML vault folder is configured.")
+
+    def test_reader_uses_the_real_folder_behind_the_link_when_it_is_allowed(self) -> None:
+        # Not yet an allowed root: the reader falls back to the default folder.
+        before = self.client.get("/view", params={"src": str(self.page)})
+        self.assertIn(f'<meta name="askw-folder" content="{self.context}">', before.text)
+        self.client.post("/api/roots", json={"token": self.config.token, "path": str(self.base / "learnings")})
+        after = self.client.get("/view", params={"src": str(self.page)})
+        self.assertIn(f'<meta name="askw-folder" content="{self.topic}">', after.text)
+        # An explicit folder still wins, and the guide's audio is rewritten to a capability URL.
+        explicit = self.client.get("/view", params={"src": str(self.page), "folder": str(self.context)})
+        self.assertIn(f'<meta name="askw-folder" content="{self.context}">', explicit.text)
+        self.assertRegex(after.text, r'<audio controls preload="none" src="http://127\.0\.0\.1:8899/_fs/[^/"]+/')
+        self.assertIn(urllib.parse.quote(str(self.audio)), after.text)
+
+    def test_audio_is_served_in_ranges_for_webkit(self) -> None:
+        with patch("pathlib.Path.home", return_value=self.base):
+            viewed = self.client.get("/view", params={"src": str(self.page)})
+            url = re.search(r'<audio controls preload="none" src="http://127\.0\.0\.1:8899([^"]+)"', viewed.text).group(1)
+            whole = self.client.get(url)
+            self.assertEqual(whole.status_code, 200)
+            self.assertEqual(whole.headers["accept-ranges"], "bytes")
+            self.assertEqual(whole.headers["content-type"], "audio/mp4")
+            self.assertEqual(len(whole.content), 1024)
+            probe = self.client.get(url, headers={"range": "bytes=0-1"})
+            self.assertEqual(probe.status_code, 206)
+            self.assertEqual(probe.headers["content-range"], "bytes 0-1/1024")
+            self.assertEqual(probe.content, bytes([0, 1]))
+            tail = self.client.get(url, headers={"range": "bytes=-3"})
+            self.assertEqual((tail.status_code, tail.content), (206, bytes([253, 254, 255])))
+            open_ended = self.client.get(url, headers={"range": "bytes=1000-"})
+            self.assertEqual(open_ended.headers["content-range"], "bytes 1000-1023/1024")
+            past_end = self.client.get(url, headers={"range": "bytes=5000-"})
+            self.assertEqual(past_end.status_code, 416)
+            self.assertEqual(past_end.headers["content-range"], "bytes */1024")
+            multi = self.client.get(url, headers={"range": "bytes=0-1,4-5"})
+            self.assertEqual((multi.status_code, len(multi.content)), (200, 1024))
+
+    def test_link_and_folder_routes_write_only_inside_the_vault(self) -> None:
+        other = self.base / "elsewhere" / "report"
+        other.mkdir(parents=True)
+        (other / "index.html").write_text("<title>Quarterly report</title>", encoding="utf-8")
+        self.assertEqual(self.post("/api/vault/html/link", {"target": str(other / "index.html")}, token=False).status_code, 403)
+        denied = self.client.post(
+            "/api/vault/html/link",
+            json={"token": self.config.token, "target": str(other / "index.html")},
+            headers={"origin": "https://attacker.example"},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        made = self.post("/api/vault/html/folder", {"parent": "", "name": "Reports"})
+        self.assertEqual(made.json()["rel"], "Reports")
+        linked = self.post("/api/vault/html/link", {"parent": "Reports", "targets": [str(other / "index.html")]}).json()
+        self.assertTrue(linked["ok"])
+        self.assertEqual(linked["linked"], [str(self.vault / "Reports" / "report.html")])
+        self.assertEqual(linked["context_roots"], [str(other)])
+        self.assertIn(str(other), [r["path"] for r in self.client.get("/api/settings").json()["roots"]])
+        tree = self.client.get("/api/vault/tree", params={"vault": "html"}).json()["tree"]
+        reports = next(c for c in tree["children"] if c["name"] == "Reports")
+        self.assertEqual(reports["children"][0]["title"], "Quarterly report")
+
+        refused = self.post("/api/vault/html/link", {"parent": "Architect", "target": str(other / "index.html")})
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("linked folder", refused.json()["error"])
+        self.assertFalse((self.topic / "report.html").exists())
+        partial = self.post(
+            "/api/vault/html/link",
+            {"parent": "Reports", "targets": [str(other / "index.html"), str(self.guide / "index.html")]},
+        ).json()
+        self.assertTrue(partial["ok"])
+        self.assertEqual(len(partial["linked"]), 1)
+        self.assertIn("already exists", partial["errors"][0])
+        loop = self.post("/api/vault/html/link", {"parent": "Mine", "target": str(self.base)})
+        self.assertIn("would loop", loop.json()["error"])
+        # A page sitting directly in home links fine, but home never becomes a context root.
+        (self.base / "top.html").write_text("<title>Top</title>", encoding="utf-8")
+        with patch("pathlib.Path.home", return_value=self.base):
+            homed = self.post("/api/vault/html/link", {"parent": "Mine", "target": str(self.base / "top.html")})
+        self.assertEqual((homed.json()["ok"], homed.json()["context_roots"]), (True, []))
+        self.assertNotIn(str(self.base), [r["path"] for r in self.client.get("/api/settings").json()["roots"]])
+
+
 class PluginOriginTests(unittest.TestCase):
     """The Obsidian plugin talks to the same API from app://obsidian.md."""
 

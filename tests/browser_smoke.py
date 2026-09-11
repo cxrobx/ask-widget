@@ -202,7 +202,7 @@ class BrowserSmokeTests(unittest.TestCase):
             nav_widths = page.locator("nav button").evaluate_all(
                 "buttons => buttons.map(button => button.getBoundingClientRect().width)"
             )
-            self.assertEqual(len(nav_widths), 5)
+            self.assertEqual(len(nav_widths), 5)  # Diagnostics lives inside Settings
             self.assertTrue(all(width < 160 for width in nav_widths), nav_widths)
             self.assertLess(page.locator("aside").evaluate("aside => aside.offsetHeight"), 160)
 
@@ -321,6 +321,90 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
+
+    def test_html_vault_lists_titles_links_pages_and_reads_them(self) -> None:
+        html_vault = self.root / "HTML Vault"
+        topic = self.root / "learnings" / "topic"
+        guide = topic / "guides" / "who-holds-the-plan"
+        guide.mkdir(parents=True)
+        (guide / "index.html").write_text(
+            "<!doctype html><html><head><title>Who holds the plan</title>"
+            "<style>body{background:#FDF6E3}</style></head><body><main>"
+            '<section id="predict"><p>Before you read, predict the answer.</p></section>'
+            "</main></body></html>",
+            encoding="utf-8",
+        )
+        (html_vault / "Study").mkdir(parents=True)
+        (html_vault / "Architect").symlink_to(topic, target_is_directory=True)
+        report = self.root / "elsewhere" / "report.html"
+        report.parent.mkdir()
+        report.write_text("<title>Quarterly report</title><body><p>Numbers.</p></body>", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"html_vault_root": str(html_vault)}, model_default="sonnet")
+        storage.add_root(self.root / "learnings")
+
+        console_errors: list[str] = []
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 760})
+            page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+
+            self.assertEqual(page.locator("#vault-count").inner_text(), "1 page")
+            self.assertEqual(page.locator(".vault-switch a.active").inner_text(), "HTML")
+            self.assertNotEqual(page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--pane-alpha')"), "")
+            link = page.locator("#tree a.file", has_text="Who holds the plan")
+            self.assertEqual(link.count(), 1)
+            link.click()
+            reader = page.frame_locator("iframe[name=reader]")
+            self.assertEqual(reader.locator("#predict p").inner_text(), "Before you read, predict the answer.")
+            self.assertEqual(
+                reader.locator('meta[name="askw-folder"]').get_attribute("content"), str(topic.resolve())
+            )
+            page.locator("#tree a.file.active").wait_for()
+            page.wait_for_function("() => location.search.includes('vault=html') && location.search.includes('src=')")
+            # An opaque page keeps its own background; the canvas guard leaves it alone.
+            self.assertEqual(reader.locator("html").evaluate("e => e.style.backgroundColor"), "")
+
+            page.locator("#add-toggle").click()
+            page.locator("#add-panel").wait_for(state="visible")
+            self.assertFalse(page.locator("#add-pick-files").is_visible())  # native picker only
+            page.locator("#add-dest").select_option("Study")
+            page.locator("#add-path").fill(report.as_uri())
+            page.locator("#add-path-go").click()
+            expect(page.locator("#add-status")).to_contain_text("Linked 1 item", timeout=8000)
+            page.locator("#tree a.file", has_text="Quarterly report").wait_for()
+            self.assertTrue((html_vault / "Study" / "report.html").is_symlink())
+            self.assertEqual(page.locator("#vault-count").inner_text(), "2 pages")
+
+            page.locator("#add-folder-name").fill("Week 1")
+            page.locator("#add-mkdir").click()
+            page.locator("#tree summary", has_text="Week 1").wait_for()
+            self.assertTrue((html_vault / "Study" / "Week 1").is_dir())
+
+            page.locator("#add-dest").select_option("")
+            page.locator("#add-path").fill(str(topic / "guides"))
+            page.locator("#add-path-go").click()
+            expect(page.locator("#add-status")).to_contain_text("Linked 1 item", timeout=8000)
+            # Linked folders are another tree: never offered as a place to add.
+            options = page.locator("#add-dest option").evaluate_all("o => o.map(x => x.value)")
+            self.assertNotIn("Architect", options)
+            self.assertNotIn("guides", options)
+            self.assertIn("Study/Week 1", options)
+
+            page.locator("#vault-filter").fill("quarter")
+            page.locator("#tree .results a.file").wait_for()
+            self.assertEqual(page.locator("#tree .results a.file span").inner_text(), "Quarterly report")
+
+            # A transparent page opened on its own gets a canvas instead of the bare window.
+            page.goto(f"{self.base_url}/view?src={urllib.parse.quote(str(report))}", wait_until="networkidle")
+            self.assertEqual(page.evaluate("document.documentElement.style.backgroundColor"), "canvas")
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+        self.assertEqual(console_errors, [])
 
 if __name__ == "__main__":
     unittest.main()

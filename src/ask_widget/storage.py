@@ -39,6 +39,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "markdown_follow_obsidian": True,
     # Browsed read-only in Vault mode; "" disables the vault view.
     "vault_root": str(Path.home() / "Documents" / "CX"),
+    # A folder of symlinks to HTML pages anywhere on disk; "" hides it.
+    "html_vault_root": str(Path.home() / "Documents" / "HTML Vault"),
     "allowed_origins": ["app://obsidian.md"],
 }
 
@@ -262,17 +264,19 @@ class Storage:
                 if origin not in origins:
                     origins.append(origin)
             clean["allowed_origins"] = origins
-        if "vault_root" in patch:
-            value = str(patch["vault_root"] or "").strip()
+        for key, label in (("vault_root", "Vault"), ("html_vault_root", "HTML vault")):
+            if key not in patch:
+                continue
+            value = str(patch[key] or "").strip()
             if value:
                 candidate = Path(value).expanduser()
                 if not candidate.is_absolute() or not candidate.is_dir():
-                    raise ValueError("Vault folder does not exist.")
+                    raise ValueError(f"{label} folder does not exist.")
                 # Lexical normalization only: the vault may contain symlinked
                 # folders, and every containment check compares against the
                 # path the user sees, never a resolved realpath.
                 value = os.path.normpath(str(candidate))
-            clean["vault_root"] = value
+            clean[key] = value
 
         now = time.time()
         with self._lock:
