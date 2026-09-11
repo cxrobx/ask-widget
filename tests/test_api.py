@@ -61,6 +61,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(mark.content[25], 6)  # IHDR colour type 6: RGBA, so no background
         self.assertIn('<img class=mark src=/onyx-mark.png alt="">', self.client.get("/").text)
 
+    def test_the_error_page_goes_back_to_library_in_the_whole_window(self) -> None:
+        # It shows in the shell's reader frame; a plain link there would load the whole shell inside the frame.
+        refused = self.client.get("/view", params={"src": "relative/notes.md"})
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("<a href='/' target='_top'", refused.text)
+        self.assertIn("back to Library", refused.text)
+        self.assertNotIn("launcher", refused.text)
+
     def test_library_settings_and_document_capabilities(self) -> None:
         launcher = self.client.get("/")
         self.assertIn("Window transparency", launcher.text)

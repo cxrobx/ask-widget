@@ -252,7 +252,8 @@ def _error_page(message: str) -> str:
         "margin:80px auto;padding:0 24px;color:#1c1917'>"
         "<h1 style='color:#c2410c'>Couldn't open that document</h1>"
         f"<p>{_esc(message)}</p>"
-        "<p><a href='/' style='color:#c2410c'>&larr; back to the launcher</a></p>"
+        # It usually shows in the shell's reader frame: _top takes the window back to Library, not the frame.
+        "<p><a href='/' target='_top' style='color:#c2410c'>&larr; back to Library</a></p>"
     )
 
 

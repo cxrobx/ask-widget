@@ -68,10 +68,10 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$BUNDLE/Contents/Resources/AppIcon.icns"
 
-echo "→ Packaging Alfred Universal Action…"
+echo "→ Packaging Alfred workflow…"
 ALFRED_WORKFLOW="$BUILD/Open-in-Onyx.alfredworkflow"
 /usr/bin/zip -j -q "$ALFRED_WORKFLOW" \
-  "$ROOT/integrations/alfred/info.plist" "$BUILD/icon.png"
+  "$ROOT/integrations/alfred/info.plist" "$ROOT/integrations/alfred/onyx_search.py" "$BUILD/icon.png"
 
 echo "→ Compiling Swift…"
 swiftc -framework Cocoa -framework WebKit -framework UniformTypeIdentifiers -O \
@@ -137,9 +137,22 @@ rm -rf "$BACKUP"
 # Clear the quarantine flag so it opens without the unidentified-developer prompt.
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 /System/Library/CoreServices/pbs -update >/dev/null 2>&1 || true
+# The headless service (scripts/install-daemon.sh) keeps running the bundle it started from, and the
+# app adopts whatever healthy service owns the port: left alone, the new app shows the old pages, and
+# macOS stops honouring the running copy's Documents access once its files are replaced. Restart it
+# on this build.
+DAEMON="gui/$(id -u)/com.cx.onyx.server"
+if launchctl print "$DAEMON" >/dev/null 2>&1; then
+  echo "→ Restarting the background service on this build"
+  launchctl kickstart -k "$DAEMON" >/dev/null 2>&1 \
+    || echo "  Couldn't restart it; run: launchctl kickstart -k $DAEMON" >&2
+fi
 
 echo ""
 echo "✓ Installed: $DEST"
+if pgrep -xq "$APP_NAME"; then
+  echo "  $APP_NAME is open: quit and reopen it to run this build."
+fi
 echo "  Archive: $ARCHIVE"
 echo "  Alfred workflow: $ALFRED_WORKFLOW"
 echo "  Open it from Spotlight/Launchpad as 'Onyx', or:  open -a 'Onyx'"
