@@ -162,9 +162,12 @@ Inside the vault the Markdown reader understands Obsidian's conventions:
 
 Clicking a link swaps the reader pane and moves the tree highlight; the browser
 Back button walks the history. Press `/` to focus the filter box, Escape to clear
-it. ⌘\ (or the sidebar button beside the vault's name) hides the tree so the
-reader gets the whole window, and it stays hidden until you bring it back — from
-the button in the reader's corner or ⌘\ again, even with focus inside the page.
+it. The pin beside the vault's name (or ⌘\, even with focus inside the page)
+unpins the sidebar, as in Zen's compact mode: the reader gets the whole window,
+and the sidebar floats out over it when the pointer rests on the window's left
+edge, going again once the pointer leaves. It stays out while it is in use — a
+row's menu or the **+** panel open, or typing in the filter — and `/` brings it
+out to type in. Pin it to dock it again; the choice is remembered.
 Symlinked vault folders are followed and keep their vault-visible paths, so
 links between notes inside them stay in the vault.
 
