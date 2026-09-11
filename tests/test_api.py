@@ -387,14 +387,14 @@ class VaultApiTests(unittest.TestCase):
 
 
 class HtmlVaultApiTests(unittest.TestCase):
-    """The HTML vault: a folder of symlinks, browsed and extended from the shell."""
+    """Artifacts: a folder of symlinks, browsed and extended from the shell."""
 
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name).resolve()
         self.context = self.base / "context"
         self.context.mkdir()
-        self.vault = self.base / "HTML Vault"
+        self.vault = self.base / "Artifacts"
         self.topic = self.base / "learnings" / "topics" / "architect"
         self.guide = self.topic / "guides" / "who-holds-the-plan"
         (self.guide / "audio").mkdir(parents=True)
@@ -447,11 +447,11 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertIn("id=add-panel", shell.text)
         self.assertIn('<a href="/vault?vault=html" class=active', shell.text)
         self.assertNotIn("id=add-panel", self.client.get("/vault").text)
-        self.assertIn('data-href="/vault?vault=html">HTML Vault</button>', self.client.get("/").text)
+        self.assertIn('data-href="/vault?vault=html">Artifacts</button>', self.client.get("/").text)
 
         self.app.state.storage.update_settings({"html_vault_root": ""}, model_default="sonnet")
         unset = self.client.get("/api/vault/tree", params={"vault": "html"})
-        self.assertEqual(unset.json()["error"], "No HTML vault folder is configured.")
+        self.assertEqual(unset.json()["error"], "No Artifacts folder is configured.")
 
     def test_reader_uses_the_real_folder_behind_the_link_when_it_is_allowed(self) -> None:
         # Not yet an allowed root: the reader falls back to the default folder.

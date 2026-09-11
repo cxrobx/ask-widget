@@ -923,7 +923,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             panel.allowsMultipleSelection = true
             panel.allowedContentTypes = htmlDocumentTypes()
             panel.prompt = "Link"
-            panel.message = "Choose HTML pages to link into the HTML Vault"
+            panel.message = "Choose HTML pages to link into Artifacts"
         default:
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
@@ -1152,7 +1152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
         fileMenu.addItem(menuItem("Launcher Home", #selector(goHome), "n"))
         fileMenu.addItem(menuItem("Vault", #selector(goVault), "V"))
-        fileMenu.addItem(menuItem("HTML Vault", #selector(goHTMLVault), "H"))
+        fileMenu.addItem(menuItem("Artifacts", #selector(goHTMLVault), "H"))
 
         let editItem = NSMenuItem()
         main.addItem(editItem)

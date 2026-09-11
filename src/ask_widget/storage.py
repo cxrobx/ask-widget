@@ -39,8 +39,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "markdown_follow_obsidian": True,
     # Browsed read-only in Vault mode; "" disables the vault view.
     "vault_root": str(Path.home() / "Documents" / "CX"),
-    # A folder of symlinks to HTML pages anywhere on disk; "" hides it.
-    "html_vault_root": str(Path.home() / "Documents" / "HTML Vault"),
+    # Artifacts: a folder of symlinks to HTML pages anywhere on disk; "" hides it.
+    # The key (like kind="html") predates the name: it was "HTML Vault" until 2026-09-11.
+    "html_vault_root": str(Path.home() / "Documents" / "Artifacts"),
     "allowed_origins": ["app://obsidian.md"],
 }
 
@@ -297,7 +298,7 @@ class Storage:
                 if origin not in origins:
                     origins.append(origin)
             clean["allowed_origins"] = origins
-        for key, label in (("vault_root", "Vault"), ("html_vault_root", "HTML vault")):
+        for key, label in (("vault_root", "Vault"), ("html_vault_root", "Artifacts")):
             if key not in patch:
                 continue
             value = str(patch[key] or "").strip()

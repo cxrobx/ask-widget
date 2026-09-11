@@ -170,7 +170,7 @@ def _resolve_folder(app: FastAPI, raw: str | None) -> Path | None:
 def _vault_root(app: FastAPI, kind: str = "notes") -> Path | None:
     """A configured vault folder (lexical, normalized) or None when unset/missing.
 
-    ``kind`` is "notes" (the Obsidian vault) or "html" (the HTML vault).
+    ``kind`` is "notes" (the Obsidian vault) or "html" (Artifacts).
     """
     config: AppConfig = app.state.config
     key = "html_vault_root" if kind == "html" else "vault_root"
@@ -190,14 +190,14 @@ def _vault_missing_error(app: FastAPI, kind: str) -> str:
     config: AppConfig = app.state.config
     raw = str(app.state.storage.settings(model_default=config.model).get("html_vault_root") or "").strip()
     if not raw:
-        return "No HTML vault folder is configured."
-    return f"The HTML vault folder does not exist yet: {raw}"
+        return "No Artifacts folder is configured."
+    return f"The Artifacts folder does not exist yet: {raw}"
 
 
 def _register_context_root(app: FastAPI, folder: Path) -> Path | None:
     """Allow ``folder`` as a context root — unless it is the whole disk or home.
 
-    Linking a page into the HTML vault is the user saying "I want to read this
+    Linking a page into Artifacts is the user saying "I want to read this
     with Ask", and its folder is where the evidence lives, so it joins the
     allowed roots (visible and removable in Settings). Home and ``/`` would
     quietly open everything, so a link from there keeps its default context.
@@ -448,7 +448,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 path = candidate.resolve()
                 html_root = _vault_root(app, "html")
                 if not folder and html_root is not None and vault.is_inside(lexical, html_root):
-                    # An HTML-vault page reads with the real folder behind its
+                    # A page in Artifacts reads with the real folder behind its
                     # link as context; the vault itself holds only symlinks.
                     context = vault.html_context_folder(lexical, html_root)
                     context_path = _resolve_folder(app, str(context)) if context else None
@@ -529,7 +529,7 @@ def create_app(config: AppConfig) -> FastAPI:
         root = _vault_root(app, kind)
         reader_query = None
         if src and root is not None:
-            # The Obsidian vault is its own context; an HTML-vault page gets the
+            # The Obsidian vault is its own context; a page in Artifacts gets the
             # real folder behind its link, which /view works out from the path.
             params = {"src": src} if kind == "html" else {"src": src, "folder": str(root)}
             if history:
@@ -765,7 +765,7 @@ def create_app(config: AppConfig) -> FastAPI:
         )
 
     async def _html_vault_body(request: Request) -> tuple[dict, Path] | JSONResponse:
-        """Shared guard for the two HTML-vault write routes: token, JSON, root."""
+        """Shared guard for the two Artifacts write routes: token, JSON, root."""
         if denied := api_forbidden(request):
             return denied
         try:

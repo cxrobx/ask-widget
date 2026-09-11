@@ -455,7 +455,7 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
 
     def test_glass_icons_take_the_page_tone_not_the_app_theme(self) -> None:
-        # A dark app over a cream page (the usual HTML Vault case) must get light
+        # A dark app over a cream page (the usual Artifacts case) must get light
         # glass with dark ink there; dark glass would turn the icon into a smudge.
         cream = self.root / "cream.html"
         cream.write_text(
@@ -467,7 +467,7 @@ class BrowserSmokeTests(unittest.TestCase):
             "<!doctype html><title>Night</title><body style='background:#1a1a1a;color:#ddd'><p>Night page.</p></body>",
             encoding="utf-8",
         )
-        html_vault = self.root / "HTML Vault"
+        html_vault = self.root / "Artifacts"
         (html_vault / "Pages").mkdir(parents=True)
         (html_vault / "Pages" / "cream.html").symlink_to(cream)
         self.app.state.storage.update_settings({"html_vault_root": str(html_vault)}, model_default="sonnet")
@@ -510,7 +510,7 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
 
     def test_html_vault_lists_titles_links_pages_and_reads_them(self) -> None:
-        html_vault = self.root / "HTML Vault"
+        html_vault = self.root / "Artifacts"
         topic = self.root / "learnings" / "topic"
         guide = topic / "guides" / "who-holds-the-plan"
         guide.mkdir(parents=True)
@@ -540,7 +540,7 @@ class BrowserSmokeTests(unittest.TestCase):
             page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
 
             self.assertEqual(page.locator("#vault-count").inner_text(), "1 page")
-            self.assertEqual(page.locator(".vault-switch a.active").inner_text(), "HTML")
+            self.assertEqual(page.locator(".vault-switch a.active").inner_text(), "Artifacts")
             self.assertNotEqual(page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--pane-alpha')"), "")
             # The live slider (JS) and the first paint (Python) must be one curve.
             for t in (0, 0.1, 0.38, 0.7, 1):

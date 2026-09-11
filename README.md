@@ -168,12 +168,12 @@ the button in the reader's corner or ⌘\ again, even with focus inside the page
 Symlinked vault folders are followed and keep their vault-visible paths, so
 links between notes inside them stay in the vault.
 
-### HTML Vault
+### Artifacts
 
-**HTML Vault** in the sidebar (or **File ▸ HTML Vault**, ⌘⇧H, or the Notes | HTML
+**Artifacts** in the sidebar (or **File ▸ Artifacts**, ⌘⇧H, or the Notes | Artifacts
 switch at the top of either vault) browses a folder of **symlinks to HTML pages
 anywhere on your Mac** — the HTML counterpart of an Obsidian vault. It defaults to
-`~/Documents/HTML Vault`; change it under **Settings ▸ Vaults**.
+`~/Documents/Artifacts`; change it under **Settings ▸ Vaults**.
 
 - **Top-level folders are projects**, listed even while empty. Link a whole
   folder (say a topic in `~/learnings`) and every page added to it later shows up
@@ -270,8 +270,8 @@ TTL and maximum-entry settings.
 Saving a **Vault folder** in Settings also registers it as an allowed context
 root, which is what lets a question asked inside a note cite that note's
 neighbours. Clearing the field hides Vault mode and leaves the root in place.
-The **HTML vault folder** is not registered itself — it holds only links — but
-each folder linked into it is (see HTML Vault above).
+The **Artifacts folder** is not registered itself — it holds only links — but
+each folder linked into it is (see Artifacts above).
 
 Additional trusted roots can be managed in Settings. The launcher also reads
 `~/.config/onyx/allow-roots` at startup for compatibility; use one path per
@@ -341,10 +341,10 @@ deliberately narrow:
    service; plugins and base-URL changes remain blocked.
 10. File citations are displayed only after canonicalizing them and proving they
     exist inside the active context folder.
-11. The HTML Vault writes only symlinks and folders, and only inside the vault's
-    own folders: never through a linked folder (that would write into the tree it
+11. Artifacts writes only symlinks and folders, and only inside its own
+    folders: never through a linked folder (that would write into the tree it
     points at), never over an existing entry, never a link to something that
-    contains the vault. Link targets are never modified.
+    contains the Artifacts folder. Link targets are never modified.
 
 Both executables are launched directly, not through an interactive shell.
 Before launch, Anthropic/OpenAI API-key and alternate-provider environment

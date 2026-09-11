@@ -11,7 +11,7 @@ resolve outside the vault root, so every comparison uses ``os.path.normpath`` +
 ``Path.is_relative_to`` on the path the user sees — never ``Path.resolve()`` and
 never ``str.startswith`` (which would accept ``vault-evil`` next to ``vault``).
 
-The same index also serves the **HTML vault** (``kind="html"``): a folder of
+The same index also serves **Artifacts** (``kind="html"``): a folder of
 symlinks to HTML scattered across the disk, browsed the way Obsidian browses
 Markdown. Three things differ there, all in service of scanning the list:
 
@@ -107,7 +107,7 @@ def html_page_meta(path: Path) -> tuple[str, float] | None:
 
 
 def html_context_folder(path: Path | str, root: Path | str) -> Path | None:
-    """The real folder a page in the HTML vault draws its evidence from.
+    """The real folder a page in Artifacts draws its evidence from.
 
     The vault itself is only links, so it is useless as a context folder — the
     provider's search tools would find nothing but symlinks. The first symlink
@@ -160,26 +160,26 @@ def writable_folder(root: Path | str, rel: str) -> Path:
     rel = str(rel or "").strip().strip("/")
     parts = [part for part in rel.split("/") if part] if rel else []
     if any(part in {".", ".."} or part.startswith(".") for part in parts):
-        raise ValueError("That folder is not inside the HTML vault.")
+        raise ValueError("That folder is not inside Artifacts.")
     current = base
     for part in parts:
         current = current / part
         if os.path.islink(current):
             raise ValueError(
                 f"“{part}” is a linked folder, so it belongs to another tree. "
-                "Add to one of the vault's own folders instead."
+                "Add to a folder that lives in Artifacts instead."
             )
     if not current.is_dir():
-        raise ValueError("That folder does not exist in the HTML vault.")
+        raise ValueError("That folder does not exist in Artifacts.")
     real_base = Path(os.path.realpath(base))
     real_current = Path(os.path.realpath(current))
     if not (real_current == real_base or real_current.is_relative_to(real_base)):
-        raise ValueError("That folder is not inside the HTML vault.")
+        raise ValueError("That folder is not inside Artifacts.")
     return current
 
 
 def create_folder(root: Path | str, parent_rel: str, name: str) -> Path:
-    """Make a new (real) folder in the HTML vault."""
+    """Make a new (real) folder in Artifacts."""
     folder = writable_folder(root, parent_rel) / _clean_entry_name(name)
     if os.path.lexists(folder):
         raise ValueError(f"“{folder.name}” already exists there.")
@@ -188,7 +188,7 @@ def create_folder(root: Path | str, parent_rel: str, name: str) -> Path:
 
 
 def create_link(root: Path | str, parent_rel: str, target: Path | str, name: str | None = None) -> Path:
-    """Link an HTML file or a folder into the HTML vault. Never touches ``target``.
+    """Link an HTML file or a folder into Artifacts. Never touches ``target``.
 
     A linked ``index.html`` is named after its folder, since every guide would
     otherwise arrive as ``index.html`` and collide with the last one.
@@ -217,9 +217,9 @@ def create_link(root: Path | str, parent_rel: str, target: Path | str, name: str
     real_vault = Path(os.path.realpath(normalize(root)))
     real_source = Path(os.path.realpath(source))
     if real_source == real_vault or real_source.is_relative_to(real_vault):
-        raise ValueError("That is already inside the HTML vault.")
+        raise ValueError("That is already inside Artifacts.")
     if real_vault.is_relative_to(real_source):
-        raise ValueError("That folder contains the HTML vault itself, so linking it would loop.")
+        raise ValueError("That folder contains the Artifacts folder itself, so linking it would loop.")
     link = folder / _clean_entry_name(name or default)
     if source.is_file() and link.suffix.lower() not in HTML_EXTENSIONS:
         link = link.with_name(link.name + source.suffix.lower())
@@ -248,7 +248,7 @@ class VaultFile:
     name: str
     stem_key: str  # casefolded stem, the wikilink lookup key
     kind: str  # "note" | "attachment"
-    # HTML vault only. ``title`` is the display label; ``page_dir`` marks an
+    # Artifacts only. ``title`` is the display label; ``page_dir`` marks an
     # ``index.html`` standing in for its folder; ``missing`` a dangling link.
     title: str = ""
     mtime: float = 0.0
@@ -290,7 +290,7 @@ class VaultIndex:
     truncated: bool = False
     attachment_folder: str = DEFAULT_ATTACHMENT_FOLDER
     symlinked_dirs: set[str] = field(default_factory=set)
-    # HTML vault: folders shown even without a page (see _build_html).
+    # Artifacts: folders shown even without a page (see _build_html).
     listed_dirs: list[str] = field(default_factory=list)
     _by_rel: dict[str, VaultFile] = field(default_factory=dict, repr=False)
     _by_stem: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)

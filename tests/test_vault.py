@@ -157,8 +157,8 @@ class VaultIndexTests(unittest.TestCase):
 
 
 def make_html_vault(base: Path) -> tuple[Path, Path]:
-    """An HTML vault: a real project, a linked topic, a dangling link, a guide tree."""
-    vault = base / "HTML Vault"
+    """An Artifacts folder: a real project, a linked topic, a dangling link, a guide tree."""
+    vault = base / "Artifacts"
     topic = base / "learnings" / "topics" / "architect"
     guides = topic / "guides"
     for folder in (vault / "Scratch" / "drafts", vault / "Empty Project", guides / "who-holds-the-plan" / "audio",
