@@ -144,9 +144,9 @@ body.kind-html .shell{{grid-template-columns:290px minmax(0,1fr)}}
 #side-edge{{position:fixed;top:0;bottom:0;left:0;z-index:39;display:none;width:8px}} body.side-unpinned #side-edge{{display:block}}
 body.side-unpinned .shell,body.side-unpinned.kind-html .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
 /* Floating, it is a panel lying on the page: inset, rounded, shadowed, and on a ground thick enough to read over a page's
-   text; the window's glass is too thin for that (the Obsidian look already brings an opaque ground of its own). */
+   text even where the blur is not drawn; the window's glass is too thin (the Obsidian look brings an opaque ground of its own). */
 body.side-unpinned #vault-side{{position:fixed;top:8px;bottom:8px;left:8px;z-index:40;width:min(260px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(-100% - 16px))}} body.side-unpinned.kind-html #vault-side{{width:min(290px,86vw)}} body.native.side-unpinned #vault-side{{padding-top:40px}}
-body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar)/.9);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
+body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar)/.96);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
 @media(prefers-reduced-transparency:reduce){{body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
 /* Motion: out with an ease-out slide; away with a quicker ease-in one, hidden only once it is off. Reduce Motion fades in place. */
