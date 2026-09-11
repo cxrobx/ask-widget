@@ -418,10 +418,15 @@ class BrowserSmokeTests(unittest.TestCase):
             self.assertTrue(side.is_visible())
             self.assertFalse(show.is_visible())
 
-            page.get_by_role("button", name="Hide sidebar").click()
+            hide = page.get_by_role("button", name="Hide sidebar")
+            hide.focus()
+            hide.press("Enter")  # from the keyboard, focus follows to the button that brings it back
             self.assertFalse(side.is_visible())
             self.assertEqual(pane.evaluate("e => e.getBoundingClientRect().width"), 1280)
             self.assertTrue(show.evaluate("e => e === document.activeElement"))
+            show.click()  # by mouse, focus stays put: WebKit would draw a ring on the handed-off button
+            self.assertFalse(page.get_by_role("button", name="Hide sidebar").evaluate("e => e === document.activeElement"))
+            page.get_by_role("button", name="Hide sidebar").click()
             page.reload(wait_until="networkidle")
             reader.locator("h1").wait_for()
             self.assertFalse(side.is_visible())  # remembered
@@ -445,6 +450,61 @@ class BrowserSmokeTests(unittest.TestCase):
             page.frame(name="reader").wait_for_function(
                 "() => document.querySelector('.askw-pill').getBoundingClientRect().width > 60"
             )
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_glass_icons_take_the_page_tone_not_the_app_theme(self) -> None:
+        # A dark app over a cream page (the usual HTML Vault case) must get light
+        # glass with dark ink there; dark glass would turn the icon into a smudge.
+        cream = self.root / "cream.html"
+        cream.write_text(
+            "<!doctype html><title>Cream</title><body style='background:#FDF6E3'><p>Cream page.</p></body>",
+            encoding="utf-8",
+        )
+        night = self.root / "night.html"
+        night.write_text(
+            "<!doctype html><title>Night</title><body style='background:#1a1a1a;color:#ddd'><p>Night page.</p></body>",
+            encoding="utf-8",
+        )
+        html_vault = self.root / "HTML Vault"
+        (html_vault / "Pages").mkdir(parents=True)
+        (html_vault / "Pages" / "cream.html").symlink_to(cream)
+        self.app.state.storage.update_settings({"html_vault_root": str(html_vault)}, model_default="sonnet")
+        alpha = "e => { const m = getComputedStyle(e).backgroundColor.match(/[\\d.]+/g); return m.length > 3 ? +m[3] : 1; }"
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            for scheme, document, tone, ink in (
+                ("dark", cream, "light", "rgb(13, 13, 13)"),
+                ("light", night, "dark", "rgb(255, 255, 255)"),
+            ):
+                page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme=scheme)
+                page.on("pageerror", lambda error: page_errors.append(str(error)))
+                page.goto(f"{self.base_url}/view?src={urllib.parse.quote(str(document))}", wait_until="networkidle")
+                self.assertEqual(page.locator("html").get_attribute("data-askw-page"), tone)
+                pill = page.locator(".askw-pill")
+                self.assertLessEqual(pill.evaluate(alpha), 0.3)  # glass at rest
+                self.assertIn("blur", pill.evaluate("e => getComputedStyle(e).backdropFilter"))
+                pill.hover()  # the name shows, so the glass frosts to a readable floor
+                expect(pill.locator("b")).to_have_css("color", ink)
+                page.wait_for_function(
+                    "() => { const m = getComputedStyle(document.querySelector('.askw-pill')).backgroundColor.match(/[\\d.]+/g); return m.length < 4 || +m[3] >= 0.7; }"
+                )
+                page.close()
+
+            # The vault's corner button mirrors the reader page's tone, not the dark app's.
+            page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme="dark")
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+            page.locator("#tree a.file", has_text="Cream").click()
+            page.frame_locator("iframe[name=reader]").get_by_text("Cream page.").wait_for()
+            page.wait_for_function("() => document.body.dataset.pageTone === 'light'")
+            page.get_by_role("button", name="Hide sidebar").click()
+            show = page.get_by_role("button", name="Show sidebar")
+            self.assertLessEqual(show.evaluate(alpha), 0.3)
+            self.assertEqual(show.evaluate("e => getComputedStyle(e).color"), "rgba(13, 13, 13, 0.62)")
             browser.close()
 
         self.assertEqual(page_errors, [])

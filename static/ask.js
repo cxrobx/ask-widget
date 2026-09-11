@@ -122,12 +122,16 @@
     '.askw-toast{position:fixed;bottom:24px;left:50%;z-index:2147483603;background:rgba(28,28,28,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:#fff;padding:9px 16px;border:1px solid rgba(255,255,255,.1);border-radius:10px;font-size:13px;box-shadow:0 12px 34px rgba(0,0,0,.28);opacity:0;pointer-events:none;transform:translateX(-50%) translateY(8px);transition:opacity .15s,transform .15s;}',
     '.askw-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}',
     // The context folder rests as a folder icon and slides its name out on hover,
-    // keyboard focus, or while the picker is open.
-    '.askw-pill{position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;height:30px;max-width:240px;background:rgba(255,255,255,.78);border:1px solid var(--askw-line);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.13),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);padding:0 7px;font-size:11.5px;color:#5d5d5d;cursor:pointer;transition:padding .2s ease;}',
+    // keyboard focus, or while the picker is open. It is glass lying on the page,
+    // so it is tinted for the page under it (data-askw-page), not the app theme:
+    // thin at rest, frosted to a readable floor once its name shows.
+    '.askw-pill{--askw-glass:rgba(255,255,255,.2);--askw-frost:rgba(255,255,255,.74);position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;height:30px;max-width:240px;background:var(--askw-glass);border:1px solid rgba(255,255,255,.55);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);padding:0 7px;font-size:11.5px;color:#5d5d5d;cursor:pointer;transition:padding .2s ease,background-color .2s ease;}',
     '.askw-pill .askw-ico{display:block;flex:none;width:14px;height:14px;color:var(--askw-accent);}',
     '.askw-pill b{color:#0d0d0d;font-weight:600;max-width:0;margin-left:0;opacity:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:max-width .2s ease,margin-left .2s ease,opacity .15s;}',
-    '.askw-pill:hover,.askw-pill:focus-visible,.askw-pill[aria-expanded="true"]{padding-right:11px;}',
+    '.askw-pill:hover,.askw-pill:focus-visible,.askw-pill[aria-expanded="true"]{padding-right:11px;background:var(--askw-frost);}',
     '.askw-pill:hover b,.askw-pill:focus-visible b,.askw-pill[aria-expanded="true"] b{max-width:180px;margin-left:6px;opacity:1;}',
+    'html[data-askw-page="dark"] .askw-pill{--askw-glass:rgba(22,22,22,.24);--askw-frost:rgba(30,30,30,.74);border-color:rgba(255,255,255,.14);box-shadow:0 6px 18px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.1);color:#cdcdcd;}',
+    'html[data-askw-page="dark"] .askw-pill b{color:#fff;}',
     '.askw-picker{position:fixed;top:42px;right:12px;z-index:2147483602;display:none;width:300px;background:rgba(255,255,255,.86);border:1px solid var(--askw-line);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.19),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(24px) saturate(1.32);-webkit-backdrop-filter:blur(24px) saturate(1.32);padding:10px;font-size:12.5px;}',
     '.askw-picker.open{display:block;}',
     '.askw-picker label{display:block;font-weight:600;color:#44403c;margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;}',
@@ -141,9 +145,8 @@
     '.askw-picker-save{margin-top:8px;width:100%;background:var(--askw-accent);color:#fff;border:none;border-radius:7px;padding:7px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;}',
     'html[data-askw-color="dark"] .askw-root{color:#fff;--askw-line:rgba(255,255,255,.15);--askw-soft:rgba(255,255,255,.07);}',
     'html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:rgba(35,35,35,.84);box-shadow:0 26px 70px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.10);}',
-    'html[data-askw-color="dark"] .askw-pill{background:rgba(35,35,35,.78);box-shadow:0 12px 34px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.10);}',
-    'html[data-askw-color="dark"] .askw-item,html[data-askw-color="dark"] .askw-body,html[data-askw-color="dark"] .askw-pill b{color:#fff;}',
-    'html[data-askw-color="dark"] .askw-selq,html[data-askw-color="dark"] .askw-q,html[data-askw-color="dark"] .askw-foot button,html[data-askw-color="dark"] .askw-pill,html[data-askw-color="dark"] .askw-picker label,html[data-askw-color="dark"] .askw-recent-item{color:#cdcdcd;}',
+    'html[data-askw-color="dark"] .askw-item,html[data-askw-color="dark"] .askw-body{color:#fff;}',
+    'html[data-askw-color="dark"] .askw-selq,html[data-askw-color="dark"] .askw-q,html[data-askw-color="dark"] .askw-foot button,html[data-askw-color="dark"] .askw-picker label,html[data-askw-color="dark"] .askw-recent-item{color:#cdcdcd;}',
     'html[data-askw-color="dark"] .askw-head,html[data-askw-color="dark"] .askw-foot,html[data-askw-color="dark"] .askw-followup{background:rgba(15,15,15,.22);}',
     'html[data-askw-color="dark"] .askw-item:hover,html[data-askw-color="dark"] .askw-x:hover,html[data-askw-color="dark"] .askw-recent-item:hover{background:rgba(255,255,255,.10);color:#fff;}',
     'html[data-askw-color="dark"] .askw-ask-input,html[data-askw-color="dark"] .askw-follow-input,html[data-askw-color="dark"] .askw-picker input,html[data-askw-color="dark"] .askw-picker-browse{background:rgba(45,45,45,.92);border-color:var(--askw-line);color:#fff;}',
@@ -153,9 +156,9 @@
     'html[data-askw-color="dark"] .askw-body code{background:rgba(255,255,255,.09);}',
     'html[data-askw-color="dark"] .askw-citation pre{background:#181818;color:#cdcdcd;}',
     'html[data-askw-color="dark"] .askw-follow-input:disabled{background:#242424;}',
-    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-menu,.askw-panel,.askw-picker,.askw-pill{background:#fff}}',
-    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker,html[data-askw-color="dark"] .askw-pill{background:#242424}}',
-    '@media(prefers-reduced-transparency:reduce){.askw-menu,.askw-panel,.askw-picker,.askw-pill{background:rgba(255,255,255,.98);backdrop-filter:none;-webkit-backdrop-filter:none}html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker,html[data-askw-color="dark"] .askw-pill{background:rgba(36,36,36,.98)}}',
+    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-menu,.askw-panel,.askw-picker{background:#fff}.askw-pill{--askw-glass:#fff;--askw-frost:#fff}}',
+    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:#242424}html[data-askw-page="dark"] .askw-pill{--askw-glass:#242424;--askw-frost:#242424}}',
+    '@media(prefers-reduced-transparency:reduce){.askw-menu,.askw-panel,.askw-picker{background:rgba(255,255,255,.98)}.askw-menu,.askw-panel,.askw-picker,.askw-pill{backdrop-filter:none;-webkit-backdrop-filter:none}.askw-pill{--askw-glass:rgba(255,255,255,.98);--askw-frost:rgba(255,255,255,.98)}html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:rgba(36,36,36,.98)}html[data-askw-page="dark"] .askw-pill{--askw-glass:rgba(36,36,36,.98);--askw-frost:rgba(36,36,36,.98)}}',
     '@media(prefers-reduced-motion:reduce){.askw-dot{animation:none}.askw-toast,.askw-pill,.askw-pill b{transition:none}}'
   ].join('\n');
 
@@ -1139,8 +1142,28 @@
     var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     var effective = appearanceTheme === 'dark' || (appearanceTheme === 'system' && systemDark) ? 'dark' : 'light';
     document.documentElement.setAttribute('data-askw-color', effective);
+    applyPageTone();
     var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.askwAppearance;
     if (bridge) Promise.resolve(bridge.postMessage({ theme: appearanceTheme })).catch(function () {});
+  }
+
+  // Glass chips lie on the page, so they take the page's tone — a dark app over a
+  // cream page still gets light glass. The first opaque background wins (body,
+  // then html); a transparent page shows the app's pane, so the app theme stands in.
+  function pageTone() {
+    var layers = [document.body, document.documentElement];
+    for (var i = 0; i < layers.length; i++) {
+      var m = layers[i] && /^rgba?\(([^)]*)\)/.exec(getComputedStyle(layers[i]).backgroundColor);
+      if (!m) continue;
+      var c = m[1].split(/[\s,\/]+/).map(Number);
+      if (c.length > 3 && c[3] < 0.5) continue;
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 140 ? 'light' : 'dark';
+    }
+    return document.documentElement.getAttribute('data-askw-color') || 'light';
+  }
+  function applyPageTone() {
+    var tone = pageTone();
+    if (document.documentElement.getAttribute('data-askw-page') !== tone) document.documentElement.setAttribute('data-askw-page', tone);
   }
 
   function initFolder() {
@@ -1184,7 +1207,7 @@
         if (!r.ok) throw new Error('Theme unavailable');
         return r.json();
       }).then(function (theme) {
-        if (typeof theme.css === 'string' && style.textContent !== theme.css) style.textContent = theme.css;
+        if (typeof theme.css === 'string' && style.textContent !== theme.css) { style.textContent = theme.css; applyPageTone(); }
       }).catch(function () { /* Keep the last good appearance while offline. */ })
         .finally(function () { pending = false; });
     }
@@ -1386,6 +1409,7 @@
     if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
       if (appearanceTheme === 'system') applyAppearance('system');
     });
+    window.addEventListener('load', applyPageTone);
     build();
     wire();
     initFolder().then(initHistoryReplay);
