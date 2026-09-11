@@ -250,6 +250,19 @@ For a first-class Alfred action, double-click
 select a supported file in Alfred, open Universal Actions (right arrow by
 default), and choose **Open in Onyx**.
 
+The same workflow searches Onyx from Alfred's bar and opens the pick in Onyx:
+
+| Keyword | Finds a page by | With nothing typed |
+|---|---|---|
+| `onx` | its title (a note's filename, an artifact's `<title>`) or its folder | the 30 pages changed most recently |
+| `onxc` | the words in it: a note's text, an artifact's visible text, never its markup or scripts | a hint |
+
+Every word typed must match. Both search Notes and Artifacts together, from the
+folders set under **Settings ▸ Vaults**, and list pages the way the sidebar
+does: a guide folder is one page, and a page linked into Artifacts from inside
+the Notes vault shows once. The search is `integrations/alfred/onyx_search.py`,
+run by the system Python.
+
 ### Opening a document directly
 
 ```text
@@ -438,7 +451,7 @@ build.
 ```text
 ask-widget/
 ├── integrations/
-│   ├── alfred/               Alfred file action
+│   ├── alfred/               Alfred workflow: onx/onxc search, file action
 │   └── obsidian/             Obsidian plugin (TypeScript, esbuild)
 ├── launcher/                 native Swift app and release build
 ├── scripts/                  smoke tests, background daemon, plugin install

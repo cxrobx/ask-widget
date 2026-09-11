@@ -19,15 +19,41 @@
                 <false/>
             </dict>
         </array>
+        <key>9165D218-582A-47B3-82D0-62EF4F9C4D38</key>
+        <array>
+            <dict>
+                <key>destinationuid</key>
+                <string>825A36E8-355B-4D1D-BDC7-04A9AF7D810C</string>
+                <key>modifiers</key>
+                <integer>0</integer>
+                <key>modifiersubtext</key>
+                <string></string>
+                <key>vitoclose</key>
+                <false/>
+            </dict>
+        </array>
+        <key>BA92213E-F6C0-428F-A08A-830DA28F5E01</key>
+        <array>
+            <dict>
+                <key>destinationuid</key>
+                <string>825A36E8-355B-4D1D-BDC7-04A9AF7D810C</string>
+                <key>modifiers</key>
+                <integer>0</integer>
+                <key>modifiersubtext</key>
+                <string></string>
+                <key>vitoclose</key>
+                <false/>
+            </dict>
+        </array>
     </dict>
     <key>createdby</key>
     <string>Onyx</string>
     <key>description</key>
-    <string>Open supported documents in Onyx from Alfred Universal Actions.</string>
+    <string>Search Onyx's Notes and Artifacts by title (onx) or content (onxc), and open documents in Onyx from Universal Actions.</string>
     <key>disabled</key>
     <false/>
     <key>name</key>
-    <string>Open in Onyx</string>
+    <string>Onyx</string>
     <key>objects</key>
     <array>
         <dict>
@@ -75,17 +101,152 @@
             <key>version</key>
             <integer>2</integer>
         </dict>
+        <dict>
+            <key>config</key>
+            <dict>
+                <key>alfredfiltersresults</key>
+                <false/>
+                <key>alfredfiltersresultsmatchmode</key>
+                <integer>0</integer>
+                <key>argumenttreatemptyqueryasnil</key>
+                <true/>
+                <key>argumenttrimmode</key>
+                <integer>0</integer>
+                <key>argumenttype</key>
+                <integer>1</integer>
+                <key>escaping</key>
+                <integer>102</integer>
+                <key>keyword</key>
+                <string>onx</string>
+                <key>queuedelaycustom</key>
+                <integer>3</integer>
+                <key>queuedelayimmediatelyinitially</key>
+                <true/>
+                <key>queuedelaymode</key>
+                <integer>0</integer>
+                <key>queuemode</key>
+                <integer>1</integer>
+                <key>runningsubtext</key>
+                <string>Searching titles…</string>
+                <key>script</key>
+                <string>/usr/bin/python3 onyx_search.py titles "$1"</string>
+                <key>scriptargtype</key>
+                <integer>1</integer>
+                <key>scriptfile</key>
+                <string></string>
+                <key>subtext</key>
+                <string>Find a note or artifact by its title</string>
+                <key>title</key>
+                <string>Onyx — Search Titles</string>
+                <key>type</key>
+                <integer>0</integer>
+                <key>withspace</key>
+                <true/>
+            </dict>
+            <key>type</key>
+            <string>alfred.workflow.input.scriptfilter</string>
+            <key>uid</key>
+            <string>9165D218-582A-47B3-82D0-62EF4F9C4D38</string>
+            <key>version</key>
+            <integer>3</integer>
+        </dict>
+        <dict>
+            <key>config</key>
+            <dict>
+                <key>alfredfiltersresults</key>
+                <false/>
+                <key>alfredfiltersresultsmatchmode</key>
+                <integer>0</integer>
+                <key>argumenttreatemptyqueryasnil</key>
+                <true/>
+                <key>argumenttrimmode</key>
+                <integer>0</integer>
+                <key>argumenttype</key>
+                <integer>0</integer>
+                <key>escaping</key>
+                <integer>102</integer>
+                <key>keyword</key>
+                <string>onxc</string>
+                <key>queuedelaycustom</key>
+                <integer>3</integer>
+                <key>queuedelayimmediatelyinitially</key>
+                <true/>
+                <key>queuedelaymode</key>
+                <integer>0</integer>
+                <key>queuemode</key>
+                <integer>1</integer>
+                <key>runningsubtext</key>
+                <string>Searching inside pages…</string>
+                <key>script</key>
+                <string>/usr/bin/python3 onyx_search.py content "$1"</string>
+                <key>scriptargtype</key>
+                <integer>1</integer>
+                <key>scriptfile</key>
+                <string></string>
+                <key>subtext</key>
+                <string>Find a note or artifact by words inside it</string>
+                <key>title</key>
+                <string>Onyx — Search Contents</string>
+                <key>type</key>
+                <integer>0</integer>
+                <key>withspace</key>
+                <true/>
+            </dict>
+            <key>type</key>
+            <string>alfred.workflow.input.scriptfilter</string>
+            <key>uid</key>
+            <string>BA92213E-F6C0-428F-A08A-830DA28F5E01</string>
+            <key>version</key>
+            <integer>3</integer>
+        </dict>
     </array>
     <key>readme</key>
-    <string>Select an HTML, Markdown, text, or PDF document in Alfred, open Universal Actions, and choose “Open in Onyx”. Onyx.app must be installed.</string>
+    <string>onx — find a note or artifact by its title (with nothing typed: the pages changed most recently).
+onxc — find one by the words inside it.
+↩ opens the page in Onyx · ⌘C copies its path · ⌘Y previews it.
+
+Universal Actions ▸ Open in Onyx opens a selected HTML, Markdown, text, or PDF document.
+
+Onyx.app must be installed; it need not be running. The folders searched are the ones set in Onyx ▸ Settings ▸ Vaults.</string>
     <key>uid</key>
     <string>0AC863CA-840D-4C10-B916-0EEBE84C71C5</string>
+    <key>uidata</key>
+    <dict>
+        <key>5A9B4161-9EF0-4D76-9C30-7B6126952E4C</key>
+        <dict>
+            <key>xpos</key>
+            <real>50</real>
+            <key>ypos</key>
+            <real>50</real>
+        </dict>
+        <key>825A36E8-355B-4D1D-BDC7-04A9AF7D810C</key>
+        <dict>
+            <key>xpos</key>
+            <real>330</real>
+            <key>ypos</key>
+            <real>170</real>
+        </dict>
+        <key>9165D218-582A-47B3-82D0-62EF4F9C4D38</key>
+        <dict>
+            <key>xpos</key>
+            <real>50</real>
+            <key>ypos</key>
+            <real>170</real>
+        </dict>
+        <key>BA92213E-F6C0-428F-A08A-830DA28F5E01</key>
+        <dict>
+            <key>xpos</key>
+            <real>50</real>
+            <key>ypos</key>
+            <real>290</real>
+        </dict>
+    </dict>
     <key>userconfigurationconfig</key>
     <array/>
     <key>variablesdontexport</key>
     <array/>
     <key>version</key>
-    <string>1.0.0</string>
+    <string>1.1.0</string>
     <key>webaddress</key>
     <string>https://github.com/cxrobx/ask-widget</string>
 </dict>
