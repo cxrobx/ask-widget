@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import socket
 import subprocess
@@ -538,6 +539,75 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_artifacts_rows_drag_into_folders_pin_and_rename_in_place(self) -> None:
+        topic = self.root / "learnings" / "topic"
+        (topic / "guides").mkdir(parents=True)
+        (topic / "guides" / "wire.html").write_text("<title>Reading the wire</title><p>On the wire.</p>", encoding="utf-8")
+        dashboard = self.root / "learnings" / "dashboard"
+        dashboard.mkdir()
+        (dashboard / "index.html").write_text("<title>Mastery Map</title>", encoding="utf-8")
+        vault = self.root / "Artifacts"
+        (vault / "Learnings").mkdir(parents=True)  # empty, and listed all the same: somewhere to drop
+        (vault / "Architect").symlink_to(topic, target_is_directory=True)
+        (vault / "Mastery Map").symlink_to(dashboard, target_is_directory=True)
+        self.app.state.storage.update_settings({"html_vault_root": str(vault)}, model_default="sonnet")
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1200, "height": 700})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault?vault=html", wait_until="networkidle")
+            learnings = page.locator("#tree details[data-rel='Learnings'] > summary")
+            expect(learnings).to_be_visible()
+            wire = page.locator("#tree a.file", has_text="Reading the wire")
+            self.assertEqual(wire.get_attribute("draggable"), "false")  # inside the linked topic: another tree's
+            wire.click()
+            page.wait_for_function("() => (document.getElementById('reader').contentDocument || {}).title === 'Reading the wire'")
+
+            # Dragging the link onto the folder moves the link, not the topic; the open page follows it.
+            page.locator(f"#tree summary[data-entry='{vault / 'Architect'}']").drag_to(learnings)
+            expect(page.locator("#tree details[data-rel='Learnings'] summary", has_text="Architect")).to_be_visible()
+            self.assertEqual(os.readlink(vault / "Learnings" / "Architect"), str(topic))
+            self.assertFalse(os.path.lexists(vault / "Architect"))
+            page.wait_for_function(
+                "p => decodeURIComponent(document.getElementById('reader').src).includes(p)",
+                arg=str(vault / "Learnings" / "Architect" / "guides" / "wire.html"),
+            )
+            # A guide-folder link two levels down is one page; pinned, it sorts ahead of the folder.
+            page.locator(f"#tree summary[data-entry='{vault / 'Mastery Map'}']").drag_to(learnings)
+            mastery = page.locator("#tree details[data-rel='Learnings'] a.file", has_text="Mastery Map")
+            expect(mastery).to_be_visible()
+            mastery.click(button="right")
+            page.wait_for_function("() => OnyxMenu.isOpen()")
+            page.locator(".onyx-menu button", has_text="Pin to Top").click()
+            first = page.locator("#tree details[data-rel='Learnings'] > ul > li").first
+            expect(first.locator(".pinned")).to_be_visible()
+            expect(first).to_contain_text("Mastery Map")
+
+            # Rename in place: Return keeps the name.
+            learnings.click(button="right")
+            page.wait_for_function("() => OnyxMenu.isOpen()")
+            page.locator(".onyx-menu button", has_text="Rename").click()
+            page.locator("#tree .name-edit").fill("Study")
+            page.keyboard.press("Enter")
+            expect(page.locator("#tree details[data-rel='Study']")).to_be_visible()
+            self.assertTrue((vault / "Study" / "Mastery Map").is_symlink())
+            # New Folder from the list's empty space; Escape on a second one leaves nothing behind.
+            box = page.locator("#tree").bounding_box()
+            for name, key in (("Resources", "Enter"), ("Scratch", "Escape")):
+                page.mouse.click(box["x"] + 100, box["y"] + box["height"] - 15, button="right")
+                page.wait_for_function("() => OnyxMenu.isOpen()")
+                page.locator(".onyx-menu button", has_text="New Folder").click()
+                page.locator("#tree .name-edit").fill(name)
+                page.keyboard.press(key)
+            expect(page.locator("#tree details[data-rel='Resources']")).to_be_visible()
+            self.assertEqual(page.locator("#tree .name-edit").count(), 0)
+            self.assertEqual(sorted(p.name for p in vault.iterdir()), ["Resources", "Study"])
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_sidebar_wears_the_obsidian_explorer_and_falls_back_live(self) -> None:
         notes = self.root / "CX"
         for folder in ("Archive", "Inbox/Quick Notes", "Projects"):  # the Notes tree lists folders that hold notes
@@ -811,14 +881,16 @@ class BrowserSmokeTests(unittest.TestCase):
                             menu.get_by_role("menuitem", name=label).click()
                         self.assertEqual(revealed[-1], target)
 
-                    # Folders: a linked one offers both sides, the vault's own folder only itself.
+                    # Folders: a linked one offers both sides, the vault's own folder only itself. Both sit in the
+                    # vault's own top level, so both rename, pin and come out; only the vault's own takes a new folder.
+                    owned = ["Rename", "Pin to Top", "Remove from Artifacts"]
                     page.locator("#tree summary", has_text="Architect").click(button="right")
                     expect(menu).to_have_attribute("aria-label", "Folder actions")
-                    expect(items).to_have_text(["Reveal in Finder", "Reveal Link in Finder"])
+                    expect(items).to_have_text(["Reveal in Finder", "Reveal Link in Finder", *owned])
                     page.keyboard.press("Escape")
                     expect(menu).to_be_hidden()
                     page.locator("#tree summary", has_text="Mine").click(button="right")
-                    expect(items).to_have_text(["Reveal in Finder"])
+                    expect(items).to_have_text(["Reveal in Finder", "New Folder", *owned])
                     page.locator("#vault-count").click()
                     expect(menu).to_be_hidden()
 
@@ -1233,7 +1305,7 @@ class BrowserSmokeTests(unittest.TestCase):
                         self.assertAlmostEqual(js[key], value, places=9, msg=(t, dark, key))
             link = page.locator("#tree a.file", has_text="Who holds the plan")
             self.assertEqual(link.count(), 1)
-            self.assertEqual(page.locator("#tree summary", has_text="Study").count(), 0)  # no page yet: not listed
+            self.assertEqual(page.locator("#tree summary", has_text="Study").count(), 1)  # empty, but the vault's own: listed
             link.click()
             reader = page.frame_locator("iframe[name=reader]")
             self.assertEqual(reader.locator("#predict p").inner_text(), "Before you read, predict the answer.")
@@ -1260,7 +1332,7 @@ class BrowserSmokeTests(unittest.TestCase):
             page.locator("#add-mkdir").click()
             # Made but empty: + offers it at once, the list only once it holds a page.
             expect(page.locator('#add-dest option[value="Study/Week 1"]')).to_have_count(1)
-            self.assertEqual(page.locator("#tree summary", has_text="Week 1").count(), 0)
+            self.assertEqual(page.locator("#tree summary", has_text="Week 1").count(), 1)  # empty, but the vault's own
             self.assertTrue((html_vault / "Study" / "Week 1").is_dir())
 
             page.locator("#add-dest").select_option("")

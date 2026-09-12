@@ -209,14 +209,24 @@ own look. See the plugin's README.
 ⌘⇧H) browses a folder of **symlinks to HTML pages anywhere on your Mac** — the HTML counterpart of an Obsidian vault. It defaults to
 `~/Documents/Artifacts`; change it under **Settings ▸ Vaults**.
 
-- **Top-level folders are projects.** A folder is listed once it holds a page,
-  so an empty one stays out of the way; **+** still offers it as a place to add
-  to. Link a whole folder (say a topic in `~/learnings`) and every page added to
-  it later shows up on its own.
+- **Folders nest as deep as you like.** A folder you made is listed even while
+  empty, so there is somewhere to add or drag pages; a linked folder is listed
+  once a page sits somewhere beneath it. Link a whole folder (say a topic in
+  `~/learnings`) and every page added to it later shows up on its own.
 - **Pages are listed by their `<title>`**, with how long ago each changed. Below
-  the project level a folder containing `index.html` is one page, so a guide
+  the top level a folder containing `index.html` is one page, so a guide
   folder reads as a single entry; its `index.inline.html` twin, audio, and notes
   stay out of the list.
+- **Reorganise in the sidebar.** Drag a row onto a folder (or onto the list's
+  empty space for the top level); a shut folder held under the pointer springs
+  open. Right-click for **New Folder**, **Rename** (folders), **Pin to Top**, and
+  **Remove from Artifacts**. Moving a link moves only the link — its target stays
+  where it is — and a hand-made relative link that a move would re-aim is
+  rewritten as an absolute one. Only what Artifacts owns can be handled: a link
+  or a folder sitting in one of its own folders, never a page inside a linked
+  folder (that page lives in another tree). Remove takes out a link or an empty
+  folder, never a target. A pin lives in the folder's hidden `.onyx.json` and
+  moves with its entry.
 - **A link whose target is gone stays listed, struck through, as *missing*.**
 - **+** links more in: HTML files or a folder through the native picker, or a
   pasted path or `file://` URL, into a project you choose; it can also create
@@ -403,7 +413,10 @@ deliberately narrow:
 11. Artifacts writes only symlinks and folders, and only inside its own
     folders: never through a linked folder (that would write into the tree it
     points at), never over an existing entry, never a link to something that
-    contains the Artifacts folder. Link targets are never modified.
+    contains the Artifacts folder. Moving, renaming, pinning and removing act
+    only on an entry sitting directly in one of its own folders; removing
+    deletes a link or an empty folder, never a real file. Link targets are never
+    modified.
 
 Both executables are launched directly, not through an interactive shell.
 Before launch, Anthropic/OpenAI API-key and alternate-provider environment

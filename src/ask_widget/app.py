@@ -959,6 +959,51 @@ def create_app(config: AppConfig) -> FastAPI:
             headers=cors(request.headers.get("origin")),
         )
 
+    # The sidebar's reorganising: drag a row onto a folder, and the row menu's
+    # Rename, Pin to Top and Remove. Each names an entry the tree marked as the
+    # vault's own; vault.owned_entry refuses anything else.
+    async def _html_vault_edit(request: Request, edit) -> JSONResponse:
+        guarded = await _html_vault_body(request)
+        if isinstance(guarded, JSONResponse):
+            return guarded
+        body, root = guarded
+        path = vault.normalize(str(body.get("path") or ""))
+        try:
+            result = await asyncio.to_thread(edit, body, root, path)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        app.state.vault.invalidate()
+        return JSONResponse({"ok": True, **result}, headers=cors(request.headers.get("origin")))
+
+    @app.post("/api/vault/html/move")
+    async def html_vault_move_api(request: Request):
+        def move(body: dict, root: Path, path: Path) -> dict:
+            return {"from": str(path), "path": str(vault.move_entry(root, path, str(body.get("dest") or "")))}
+
+        return await _html_vault_edit(request, move)
+
+    @app.post("/api/vault/html/rename")
+    async def html_vault_rename_api(request: Request):
+        def rename(body: dict, root: Path, path: Path) -> dict:
+            return {"from": str(path), "path": str(vault.rename_entry(root, path, str(body.get("name") or "")))}
+
+        return await _html_vault_edit(request, rename)
+
+    @app.post("/api/vault/html/pin")
+    async def html_vault_pin_api(request: Request):
+        def pin(body: dict, root: Path, path: Path) -> dict:
+            pinned = body.get("pinned") is not False
+            return {"path": str(vault.set_pinned(root, path, pinned)), "pinned": pinned}
+
+        return await _html_vault_edit(request, pin)
+
+    @app.post("/api/vault/html/remove")
+    async def html_vault_remove_api(request: Request):
+        def remove(body: dict, root: Path, path: Path) -> dict:
+            return {"path": str(path), "removed": vault.remove_entry(root, path)}
+
+        return await _html_vault_edit(request, remove)
+
     @app.get("/api/settings")
     async def settings_api(request: Request):
         if denied := api_forbidden(request):

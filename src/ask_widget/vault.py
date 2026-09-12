@@ -24,9 +24,11 @@ Markdown. Three things differ there, all in service of scanning the list:
     silently vanishing — in a vault made of links, a moved file is the common
     failure and the list is where you would notice it.
 
-Top-level folders are the vault's projects and stay in the index even while
-empty, so + can offer a folder you just made; the sidebar lists a folder only
-once a page sits somewhere beneath it.
+Folders the vault owns stay in the index, and in the sidebar, even while
+empty, so there is somewhere to link or drag a page into; a linked folder shows
+only once a page sits somewhere beneath it. What the vault owns — an entry
+directly in one of its own folders — can be moved, renamed, pinned to the top
+of its folder or removed; see *Reorganising Artifacts* below.
 """
 
 from __future__ import annotations
@@ -282,6 +284,185 @@ def create_link(root: Path | str, parent_rel: str, target: Path | str, name: str
     return link
 
 
+# MARK: - Reorganising Artifacts
+#
+# Moving, renaming, pinning and removing act on what Artifacts OWNS: an entry
+# sitting directly in one of its own folders — a link, or a folder made here.
+# Anything deeper, inside a linked folder, is a file in somebody else's tree,
+# and handling it would reach through the link into the real folder.
+
+PINS_FILE = ".onyx.json"  # a folder's own settings: {"pinned": [entry names, first first]}
+
+
+def owned_entry(root: Path | str, path: Path | str) -> Path:
+    """``path`` if Artifacts owns it, else ValueError. Lexical, like every path here."""
+    base = normalize(root)
+    entry = normalize(path)
+    if entry == base or not is_inside(entry, base) or entry.name.startswith("."):
+        raise ValueError("That is not in Artifacts.")
+    if first_link(entry.parent, base) is not None:
+        raise ValueError(
+            f"“{entry.name}” is inside a linked folder, so it belongs to another tree. Move or rename the link instead."
+        )
+    parent_rel = entry.parent.relative_to(base).as_posix()  # "." for the top level
+    writable_folder(base, "" if parent_rel == "." else parent_rel)
+    if not os.path.lexists(entry):
+        raise ValueError(f"“{entry.name}” is no longer in Artifacts.")
+    return entry
+
+
+def read_pins(folder: Path) -> list[str]:
+    """The entry names pinned to the top of ``folder``, in order."""
+    try:
+        data = json.loads((folder / PINS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    pins = data.get("pinned") if isinstance(data, dict) else None
+    return [name for name in pins if isinstance(name, str) and name] if isinstance(pins, list) else []
+
+
+def _update_pins(folder: Path, change) -> None:
+    """Rewrite ``folder``'s pins through ``change(list) -> list``; names no longer there drop out."""
+    path = folder / PINS_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    before = read_pins(folder)
+    after = [name for name in dict.fromkeys(change(list(before))) if os.path.lexists(folder / name)]
+    if after == before:
+        return
+    if after:
+        data["pinned"] = after
+    else:
+        data.pop("pinned", None)
+    if not data:
+        path.unlink(missing_ok=True)
+        return
+    staged = folder / f"{PINS_FILE}.tmp"
+    staged.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(staged, path)
+
+
+def _same_entry(a: Path, b: Path) -> bool:
+    """Two spellings of one directory entry: a case-only rename on a case-insensitive disk."""
+    try:
+        sa, sb = os.lstat(a), os.lstat(b)
+    except OSError:
+        return False
+    return (sa.st_dev, sa.st_ino) == (sb.st_dev, sb.st_ino)
+
+
+def _keep_links_pointing(entry: Path) -> None:
+    """Make absolute any relative link a move of ``entry`` would re-aim.
+
+    A relative link resolves from wherever it sits, so moving it — or a folder
+    holding it — points it somewhere else, unless its target moves along too.
+    Links Onyx makes are absolute; this covers ones made by hand (``ln -s ../x``).
+    """
+
+    def fix(link: Path) -> None:
+        raw = os.readlink(link)
+        if os.path.isabs(raw):
+            return
+        target = normalize(link.parent / raw)
+        if link != entry and is_inside(target, entry):
+            return  # travels with it
+        staged = link.with_name(f".{link.name}.onyx-link")
+        os.symlink(str(target), str(staged), target_is_directory=os.path.isdir(link))
+        os.replace(staged, link)
+
+    if os.path.islink(entry):
+        fix(entry)
+    elif entry.is_dir():
+        for dirpath, dirnames, filenames in os.walk(entry):  # never follows a link
+            for name in dirnames + filenames:
+                if os.path.islink(os.path.join(dirpath, name)):
+                    fix(Path(dirpath) / name)
+
+
+def move_entry(root: Path | str, path: Path | str, dest_rel: str) -> Path:
+    """Move an entry Artifacts owns into another of its folders; its new path.
+
+    ``os.rename`` moves a link itself, never what it points at, so the target
+    stays put and the link still resolves from its new folder. A pin moves with
+    the entry.
+    """
+    entry = owned_entry(root, path)
+    dest = writable_folder(root, dest_rel)
+    if dest == entry.parent:
+        return entry
+    if not os.path.islink(entry) and entry.is_dir() and is_inside(dest, entry):
+        raise ValueError(f"“{entry.name}” can't go inside itself.")
+    moved = dest / entry.name
+    if os.path.lexists(moved):
+        raise ValueError(f"“{entry.name}” already exists there.")
+    pinned = entry.name in read_pins(entry.parent)
+    _keep_links_pointing(entry)
+    os.rename(entry, moved)
+    _update_pins(entry.parent, lambda pins: pins)  # the old name is gone, so it drops out
+    if pinned:
+        _update_pins(dest, lambda pins: pins + [moved.name])
+    return moved
+
+
+def rename_entry(root: Path | str, path: Path | str, name: str) -> Path:
+    """Rename an entry Artifacts owns, in place; its new path. A page link keeps its extension."""
+    entry = owned_entry(root, path)
+    new_name = _clean_entry_name(name)
+    if (
+        not os.path.isdir(entry)
+        and entry.suffix.lower() in HTML_EXTENSIONS
+        and Path(new_name).suffix.lower() not in HTML_EXTENSIONS
+    ):
+        new_name += entry.suffix
+    renamed = entry.parent / new_name
+    if renamed == entry:
+        return entry
+    if os.path.lexists(renamed) and not _same_entry(entry, renamed):
+        raise ValueError(f"“{new_name}” already exists there.")
+    os.rename(entry, renamed)
+    _update_pins(entry.parent, lambda pins: [new_name if pin == entry.name else pin for pin in pins])
+    return renamed
+
+
+def set_pinned(root: Path | str, path: Path | str, pinned: bool) -> Path:
+    """Pin an entry Artifacts owns to the top of its folder, or unpin it."""
+    entry = owned_entry(root, path)
+    name = entry.name
+    if pinned:
+        _update_pins(entry.parent, lambda pins: pins if name in pins else pins + [name])
+    else:
+        _update_pins(entry.parent, lambda pins: [pin for pin in pins if pin != name])
+    return entry
+
+
+def remove_entry(root: Path | str, path: Path | str) -> str:
+    """Take a link, or an empty folder, out of Artifacts; which it was: "link" or "folder".
+
+    Only ever the vault's own side: a link goes and its target stays. A real
+    file here may be somebody's only copy, so it is refused, never deleted.
+    """
+    entry = owned_entry(root, path)
+    if os.path.islink(entry):
+        entry.unlink()
+        removed = "link"
+    elif entry.is_dir():
+        clutter = {PINS_FILE, ".DS_Store"}
+        left = [name for name in os.listdir(entry) if name not in clutter]
+        if left:
+            raise ValueError(f"“{entry.name}” isn't empty. Move or remove what's in it first.")
+        for name in clutter:
+            (entry / name).unlink(missing_ok=True)
+        entry.rmdir()
+        removed = "folder"
+    else:
+        raise ValueError(f"“{entry.name}” is a real file, not a link, so Onyx leaves it alone. Remove it in Finder.")
+    _update_pins(entry.parent, lambda pins: pins)
+    return removed
+
+
 def read_attachment_folder(root: Path) -> str:
     """Obsidian's ``attachmentFolderPath`` (vault-relative), with its default."""
     try:
@@ -403,6 +584,8 @@ class VaultIndex:
     symlinked_dirs: set[str] = field(default_factory=set)
     # Artifacts: folders shown even without a page (see _build_html).
     listed_dirs: list[str] = field(default_factory=list)
+    # Artifacts: each of its own folders' pinned entry names (PINS_FILE), by folder rel.
+    pins: dict[str, list[str]] = field(default_factory=dict)
     _by_rel: dict[str, VaultFile] = field(default_factory=dict, repr=False)
     _by_stem: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)
     _by_name: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)
@@ -550,15 +733,19 @@ class VaultIndex:
             keep.sort(key=str.casefold)
             dirnames[:] = keep
             # Folders the vault owns stay in the index even while empty, so +
-            # can offer a folder you just made (the sidebar shows it once it
-            # holds a page). Inside a linked tree only folders that hold pages
-            # appear, or a linked repo would list every directory.
+            # can offer a folder you just made and a page can be dragged into
+            # it. Inside a linked tree only folders that hold pages appear, or
+            # a linked repo would list every directory.
             for name in keep:
                 child_rel = f"{rel_dir}/{name}" if rel_dir else name
                 if depth == 0 or not any(
                     child_rel == linked or child_rel.startswith(linked + "/") for linked in index.symlinked_dirs
                 ):
                     index.listed_dirs.append(child_rel)
+            if PINS_FILE in filenames and not any(
+                rel_dir == linked or rel_dir.startswith(linked + "/") for linked in index.symlinked_dirs
+            ):
+                index.pins[rel_dir] = read_pins(current)
             for filename in sorted(filenames, key=str.casefold):
                 if filename.startswith("."):
                     continue
@@ -594,6 +781,16 @@ class VaultIndex:
         dirs: dict[str, dict[str, Any]] = {"": root_node}
 
         html = self.kind == "html"
+        # A pinned node's place among its folder's pins; the sort puts these first.
+        rank: dict[int, int] = {}
+
+        def owned(node: dict[str, Any], folder_rel: str, entry: Path) -> None:
+            """Mark a row the vault owns (see owned_entry): ``entry`` is what moving it moves."""
+            node["entry"] = str(entry)
+            pins = self.pins.get(folder_rel) or []
+            if entry.name in pins:
+                node["pinned"] = True
+                rank[id(node)] = pins.index(entry.name)
 
         def folder_node(rel: str) -> dict[str, Any]:
             node = dirs.get(rel)
@@ -609,6 +806,8 @@ class VaultIndex:
                 # anything under it) is another tree — see writable_folder.
                 node["rel"] = rel
                 node["linked"] = bool(node.get("symlink") or parent.get("linked"))
+                if not parent.get("linked"):
+                    owned(node, parent_rel, self.root / rel)
             dirs[rel] = node
             parent["children"].append(node)
             return node
@@ -647,11 +846,16 @@ class VaultIndex:
                     node["target"] = os.readlink(item.path)
                 except OSError:
                     pass
-            folder_node(parent_rel)["children"].append(node)
+            parent = folder_node(parent_rel)
+            if not parent.get("linked"):
+                # A guide folder's page moves as its folder, the thing sitting in the vault's.
+                owned(node, parent_rel, item.path.parent if item.page_dir else item.path)
+            parent["children"].append(node)
 
         def sort(node: dict[str, Any]) -> None:
             node["children"].sort(
                 key=lambda n: (
+                    (0, rank[id(n)]) if id(n) in rank else (1, 0),
                     0 if n["kind"] == "dir" else 1,
                     (n.get("title") or n["name"]).casefold(),
                 )

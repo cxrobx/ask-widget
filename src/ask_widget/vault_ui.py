@@ -2,9 +2,9 @@
 
 **Notes** is the Obsidian vault (Markdown, wikilinks). **Artifacts** is a folder
 of symlinks to HTML pages anywhere on disk: its top-level folders are projects,
-pages are labelled by their ``<title>``, and the **+** panel links more in (it
-only ever creates links and folders inside the vault — see
-``vault.writable_folder``). **Library**, where the app opens, is both at once:
+pages are labelled by their ``<title>``, and the **+** panel links more in. It,
+and the sidebar's reorganising, only ever touch links and folders inside the
+vault — see ``vault.writable_folder`` and ``vault.owned_entry``. **Library**, where the app opens, is both at once:
 each vault's tree under its own heading, and, while no page is open, the home
 page in the reader's place — open a file or URL, what you had open lately, and
 your latest asks. Settings and Recent conversations are the two modals at the
@@ -14,8 +14,9 @@ The page is deliberately thin. Files are plain ``<a target=reader>`` links, so
 the named iframe handles navigation and history without any click JS; the
 script only builds the tree, keeps the highlight in sync with whatever the
 reader currently shows, drives the filter box, the rows' right-click menu
-(``static/app-menu.js``: Reveal in Finder, and ⌥ Copy Path), and (Artifacts)
-the add panel.
+(``static/app-menu.js``: Reveal in Finder, and ⌥ Copy Path), and, in
+Artifacts, the add panel and reorganising: drag a row onto a folder, and the
+menu's New Folder, Rename, Pin to Top and Remove from Artifacts.
 
 Switching views happens in place, never by loading another page: a load blanks
 the glass window for a frame and leaves the tree reading "Loading…" until it is
@@ -72,6 +73,8 @@ TREE_ICONS = {
         cls="", body='<path d="M4 1.75h5.25L12.5 5v8.25c0 .55-.45 1-1 1H4c-.55 0-1-.45-1-1V2.75c0-.55.45-1 1-1z"/><path d="M9 1.75V5.25h3.5M5.5 8.5h5M5.5 11h3.5"/>'
     ),
     "link": _SVG.format(cls="", body='<path d="M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>'),
+    # A row pinned to the top of its folder (Artifacts): the sidebar's own pin, small.
+    "pin": _SVG.format(cls="", body='<path d="M6.75 2.25v3.5L4.75 8.5h6.5l-2-2.75v-3.5z"/><path d="M5.75 2.25h4.5M8 8.5v5.25"/>'),
     # Only the Obsidian look shows it (sidebar_theme): a chevron that turns as its folder opens.
     "chev": '<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>',
@@ -223,6 +226,12 @@ body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1)
 @media(prefers-reduced-motion:reduce){{body.side-unpinned #vault-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.side-unpinned.side-out #vault-side{{opacity:1;transition:opacity .15s linear,visibility 0s}}}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
+/* Reorganising Artifacts: the row being dragged fades, the folder it would land in wears that ring over a wash (the whole
+   list does, for the top level), a pinned row carries a quiet pin, and a name being edited is a field in its row. */
+#tree .dragging{{opacity:.45}} #tree .drop-into{{background:rgb(var(--accent)/.12);box-shadow:inset 0 0 0 2px rgb(var(--accent))}} #tree.drop-root{{border-radius:10px;box-shadow:inset 0 0 0 2px rgb(var(--accent)/.55)}}
+#tree .pinned{{display:grid;flex:none;margin-left:auto;color:rgb(var(--faint))}} #tree .pinned svg{{width:11px;height:11px}} #tree .pinned+.sym{{margin-left:4px}}
+#tree .new-folder>svg{{flex:none;width:16px;height:16px;color:rgb(var(--ink)/.6)}} #tree .lbl:has(.name-edit){{flex:1}}
+#tree .name-edit{{width:100%;min-width:0;margin:-3px 0;padding:2px 6px;border:1px solid rgb(var(--accent));border-radius:6px;background:rgb(var(--bg-input));color:rgb(var(--ink));font:inherit;outline:2px solid rgb(var(--accent)/.26)}}
 {panels_css}
 </style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Library and vaults"><a href="/"{library_active} data-kind=library>Library</a><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
@@ -264,12 +273,16 @@ function ago(ts){{if(!ts)return'';const d=Math.max(0,Date.now()/1000-ts);if(d<36
 function label(n,k){{return k==='html'?(n.title||n.name):n.name.replace(/\\.(md|markdown)$/i,'')}} function badge(ext){{return /^\\.(md|markdown)$/i.test(ext)?'':`<span class=ext>${{esc(ext.replace('.',''))}}</span>`}}
 // Rows carry only a label and their vault; what a page is (title, summary, folder, kind, age) waits in NODES for the hover card.
 const ICON={icons_json}; const NODES=new Map();
-function fileRow(n,crumbs,k){{NODES.set(n.path,{{n,crumbs,k}});if(n.missing)return `<li><span class="file missing" data-path="${{esc(n.path)}}" data-vault=${{k}} tabindex=0><span class=lbl>${{esc(label(n,k))}}</span><span class=ext>missing</span></span></li>`;return `<li><a class=file target=reader href="${{esc(viewHref(n.path,k))}}" data-path="${{esc(n.path)}}" data-vault=${{k}}><span class=lbl>${{esc(label(n,k))}}</span>${{k==='html'?'':badge(n.ext||'')}}</a></li>`}}
-function dirRow(n,crumbs,k){{const inside=crumbs.concat(n.name);return `<li><details data-path="${{esc(n.path)}}" data-vault=${{k}}${{isOpen(k,n.path)?' open':''}}><summary title="${{esc(n.path)}}">${{ICON.chev}}<span class=fold>${{ICON.shut}}${{ICON.open}}</span><span class=lbl>${{esc(n.name)}}</span>${{n.symlink?'<span class=sym title="Linked folder">↗</span>':''}}</summary><ul>${{n.children.map(c=>render(c,inside,k)).join('')}}</ul></details></li>`}}
-// Artifacts lists a folder only once a page sits somewhere beneath it; + still offers an empty one (destinations walks the tree).
-function hasPages(n){{return n.kind!=='dir'||n.children.some(hasPages)}}
-function render(n,crumbs,k){{return n.kind!=='dir'?fileRow(n,crumbs,k):(k==='html'&&!hasPages(n))?'':dirRow(n,crumbs,k)}}
-function topRows(k){{const d=TREES[k],top=k==='html'?d.tree.children.filter(hasPages):d.tree.children;return top.map(c=>render(c,[],k)).join('')}}
+// Artifacts: a row the vault owns (n.entry) drags to another of its folders, and a folder of its own (not linked) takes
+// the drop. Everything inside a linked folder is another tree's, so it stays put (vault.owned_entry).
+function grip(n,k){{if(k!=='html')return '';return n.entry?` draggable=true data-entry="${{esc(n.entry)}}"${{n.pinned?' data-pinned':''}}`:' draggable=false'}}
+function pinMark(n){{return n.pinned?`<span class=pinned title="Pinned to the top">${{ICON.pin}}</span>`:''}}
+function fileRow(n,crumbs,k){{NODES.set(n.path,{{n,crumbs,k}});if(n.missing)return `<li><span class="file missing" data-path="${{esc(n.path)}}" data-vault=${{k}} tabindex=0${{grip(n,k)}}><span class=lbl>${{esc(label(n,k))}}</span><span class=ext>missing</span></span></li>`;return `<li><a class=file target=reader href="${{esc(viewHref(n.path,k))}}" data-path="${{esc(n.path)}}" data-vault=${{k}}${{grip(n,k)}}><span class=lbl>${{esc(label(n,k))}}</span>${{pinMark(n)}}${{k==='html'?'':badge(n.ext||'')}}</a></li>`}}
+function dirRow(n,crumbs,k){{const inside=crumbs.concat(n.name),own=k==='html'&&!n.linked;return `<li><details data-path="${{esc(n.path)}}" data-vault=${{k}}${{own?` data-rel="${{esc(n.rel)}}"`:''}}${{isOpen(k,n.path)?' open':''}}><summary title="${{esc(n.path)}}"${{grip(n,k)}}>${{ICON.chev}}<span class=fold>${{ICON.shut}}${{ICON.open}}</span><span class=lbl>${{esc(n.name)}}</span>${{pinMark(n)}}${{n.symlink?'<span class=sym title="Linked folder">↗</span>':''}}</summary><ul>${{n.children.map(c=>render(c,inside,k)).join('')}}</ul></details></li>`}}
+// Artifacts lists its own folders even while empty (somewhere to drop a page), a linked one only once a page sits beneath it.
+function shows(n,k){{return n.kind!=='dir'||k!=='html'||!n.linked||n.children.some(c=>shows(c,k))}}
+function render(n,crumbs,k){{return n.kind!=='dir'?fileRow(n,crumbs,k):shows(n,k)?dirRow(n,crumbs,k):''}}
+function topRows(k){{return TREES[k].tree.children.filter(c=>shows(c,k)).map(c=>render(c,[],k)).join('')}}
 // Library: each vault under its own heading; a vault not set up says so under its heading rather than vanishing.
 function groupRow(k){{const d=TREES[k];let body='';if(d&&d.error)body=`<li class=none>${{esc(d.error)}} <a href="#settings" data-settings=set-vaults>Open Settings</a></li>`;else if(d)body=topRows(k)||`<li class=none>${{k==='html'?'No artifacts yet.':'No notes found.'}}</li>`;return `<li class=group><details data-group=${{k}}${{isOpen('library',k)?' open':''}}><summary class=group-head><span class=lbl>${{GROUPS[k]}}</span>${{d&&!d.error?`<span class=count>${{d.files}}</span>`:''}}</summary><ul>${{body}}</ul></details></li>`}}
 function renderTree(){{hidePeek();NODES.clear();if(KIND==='library')tree.innerHTML='<ul class=root>'+BOTH.map(groupRow).join('')+'</ul>';else{{const d=TREES[KIND];if(!d||d.error)return;const rows=topRows(KIND);tree.innerHTML=rows?'<ul class=root>'+rows+'</ul>':`<div class=none>${{HTML?'No artifacts yet. Use + to link pages or a folder of them.':'No notes found.'}}</div>`}}
@@ -294,7 +307,7 @@ function vaultOf(src){{let best='',depth=0;for(const k in TREES){{const r=TREES[
 const SIDE_KEY='askw:vault:sidebar', side=$('#vault-side'), pin=$('#side-pin'), edge=$('#side-edge'); let sideOver=false, sideTimer=0;
 function pinned(){{return !document.body.classList.contains('side-unpinned')}}
 function sideOut(out){{document.body.classList.toggle('side-out',out);side.inert=!pinned()&&!out;if(!out)hidePeek()}}
-function inUse(){{const a=document.activeElement,p=$('#add-panel');return !!((window.OnyxMenu&&OnyxMenu.isOpen())||(p&&!p.hidden)||(a&&side.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)))}}
+function inUse(){{const a=document.activeElement,p=$('#add-panel');return !!(DRAG||(window.OnyxMenu&&OnyxMenu.isOpen())||(p&&!p.hidden)||(a&&side.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)))}}
 function sideLater(){{clearTimeout(sideTimer);if(pinned())return;sideTimer=setTimeout(function check(){{if(pinned()||sideOver)return;if(inUse()){{sideTimer=setTimeout(check,400);return}}sideOut(false)}},400)}}
 function setPinned(on){{document.body.classList.toggle('side-unpinned',!on);store(SIDE_KEY,on?'':'unpinned');pin.setAttribute('aria-pressed',String(on));pin.title=(on?'Unpin':'Pin')+' sidebar (⌘\\\\)';clearTimeout(sideTimer);sideOut(!on&&(sideOver||inUse()));if(!on&&!sideOver)sideLater()}}
 function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setPinned(!pinned())}}}}
@@ -324,7 +337,10 @@ document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$
 // MARK: row menu — the app's rendered menu (static/app-menu.js). The server says what a row really is (its real file, and
 // the link on the way); ⌥ turns each Reveal into a Copy. A mousedown while the answer is in flight means it came too late.
 let menuSeq=0; document.addEventListener('mousedown',()=>{{menuSeq++}},true);
-tree.addEventListener('contextmenu',async e=>{{const row=e.target.closest('#tree .file, #tree summary');if(!row||!window.OnyxMenu)return;e.preventDefault();
+tree.addEventListener('contextmenu',async e=>{{const row=e.target.closest('#tree .file, #tree summary');if(!window.OnyxMenu)return;
+// Artifacts' empty space: a new folder at the top level.
+if(!row){{if(HTML&&rootOf('html')&&!e.target.closest('#tree li')){{e.preventDefault();OnyxMenu.open({{items:[{{id:'new-folder',label:'New Folder'}}],x:e.clientX,y:e.clientY,label:'Artifacts actions',onSelect:()=>newFolder('')}})}}return}}
+e.preventDefault();
 // WebKit on macOS selects the word under a right-click before this event fires (for Look Up); a row isn't text to select.
 const sel=getSelection();if(sel&&sel.anchorNode&&row.contains(sel.anchorNode))sel.removeAllRanges();const holder=row.closest('[data-vault]'),vk=holder&&holder.dataset.vault,path=row.dataset.path||row.parentElement.dataset.path;if(!path||!vk)return;
 let x=e.clientX,y=e.clientY;if(!x&&!y){{const r=row.getBoundingClientRect();x=r.left+16;y=r.bottom}}
@@ -332,9 +348,17 @@ const seq=++menuSeq;let d;try{{d=await api('/api/vault/entry?vault='+vk+'&path='
 const items=[];if(!d.is_dir)items.push({{id:'open',label:'Open',enabled:d.exists}});
 items.push({{id:'reveal',label:'Reveal in Finder',enabled:!!d.real,alt:{{id:'copy',label:'Copy Path'}}}});
 if(d.link)items.push({{id:'reveal-link',label:'Reveal Link in Finder',alt:{{id:'copy-link',label:'Copy Link Path'}}}});
+// Artifacts' own rows (see grip): a folder of its own takes a new one, and what the vault owns renames (folders — a page
+// is labelled by its title, not its name), pins, and comes out.
+if(vk==='html'){{const own=row.tagName==='SUMMARY'&&row.parentElement.dataset.rel!==undefined,entry=row.dataset.entry,pinned=row.dataset.pinned!==undefined,more=[];
+if(own)more.push({{id:'new-folder',label:'New Folder'}});if(entry&&row.tagName==='SUMMARY')more.push({{id:'rename',label:'Rename'}});
+if(entry)more.push({{id:pinned?'unpin':'pin',label:pinned?'Unpin':'Pin to Top'}},{{id:'remove',label:'Remove from Artifacts'}});if(more.length)items.push({{separator:true}},...more)}}
 OnyxMenu.open({{items,x,y,label:(d.is_dir?'Folder':vk==='html'?'Page':'Note')+' actions',returnFocus:row,onClose:()=>row.classList.remove('menu-for'),onSelect:id=>rowAction(id,d,row,vk)}});row.classList.add('menu-for')}});
 function copyPath(p){{if(!navigator.clipboard)throw new Error('The clipboard is not available here.');return navigator.clipboard.writeText(p).then(()=>OnyxMenu.toast('Copied '+shortPath(p)))}}
-async function rowAction(id,d,row,vk){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else reader.src=viewHref(d.path,vk)}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:vk,path:d.path,which:id==='reveal'?'real':'link'}})}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
+async function rowAction(id,d,row,vk){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else reader.src=viewHref(d.path,vk)}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:vk,path:d.path,which:id==='reveal'?'real':'link'}})
+else if(id==='new-folder')newFolder(row.parentElement.dataset.rel);else if(id==='rename')renameRow(row);
+else if(id==='pin'||id==='unpin'){{await postJSON('/api/vault/html/pin',{{path:row.dataset.entry,pinned:id==='pin'}});await loadTree()}}
+else if(id==='remove'){{const r=await postJSON('/api/vault/html/remove',{{path:row.dataset.entry}});await loadTree();OnyxMenu.toast(r.removed==='link'?'Removed the link · the original is untouched':'Removed the folder')}}}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
 // MARK: add panel (Artifacts only; CSS keeps it out of the other views)
 const DEST_KEY=keyOf('html')+'dest';
 function destinations(){{const out=[{{rel:'',label:'Top level'}}],d=TREES.html;(function walk(n,depth){{for(const c of n.children||[]){{if(c.kind==='dir'&&!c.linked){{out.push({{rel:c.rel,label:'\\u00a0'.repeat(depth*3)+c.name}});walk(c,depth+1)}}}}}})(d&&d.tree||{{children:[]}},0);return out}}
@@ -348,8 +372,47 @@ $('#add-dest').onchange=e=>store(DEST_KEY,e.target.value);
 $('#add-pick-files').onclick=async()=>{{try{{const picked=await window.webkit.messageHandlers.askwPick.postMessage({{kind:'html',initial:''}});await linkTargets(Array.isArray(picked)?picked:[picked])}}catch(e){{addStatus(e.message,'bad')}}}};
 $('#add-pick-folder').onclick=async()=>{{try{{const picked=await window.webkit.messageHandlers.askwPick.postMessage({{kind:'folder',initial:'',prompt:'Link Folder',message:'Choose a folder of HTML pages to link into Artifacts'}});await linkTargets([picked])}}catch(e){{addStatus(e.message,'bad')}}}};
 $('#add-path-go').onclick=()=>linkTargets([$('#add-path').value.trim()]);$('#add-path').onkeydown=e=>{{if(e.key==='Enter'){{e.preventDefault();linkTargets([e.target.value.trim()])}}}};
-async function makeFolder(){{const name=$('#add-folder-name').value.trim();if(!name)return;try{{const d=await postJSON('/api/vault/html/folder',{{parent:$('#add-dest').value,name}});$('#add-folder-name').value='';store(DEST_KEY,d.rel);addStatus('Created '+d.rel+' · it appears once it holds a page','ok');await loadTree()}}catch(e){{addStatus(e.message,'bad')}}}}
+async function makeFolder(){{const name=$('#add-folder-name').value.trim();if(!name)return;try{{const d=await postJSON('/api/vault/html/folder',{{parent:$('#add-dest').value,name}});$('#add-folder-name').value='';store(DEST_KEY,d.rel);addStatus('Created '+d.rel,'ok');await loadTree()}}catch(e){{addStatus(e.message,'bad')}}}}
 $('#add-mkdir').onclick=makeFolder;$('#add-folder-name').onkeydown=e=>{{if(e.key==='Enter'){{e.preventDefault();makeFolder()}}}}}}
+// MARK: reorganising (Artifacts) — drag a row the vault owns onto one of its folders, or onto the list's empty space for
+// the top level; a row inside a folder counts as that folder, as in Finder's list view, and a shut folder held under the
+// pointer springs open. The server moves the link itself, never what it points at (vault.move_entry).
+let DRAG=null,dropMark=null,springTimer=0;
+function parentRel(rel){{const i=rel.lastIndexOf('/');return i<0?'':rel.slice(0,i)}}
+function dropAt(el){{if(!DRAG||!el||!el.closest)return null;let rel,mark;const d=el.closest('#tree details[data-rel]'),g=el.closest('#tree li.group');
+if(d){{rel=d.dataset.rel;mark=d.querySelector(':scope > summary')}}else if(g){{const gd=g.querySelector(':scope > details');if(gd.dataset.group!=='html')return null;rel='';mark=gd.querySelector(':scope > summary')}}else if(KIND==='html'&&tree.contains(el)){{rel='';mark=tree}}else return null;
+if(rel===DRAG.parent||(DRAG.dir&&(rel===DRAG.rel||rel.startsWith(DRAG.rel+'/'))))return null;return {{rel,mark}}}}
+function markDrop(t){{const m=t?t.mark:null;if(m===dropMark)return;if(dropMark)dropMark.classList.remove(dropMark===tree?'drop-root':'drop-into');if(m)m.classList.add(m===tree?'drop-root':'drop-into');dropMark=m;clearTimeout(springTimer);
+const d=m&&m.tagName==='SUMMARY'?m.parentElement:null;if(d&&!d.open)springTimer=setTimeout(()=>{{if(dropMark===m)d.open=true}},650)}}
+function endDrag(){{DRAG=null;markDrop(null);tree.querySelectorAll('.dragging').forEach(r=>r.classList.remove('dragging'))}}
+tree.addEventListener('dragstart',e=>{{const row=e.target.closest&&e.target.closest('#tree [data-entry]'),root=rootOf('html');if(!row||!root)return;const entry=row.dataset.entry,rel=entry.slice(root.length+1);
+DRAG={{entry,rel,parent:parentRel(rel),dir:row.tagName==='SUMMARY'}};e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('application/x-onyx-entry',entry);row.classList.add('dragging');hidePeek()}});
+tree.addEventListener('dragover',e=>{{if(!DRAG)return;const t=dropAt(e.target);markDrop(t);if(t){{e.preventDefault();e.dataTransfer.dropEffect='move'}}}});
+document.addEventListener('dragover',e=>{{if(DRAG&&!tree.contains(e.target))markDrop(null)}});
+tree.addEventListener('drop',e=>{{const t=DRAG&&dropAt(e.target),entry=DRAG&&DRAG.entry;endDrag();if(!t)return;e.preventDefault();moveEntry(entry,t.rel)}});
+tree.addEventListener('dragend',endDrag);
+async function moveEntry(entry,dest){{try{{const d=await postJSON('/api/vault/html/move',{{path:entry,dest}});remap(d.from,d.path);if(dest)setOpen('html',rootOf('html')+'/'+dest,true);await loadTree();OnyxMenu.toast('Moved to '+(dest?dest.split('/').join(' › '):'the top level'))}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
+// A move or rename changes the vault path of everything beneath it, so what the shell remembers by path follows: the
+// folders left shut, the page each view comes back to, the + panel's destination, and the page open now (loaded again
+// from its new path, which is how it keeps its link's context).
+function remap(from,to){{if(!from||from===to)return;const move=p=>p===from?to:p&&p.startsWith(from+'/')?to+p.slice(from.length):'';
+const f=FOLDS.html;for(const p of [...f]){{const q=move(p);if(q){{f.delete(p);f.add(q)}}}}store(foldKey('html'),JSON.stringify([...f]));
+const lk=keyOf('html')+'last',last=move(recall(lk));if(last)store(lk,last);
+const root=rootOf('html'),dest=recall(DEST_KEY),moved=dest&&move(root+'/'+dest);if(moved)store(DEST_KEY,moved.slice(root.length+1));
+const src=move(currentSrc());if(src){{let hash='';try{{hash=reader.contentWindow.location.hash}}catch(e){{}}reader.src=viewHref(src,'html')+hash}}}}
+// New Folder and Rename name a row in place, as Finder does: Return keeps the name, Escape (or nothing typed) puts it back.
+function nameInPlace(slot,initial,save){{const input=document.createElement('input'),was=[...slot.childNodes],held=slot.closest('[draggable]');
+input.className='name-edit';input.value=initial;input.spellcheck=false;input.autocomplete='off';input.setAttribute('aria-label',initial?'New name':'Folder name');if(held)held.draggable=false;slot.replaceChildren(input);let done=false;
+async function finish(keep){{if(done)return;done=true;const name=input.value.trim();if(keep&&name&&name!==initial){{try{{await save(name);return}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
+if(slot.dataset.temp!==undefined)slot.closest('li').remove();else{{slot.replaceChildren(...was);if(held)held.draggable=true}}}}
+input.addEventListener('keydown',e=>{{e.stopPropagation();if(e.key==='Enter'){{e.preventDefault();finish(true)}}else if(e.key==='Escape'){{e.preventDefault();finish(false)}}}});
+// Inside a folder's summary a click, or Space, would also open or shut the folder.
+input.addEventListener('click',e=>e.preventDefault());input.addEventListener('keyup',e=>{{if(e.key===' ')e.preventDefault()}});
+input.addEventListener('blur',()=>finish(true));input.focus();input.select()}}
+function renameRow(row){{const lbl=row.querySelector('.lbl');if(lbl&&row.dataset.entry)nameInPlace(lbl,lbl.textContent,async name=>{{const d=await postJSON('/api/vault/html/rename',{{path:row.dataset.entry,name}});remap(d.from,d.path);await loadTree()}})}}
+function newFolder(rel){{let list;if(rel){{const d=tree.querySelector(`details[data-rel="${{CSS.escape(rel)}}"]`);if(!d)return;d.open=true;list=d.querySelector(':scope > ul')}}else if(KIND==='library'){{const g=tree.querySelector('details[data-group=html]');if(!g)return;g.open=true;list=g.querySelector(':scope > ul')}}else{{list=tree.querySelector(':scope > ul.root');if(!list){{tree.innerHTML='<ul class=root></ul>';list=tree.firstChild}}}}
+const li=document.createElement('li');li.innerHTML=`<span class="file new-folder">${{ICON.folder}}<span class=lbl data-temp></span></span>`;list.prepend(li);li.scrollIntoView({{block:'nearest'}});
+nameInPlace(li.querySelector('.lbl'),'',async name=>{{await postJSON('/api/vault/html/folder',{{parent:rel,name}});await loadTree()}})}}
 // MARK: Obsidian look — while the vault's file-explorer look is in force (body.obsidian-tree, CSS from /api/sidebar-theme),
 // each top-level folder takes its own Obsidian colour: by name in Notes, else by position — Artifacts always by position,
 // since its folder names never match the vault's. Kept live, like the reader's Markdown styles.

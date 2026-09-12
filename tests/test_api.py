@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import tempfile
 import unittest
@@ -609,6 +611,94 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in reveal.call_args_list], [real, str(self.vault / "Architect")])
         self.assertEqual((escape.status_code, not_a_link.status_code), (400, 400))
         self.assertEqual(not_a_link.json()["error"], "That row is not a link.")
+
+    def test_reorganising_moves_only_what_the_vault_owns_and_never_a_target(self) -> None:
+        def tree() -> dict:
+            return self.client.get("/api/vault/tree", params={"vault": "html"}).json()["tree"]
+
+        def child(node: dict, name: str) -> dict:
+            return next(c for c in node["children"] if c["name"] == name)
+
+        def labels(node: dict) -> list[str]:
+            return [c.get("title") or c["name"] for c in node["children"]]
+
+        # Every row the vault owns says what moving it moves; a guide inside the linked topic says nothing.
+        architect = child(tree(), "Architect")
+        self.assertEqual(architect["entry"], str(self.vault / "Architect"))
+        self.assertNotIn("entry", architect["children"][0]["children"][0])
+        self.assertEqual(child(tree(), "Mine")["entry"], str(self.vault / "Mine"))
+
+        # A link moves into a new folder; its target stays put and the page still reads through it.
+        self.post("/api/vault/html/folder", {"parent": "", "name": "Learnings"})
+        move = {"path": str(self.vault / "Architect"), "dest": "Learnings"}
+        self.assertEqual(self.post("/api/vault/html/move", move, token=False).status_code, 403)
+        foreign = self.client.post(
+            "/api/vault/html/move", json={"token": self.config.token, **move}, headers={"origin": "https://attacker.example"}
+        )
+        self.assertEqual(foreign.status_code, 403)
+        moved = self.post("/api/vault/html/move", move).json()
+        learnings = self.vault / "Learnings"
+        self.assertEqual((moved["from"], moved["path"]), (str(self.vault / "Architect"), str(learnings / "Architect")))
+        self.assertFalse(os.path.lexists(self.vault / "Architect"))
+        self.assertEqual(os.readlink(learnings / "Architect"), str(self.topic))
+        page = learnings / "Architect" / "guides" / "who-holds-the-plan" / "index.html"
+        self.assertEqual(self.client.get("/view", params={"src": str(page)}).status_code, 200)
+
+        # Nothing inside a linked folder moves: that would carry the real guide out of its topic.
+        inside = self.post("/api/vault/html/move", {"path": str(page.parent), "dest": ""})
+        self.assertEqual(inside.status_code, 400)
+        self.assertIn("inside a linked folder", inside.json()["error"])
+        self.assertTrue((self.guide / "index.html").is_file())
+        # A folder can't go inside itself, and a name already taken stays taken.
+        into_itself = self.post("/api/vault/html/move", {"path": str(learnings), "dest": "Learnings"})
+        self.assertIn("inside itself", into_itself.json()["error"])
+        self.post("/api/vault/html/folder", {"parent": "", "name": "Architect"})
+        taken = self.post("/api/vault/html/move", {"path": str(learnings / "Architect"), "dest": ""})
+        self.assertIn("already exists", taken.json()["error"])
+        self.assertEqual(self.post("/api/vault/html/remove", {"path": str(self.vault / "Architect")}).json()["removed"], "folder")
+
+        # Pin to Top: a guide-folder link, one row two levels down, sorts ahead of the folders. The pin is a dotfile the
+        # tree never lists, and it moves with the entry.
+        dashboard = self.base / "learnings" / "dashboard"
+        dashboard.mkdir()
+        (dashboard / "index.html").write_text("<title>Mastery Map</title>", encoding="utf-8")
+        mastery = learnings / "Mastery Map"
+        mastery.symlink_to(dashboard, target_is_directory=True)
+        self.assertEqual(labels(child(tree(), "Learnings")), ["Architect", "Mastery Map"])
+        self.assertEqual(child(tree(), "Learnings")["children"][1]["entry"], str(mastery))
+        self.post("/api/vault/html/pin", {"path": str(mastery), "pinned": True})
+        self.assertEqual(labels(child(tree(), "Learnings")), ["Mastery Map", "Architect"])
+        self.assertTrue(child(tree(), "Learnings")["children"][0]["pinned"])
+        self.assertEqual(json.loads((learnings / ".onyx.json").read_text())["pinned"], ["Mastery Map"])
+        renamed = self.post("/api/vault/html/rename", {"path": str(learnings), "name": "Study"}).json()
+        study = self.vault / "Study"
+        self.assertEqual(renamed["path"], str(study))
+        self.assertEqual(labels(child(tree(), "Study")), ["Mastery Map", "Architect"])  # its pins live inside it
+        self.post("/api/vault/html/move", {"path": str(study / "Mastery Map"), "dest": "Mine"})
+        self.assertEqual(json.loads((self.vault / "Mine" / ".onyx.json").read_text())["pinned"], ["Mastery Map"])
+        self.assertFalse((study / ".onyx.json").exists())
+        self.post("/api/vault/html/pin", {"path": str(self.vault / "Mine" / "Mastery Map"), "pinned": False})
+        self.assertFalse((self.vault / "Mine" / ".onyx.json").exists())
+
+        # A hand-made relative link that a move would re-aim becomes absolute; one into the moved folder stays relative.
+        hand = self.vault / "Mine" / "Hand"
+        (hand / "sub").mkdir(parents=True)
+        (hand / "sub" / "note.html").write_text("<title>Inner</title>", encoding="utf-8")
+        os.symlink(os.path.relpath(dashboard / "index.html", hand), hand / "out.html")
+        os.symlink("sub/note.html", hand / "in.html")
+        self.post("/api/vault/html/move", {"path": str(hand), "dest": ""})
+        self.assertEqual(os.readlink(self.vault / "Hand" / "out.html"), str(dashboard / "index.html"))
+        self.assertEqual(os.readlink(self.vault / "Hand" / "in.html"), "sub/note.html")
+        self.assertTrue((self.vault / "Hand" / "out.html").is_file() and (self.vault / "Hand" / "in.html").is_file())
+
+        # Remove takes out a link, never its target, or an empty folder; a real file and a full folder are refused.
+        self.assertIn("isn't empty", self.post("/api/vault/html/remove", {"path": str(self.vault / "Hand")}).json()["error"])
+        real = self.post("/api/vault/html/remove", {"path": str(self.vault / "Hand" / "sub" / "note.html")})
+        self.assertIn("real file", real.json()["error"])
+        self.assertEqual(self.post("/api/vault/html/remove", {"path": str(study / "Architect")}).json()["removed"], "link")
+        self.assertTrue((self.guide / "index.html").is_file())
+        self.assertEqual(self.post("/api/vault/html/remove", {"path": str(study)}).json()["removed"], "folder")
+        self.assertFalse(study.exists())
 
 
 class PluginOriginTests(unittest.TestCase):
