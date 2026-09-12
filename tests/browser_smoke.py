@@ -1099,6 +1099,9 @@ class BrowserSmokeTests(unittest.TestCase):
                     page.get_by_role("button", name="Settings", exact=True).click()
                     dialog = page.locator("#settings-modal")
                     expect(dialog).to_be_visible()
+                    # Its body is taller than the window, so the dialog stands at its cap (760 less 48). It has no height
+                    # of its own, and a flex:1 body there collapses to its padding in WebKit: a strip with the title in it.
+                    self.assertGreater(dialog.bounding_box()["height"], 600)
                     self.assertEqual(dialog.get_by_role("button", name=re.compile("^Save")).count(), 0)
                     page.select_option("#appearance-theme", "dark")
                     expect(page.locator("html")).to_have_attribute("data-theme", "dark")

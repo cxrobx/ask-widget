@@ -52,7 +52,9 @@ PANELS_CSS = """/* The two modals. cxtasks' SettingsDialog: opaque (a translucen
 @keyframes modal-in{from{opacity:0;transform:translateY(4px) scale(.985)}} @media(prefers-reduced-motion:reduce){.modal[open]{animation:none}}
 .modal-head{display:flex;flex:none;align-items:center;gap:6px;padding:13px 14px 9px 16px} .modal-head h2{flex:1;min-width:0;margin:0;overflow:hidden;font-size:13px;font-weight:600;white-space:nowrap;text-overflow:ellipsis}
 .modal-x{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms} .modal-x:hover{background:rgb(var(--ink)/.08);color:rgb(var(--ink))} .modal-x svg{width:14px;height:14px} .modal-x[hidden]{display:none}
-.modal-body{flex:1;min-height:0;overflow:auto;padding:0 16px 16px}
+/* flex:1 1 auto, not flex:1: Settings has only a max-height, and WebKit sizes a 0% basis in it as 0, so the body
+   collapsed to its padding. From its content's height it shrinks to the cap instead, and still fills a sized dialog. */
+.modal-body{flex:1 1 auto;min-height:0;overflow:auto;padding:0 16px 16px}
 .set-sec{padding:13px 0 14px;border-top:1px solid var(--line-soft)} .set-sec:first-child{padding-top:2px;border-top:0}
 .set-sec h3{margin:0 0 10px;color:rgb(var(--faint));font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .set-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 12px} .set-grid .wide{grid-column:1/-1} .set-grid>.field-help{margin-top:-5px}
