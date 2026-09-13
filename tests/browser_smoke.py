@@ -35,6 +35,33 @@ def stock_menu_guard() -> str:
     return re.search(r'private let stockMenuGuard = """\n(.*?)\n"""', source, re.DOTALL).group(1)
 
 
+# The WCAG contrast of an element's ink (text, or an icon's currentColor) against what is drawn under it: its own
+# background and its ancestors', composited down to the first opaque one. Glass blur is not modelled; test pages are flat.
+CONTRAST = r"""e => {
+  const parse = c => {
+    const m = /rgba?\(([^)]*)\)/.exec(c);
+    if (!m) throw new Error('unparsed colour ' + c);
+    const p = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number);
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  };
+  const over = (top, under) => under.map((v, i) => top[i] * top[3] + v * (1 - top[3]));
+  const lum = c => c.reduce((sum, v, i) => {
+    v /= 255;
+    return sum + [0.2126, 0.7152, 0.0722][i] * (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+  }, 0);
+  const layers = [];
+  for (let el = e; el; el = el.parentElement) {
+    const bg = parse(getComputedStyle(el).backgroundColor);
+    if (bg[3] > 0) layers.push(bg);
+    if (bg[3] >= 1) break;
+  }
+  let ground = [255, 255, 255];
+  while (layers.length) ground = over(layers.pop(), ground);
+  const [hi, lo] = [lum(over(parse(getComputedStyle(e).color), ground)), lum(ground)].sort((x, y) => y - x);
+  return Math.round((hi + 0.05) / (lo + 0.05) * 100) / 100;
+}"""
+
+
 class BrowserSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -1630,6 +1657,127 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(html).to_have_attribute("data-askw-color", "dark")
                     self.assertNotEqual(panel.evaluate("e => getComputedStyle(e).backgroundColor"), "rgba(253, 246, 227, 0.97)")
                     browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_the_vault_look_keeps_every_label_readable_where_it_lands(self) -> None:
+        # Match vault appearance once drew labels in colours it had only checked against the vault's own ground. Over
+        # a cream page a dark vault left the Ask button's text in the vault's ink on its cyan link colour (1:1), a white
+        # arrow on that cyan, the vault's pale ink on the pill's light glass, and the page's own dark `strong` and
+        # `code` inside the dark panel. Whatever the vault's mode and the page's tone, each label must read on what is
+        # under it: text at 4.5:1, the accent's marks at the 3:1 the palette holds the accent to. Muted and faint
+        # metadata are quiet by design and not listed. Both engines: the app is WebKit.
+        text, mark = 4.5, 3.0
+        vault = self.root / "vault"
+        vault.mkdir()
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        vaults = {
+            "dark": {"mode": "dark", "styles": {
+                "content": {"background-color": "rgb(26, 26, 26)", "color": "rgb(196, 197, 181)"},
+                "a": {"color": "rgb(88, 209, 235)"},
+                "code": {"background-color": "rgb(20, 20, 20)"},
+            }},
+            "light": {"mode": "light", "styles": {
+                "content": {"background-color": "rgb(253, 246, 227)", "color": "rgb(0, 43, 54)"},
+                "a": {"color": "rgb(203, 75, 22)"},
+                "code": {"background-color": "rgb(224, 215, 184)"},
+            }},
+        }
+        # Pages that colour their own text elements, as the HTML Artifact Kit's do: dark ink on cream, pale ink on dark.
+        pages = {}
+        for tone, ground, ink in (("light", "#FDF6E3", "#073642"), ("dark", "#1E1E1E", "#EEEEEE")):
+            pages[tone] = self.root / f"{tone}-page.html"
+            pages[tone].write_text(
+                f"<!doctype html><title>{tone}</title><style>body{{background:{ground};color:{ink}}}"
+                f"p,h2,strong,b,em,li,th,td,code{{color:{ink}}}code{{background:{ground}}}</style>"
+                "<p id=passage>Select this passage to ask about it.</p>",
+                encoding="utf-8",
+            )
+        answer = (
+            "## A heading\n\nPlain words with **bold** and `code` in them.\n\n- A listed point\n\n"
+            "| Term | Meaning |\n|---|---|\n| cell | `value` |\n"
+        )
+        failing = {"now": False}
+
+        async def canned(*args, **kwargs):
+            if failing["now"]:
+                yield _sse("error", {"message": "It failed."})
+                return
+            yield _sse("token", {"text": answer})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", canned), sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                browser = getattr(playwright, engine).launch(headless=True)
+                for mode, tone in (("dark", "light"), ("light", "dark"), ("dark", "dark"), ("light", "light")):
+                    with self.subTest(engine=engine, vault=mode, page=tone):
+                        storage.save_markdown_theme(vault, vaults[mode])
+                        failing["now"] = False
+                        ratios: dict[str, tuple[float, float]] = {}
+
+                        def measure(name, locator, least, ratios=ratios) -> None:
+                            expect(locator).to_be_visible()
+                            ratios[name] = (locator.evaluate(CONTRAST), least)
+
+                        page = browser.new_page(viewport={"width": 1100, "height": 760})
+                        page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                        query = urllib.parse.urlencode({"src": str(pages[tone]), "folder": str(self.root)})
+                        page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+                        expect(page.locator("html")).to_have_attribute("data-askw-look", mode)
+                        expect(page.locator("html")).to_have_attribute("data-askw-page", tone)
+
+                        passage = page.locator("#passage")
+                        passage.select_text()
+                        passage.dispatch_event("mouseup", {"button": 0})
+                        trigger = page.get_by_role("button", name="Ask about the selected text")
+                        measure("Ask button", trigger, text)
+                        trigger.click()
+                        page.get_by_role("button", name="Ask a question…").click()
+                        measure("menu item", page.locator(".askw-item").first, text)
+                        page.get_by_label("Question about the highlighted text").fill("What is it?")
+                        go = page.get_by_role("button", name="Go", exact=True)
+                        measure("Go", go, text)
+                        go.click()
+
+                        panel = page.get_by_role("dialog", name="Onyx answer")
+                        expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+                        reply = panel.locator(".askw-a").last
+                        measure("eyebrow", panel.locator(".askw-eyebrow"), mark)
+                        measure("selection", panel.locator(".askw-selq"), text)
+                        measure("answer", reply.locator("p").first, text)
+                        measure("heading", reply.locator("h2"), text)
+                        measure("bold", reply.locator("strong"), text)
+                        measure("inline code", reply.locator("p code"), text)
+                        measure("list item", reply.locator("li"), text)
+                        measure("table header", reply.locator("th").first, text)
+                        measure("table cell", reply.locator("td").first, text)
+                        measure("Open session", panel.locator(".askw-claude"), text)
+                        measure("Copy", panel.locator(".askw-copy"), text)
+                        measure("chats count", page.locator(".askw-chats-n"), mark)
+                        measure("chats icon", page.locator(".askw-chats .askw-ico"), mark)
+
+                        panel.get_by_label("Follow-up question").fill("And then?")
+                        send = panel.locator(".askw-follow-go")
+                        measure("send", send, text)
+                        failing["now"] = True
+                        send.click()
+                        measure("error", panel.locator(".askw-err"), text)
+                        measure("Retry", panel.locator(".askw-retry"), mark)
+
+                        pill = page.locator(".askw-pill")
+                        measure("pill icon", pill.locator(".askw-ico"), mark)  # at rest, on its thinnest glass
+                        pill.click()
+                        expect(pill.locator("b")).to_have_css("opacity", "1")
+                        measure("pill label", pill.locator("b"), text)
+                        measure("picker label", page.locator(".askw-picker label").first, text)
+                        measure("picker Save", page.locator(".askw-picker-save"), text)
+                        page.close()
+
+                        unreadable = {name: f"{ratio}:1 < {least}:1" for name, (ratio, least) in ratios.items() if ratio < least}
+                        self.assertEqual(unreadable, {})
+                browser.close()
 
         self.assertEqual(page_errors, [])
 

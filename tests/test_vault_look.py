@@ -122,6 +122,29 @@ class VaultLookTests(unittest.TestCase):
         self.assertNotRegex(re.sub(r"font-family:[^}]*", "", css), r"url\(|var\(")
         self.assertEqual(reader_stylesheet(None), "")
 
+    def test_the_panel_fills_its_buttons_with_the_vaults_button_never_its_link_colour(self):
+        # The accent is only known to read on the vault's grounds, so white or ink on it can vanish (a dark vault's
+        # cyan links left the Ask button 1:1). A filled button is the vault's own, at rest and under the pointer.
+        for snapshots in (solarized(), dark()):
+            look = palette(*snapshots)
+            tokens, css = look["tokens"], reader_stylesheet(look)
+            face, ink = f"background:rgb({tokens['--button-bg']});color:rgb({tokens['--button-ink']})", tokens["--button-ink"]
+            with self.subTest(theme=look["mode"]):
+                self.assertIn("html[data-askw-look] .askw-trigger,html[data-askw-look] .askw-ask-go,", css)
+                self.assertIn(f"html[data-askw-look] .askw-history-actions button:first-child{{{face}}}", css)
+                self.assertIn(f"html[data-askw-look] .askw-foot .askw-claude:hover{{background:rgb({tokens['--button-hover']});"
+                              f"color:rgb({ink})}}", css)
+                for fill in ("--button-bg", "--button-hover"):
+                    self.assertGreaterEqual(contrast(rgb(ink), rgb(tokens[fill])), 4.5, fill)
+                self.assertNotIn(f"background:rgb({tokens['--accent']})", css)
+
+    def test_the_glass_on_the_page_wears_the_vault_only_over_a_page_of_its_tone(self):
+        css = reader_stylesheet(palette(*dark()))
+        over_dark = 'html[data-askw-look][data-askw-page="dark"]'
+        self.assertIn(f"{over_dark} .askw-pill b{{color:rgb(218 218 218)}}", css)
+        self.assertIn(f"{over_dark} .askw-chats{{--askw-glass-accent:rgb(138 92 245)}}", css)
+        self.assertNotRegex(css, r"html\[data-askw-look\] \.askw-(pill|chats)[\s,{]")  # never over a light page
+
 
 class VaultLookApiTests(unittest.TestCase):
     def test_the_shell_wears_the_vault_look_from_the_first_paint_while_the_switch_is_on(self):

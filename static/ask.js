@@ -60,6 +60,10 @@
   var CSS = [
     '.askw-root{all:revert;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",sans-serif;color:#0d0d0d;line-height:1.5;-webkit-font-smoothing:antialiased;--askw-accent:#3a83f7;--askw-accent-hover:#2c67c5;--askw-line:rgba(0,0,0,.10);--askw-soft:rgba(0,0,0,.055);}',
     '.askw-root *{box-sizing:border-box;}',
+    // A page's own text styles reach in here: one that inks its strong, code or td
+    // (the HTML Artifact Kit's do) would ink them in the panel too, dark on a dark
+    // panel. :where() keeps this at one class's weight, so the panel's own rules win.
+    '.askw-root :where(p,h1,h2,h3,h4,h5,h6,strong,b,em,i,code,li,th,td){color:inherit;}',
     '.askw-menu{position:fixed;z-index:2147483600;display:none;min-width:190px;background:rgba(255,255,255,.82);border:1px solid var(--askw-line);border-radius:11px;box-shadow:0 20px 55px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.65);backdrop-filter:blur(24px) saturate(1.35);-webkit-backdrop-filter:blur(24px) saturate(1.35);padding:6px;font-size:13px;}',
     '.askw-trigger{position:fixed;z-index:2147483598;display:none;align-items:center;gap:5px;padding:5px 10px;border:1px solid rgba(255,255,255,.28);border-radius:999px;background:var(--askw-accent);color:#fff;box-shadow:0 10px 28px rgba(0,0,0,.20);font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;cursor:pointer;}',
     '.askw-trigger:hover{background:var(--askw-accent-hover);}',
@@ -133,9 +137,11 @@
     // The context folder rests as a folder icon and slides its name out on hover,
     // keyboard focus, or while the picker is open. It is glass lying on the page,
     // so it is tinted for the page under it (data-askw-page), not the app theme:
-    // thin at rest, frosted to a readable floor once its name shows.
-    '.askw-pill{--askw-glass:rgba(255,255,255,.2);--askw-frost:rgba(255,255,255,.74);position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;height:30px;max-width:240px;background:var(--askw-glass);border:1px solid rgba(255,255,255,.55);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);padding:0 7px;font-size:11.5px;color:#5d5d5d;cursor:pointer;transition:padding .2s ease,background-color .2s ease;}',
-    '.askw-pill .askw-ico{display:block;flex:none;width:14px;height:14px;color:var(--askw-accent);}',
+    // thin at rest, frosted to a readable floor once its name shows. Its icon is
+    // --askw-glass-accent, Onyx's blue, which reads on either glass; the vault look
+    // recolours it, and the name, only over a page of the vault's own tone.
+    '.askw-pill{--askw-glass-accent:#3a83f7;--askw-glass:rgba(255,255,255,.2);--askw-frost:rgba(255,255,255,.74);position:fixed;top:12px;right:12px;z-index:2147483599;display:flex;align-items:center;height:30px;max-width:240px;background:var(--askw-glass);border:1px solid rgba(255,255,255,.55);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);padding:0 7px;font-size:11.5px;color:#5d5d5d;cursor:pointer;transition:padding .2s ease,background-color .2s ease;}',
+    '.askw-pill .askw-ico{display:block;flex:none;width:14px;height:14px;color:var(--askw-glass-accent);}',
     '.askw-pill b{color:#0d0d0d;font-weight:600;max-width:0;margin-left:0;opacity:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:max-width .2s ease,margin-left .2s ease,opacity .15s;}',
     '.askw-pill:hover,.askw-pill:focus-visible,.askw-pill[aria-expanded="true"]{padding-right:11px;background:var(--askw-frost);}',
     '.askw-pill:hover b,.askw-pill:focus-visible b,.askw-pill[aria-expanded="true"] b{max-width:180px;margin-left:6px;opacity:1;}',
@@ -145,12 +151,13 @@
     // there are, which opens a list of them. Its glass takes the page's tone like
     // the pill's, but frosted from the start, since it always carries a number.
     // The list is a surface like the picker, in the app theme. The icon and count
-    // carry their own ink, as the pill's icon does: the dark app theme recolours
-    // .askw-root, which would leave white on the light glass of a light page.
-    '.askw-chats{--askw-glass:rgba(255,255,255,.74);--askw-frost:rgba(255,255,255,.92);position:fixed;right:12px;bottom:12px;z-index:2147483599;display:flex;align-items:center;gap:5px;height:30px;padding:0 10px 0 8px;background:var(--askw-glass);border:1px solid rgba(255,255,255,.55);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer;transition:background-color .15s ease;}',
+    // carry the glass's own accent, as the pill's icon does: the dark app theme
+    // recolours .askw-root, which would leave white on the light glass of a light
+    // page, and the vault look its accent, which is only known to read on the vault.
+    '.askw-chats{--askw-glass-accent:#3a83f7;--askw-glass:rgba(255,255,255,.74);--askw-frost:rgba(255,255,255,.92);position:fixed;right:12px;bottom:12px;z-index:2147483599;display:flex;align-items:center;gap:5px;height:30px;padding:0 10px 0 8px;background:var(--askw-glass);border:1px solid rgba(255,255,255,.55);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer;transition:background-color .15s ease;}',
     '.askw-chats[hidden]{display:none;}',
     '.askw-chats .askw-ico{display:block;flex:none;width:15px;height:15px;}',
-    '.askw-chats .askw-ico,.askw-chats-n{color:var(--askw-accent);}',
+    '.askw-chats .askw-ico,.askw-chats-n{color:var(--askw-glass-accent);}',
     '.askw-chats:hover,.askw-chats:focus-visible,.askw-chats[aria-expanded="true"]{background:var(--askw-frost);}',
     'html[data-askw-page="dark"] .askw-chats{--askw-glass:rgba(30,30,30,.74);--askw-frost:rgba(38,38,38,.92);border-color:rgba(255,255,255,.14);box-shadow:0 6px 18px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.1);}',
     '.askw-chats-list{position:fixed;right:12px;bottom:50px;z-index:2147483602;display:none;flex-direction:column;width:320px;max-width:calc(100vw - 24px);max-height:min(440px,calc(100vh - 70px));background:rgba(255,255,255,.86);border:1px solid var(--askw-line);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.19),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(24px) saturate(1.32);-webkit-backdrop-filter:blur(24px) saturate(1.32);padding:6px;font-size:12.5px;}',
@@ -192,6 +199,9 @@
     'html[data-askw-color="dark"] .askw-body code{background:rgba(255,255,255,.09);}',
     'html[data-askw-color="dark"] .askw-citation pre{background:#181818;color:#cdcdcd;}',
     'html[data-askw-color="dark"] .askw-follow-input:disabled{background:#242424;}',
+    // The panel's own warning colours, which no palette recolours: a dark ground takes
+    // lighter ones, and Stop keeps its red over the footer-button ink the themes set.
+    'html[data-askw-color] .askw-foot .askw-stop{color:#b91c1c;}html[data-askw-color="dark"] .askw-err,html[data-askw-color="dark"] .askw-foot .askw-stop{color:#f87171;}html[data-askw-color="dark"] .askw-hint{color:#fbbf24;}',
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-menu,.askw-panel,.askw-picker{background:#fff}.askw-pill{--askw-glass:#fff;--askw-frost:#fff}}',
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:#242424}html[data-askw-page="dark"] .askw-pill{--askw-glass:#242424;--askw-frost:#242424}}',
     '@media(prefers-reduced-transparency:reduce){.askw-menu,.askw-panel,.askw-picker{background:rgba(255,255,255,.98)}.askw-menu,.askw-panel,.askw-picker,.askw-pill{backdrop-filter:none;-webkit-backdrop-filter:none}.askw-pill{--askw-glass:rgba(255,255,255,.98);--askw-frost:rgba(255,255,255,.98)}html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:rgba(36,36,36,.98)}html[data-askw-page="dark"] .askw-pill{--askw-glass:rgba(36,36,36,.98);--askw-frost:rgba(36,36,36,.98)}}',

@@ -173,26 +173,33 @@ def reader_stylesheet(look: dict[str, Any] | None) -> str:
     """The answer panel (static/ask.js) in the vault's colours, on ``html[data-askw-look]``, which ask.js sets.
 
     Its variables, and the surfaces it paints with fixed colours of its own (a light and a dark set). It is injected
-    after ask.js's own sheet and matches its selectors' weight, so these win; the error red stays the panel's own.
+    after ask.js's own sheet and matches its selectors' weight, so these win; the warning colours stay the panel's own.
+
+    Each colour lands only on a surface it was measured against. The accent is known to read on the vault's grounds
+    (palette holds it to 3:1 there), so it is text and marks, never a fill: a filled button is the vault's button, as
+    the shell's are. The glass chips lie on the page, so they wear the vault only over a page of the vault's own tone
+    (data-askw-page, which ask.js sets); over the other they keep Onyx's own glass for that page.
     """
     if not look:
         return ""
     t, s = look["tokens"], "html[data-askw-look]"
     ink, secondary, muted, faint = t["--ink"], t["--secondary"], t["--muted"], t["--faint"]
     ground, surface, field, accent = t["--bg-elevated"], t["--bg-surface"], t["--bg-input"], t["--accent"]
+    button, button_hover, button_ink = t["--button-bg"], t["--button-hover"], t["--button-ink"]
+    glass = f'{s}[data-askw-page="{look["mode"]}"]'
     font = f";font-family:{t['--ui-font']}" if t.get("--ui-font") else ""
 
-    def rule(selectors: str, body: str) -> str:
-        return ",".join(f"{s} {sel.strip()}" for sel in selectors.split(",")) + "{" + body + "}"
+    def rule(selectors: str, body: str, scope: str = s) -> str:
+        return ",".join(f"{scope} {sel.strip()}" for sel in selectors.split(",")) + "{" + body + "}"
 
     return "\n".join([
         rule(".askw-root", f"color:rgb({ink});--askw-accent:rgb({accent});--askw-accent-hover:rgb({t['--accent-hover']});"
              f"--askw-line:rgb({ink}/.14);--askw-soft:rgb({ink}/.07){font}"),
         rule(".askw-menu,.askw-panel,.askw-picker,.askw-chats-list", f"background:rgb({ground}/.97)"),
         rule(".askw-head,.askw-foot,.askw-followup", f"background:rgb({surface}/.45)"),
-        rule(".askw-item,.askw-body,.askw-pill b,.askw-chats-q", f"color:rgb({ink})"),
+        rule(".askw-item,.askw-body,.askw-chats-q", f"color:rgb({ink})"),
         rule(".askw-selq,.askw-q,.askw-foot button,.askw-picker label,.askw-recent-item,.askw-history-actions button,"
-             ".askw-citation pre,.askw-pill,.askw-chats-sel", f"color:rgb({secondary})"),
+             ".askw-citation pre,.askw-chats-sel", f"color:rgb({secondary})"),
         rule(".askw-think,.askw-citations-title,.askw-chats-title", f"color:rgb({muted})"),
         rule(".askw-x,.askw-request-meta,.askw-history-meta,.askw-chats-meta", f"color:rgb({faint})"),
         rule(".askw-item:hover,.askw-x:hover,.askw-recent-item:hover,.askw-chats-row:hover",
@@ -209,6 +216,14 @@ def reader_stylesheet(look: dict[str, Any] | None) -> str:
         rule(".askw-pillt,.askw-origin", f"background:rgb({accent}/.12);color:rgb({accent})"),
         rule(".askw-citation,.askw-foot .askw-retry", f"color:rgb({accent})"),
         rule(".askw-toast", f"background:rgb({ink}/.92);color:rgb({ground})"),
+        rule(".askw-trigger,.askw-ask-go,.askw-follow-go,.askw-foot .askw-claude,.askw-picker-save,"
+             ".askw-history-actions button:first-child", f"background:rgb({button});color:rgb({button_ink})"),
+        rule(".askw-foot .askw-claude,.askw-history-actions button:first-child", f"border-color:rgb({button})"),
+        rule(".askw-trigger:hover,.askw-follow-go:hover,.askw-foot .askw-claude:hover",
+             f"background:rgb({button_hover});color:rgb({button_ink})"),
+        rule(".askw-pill,.askw-chats", f"--askw-glass-accent:rgb({accent})", glass),
+        rule(".askw-pill", f"color:rgb({secondary})", glass),
+        rule(".askw-pill b", f"color:rgb({ink})", glass),
     ])
 
 
