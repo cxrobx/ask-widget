@@ -43,6 +43,19 @@ PIN_ICON = (
     '<path d="M5.75 2.25h4.5M8 8.5v5.25"/></svg>'
 )
 
+# The outline's glyphs (lucide, on the panels' 24 grid): list-tree for the pane and its toggle, chevrons-down-up /
+# chevrons-up-down for the collapse-all button, which shows one or the other.
+_LUCIDE = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true"{cls}>{body}</svg>'
+)
+OUTLINE_ICON = _LUCIDE.format(
+    cls="", body='<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/>'
+)
+FOLD_ICONS = _LUCIDE.format(cls=' class="down"', body='<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>') + _LUCIDE.format(
+    cls=' class="up"', body='<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'
+)
+
 # What each view calls itself in the shell. All ride along in the page, so a switch swaps them in place.
 VAULT_LABELS = {
     "library": {"name": "Library", "unit": "item", "units": "everything", "tree": "Notes and Artifacts", "empty": ""},
@@ -143,7 +156,9 @@ def vault_page(
 <style>
 {shared_style}
 html,body{{height:100%;overflow:hidden}} button,input,select{{font:inherit}}
-.shell{{grid-template-columns:260px minmax(0,1fr);height:100vh;min-height:0;transition:grid-template-columns .15s cubic-bezier(.2,.8,.2,1)}}
+/* Three columns at most: the sidebar, the reader, and the outline while it is docked (the outline block, below). */
+.shell{{--side-w:260px;--outline-w:250px;grid-template-columns:var(--side-w) minmax(0,1fr);height:100vh;min-height:0;transition:grid-template-columns .15s cubic-bezier(.2,.8,.2,1)}}
+body.outline-docked .shell{{grid-template-columns:var(--side-w) minmax(0,1fr) var(--outline-w)}} body.side-unpinned.outline-docked .shell{{grid-template-columns:minmax(0,1fr) var(--outline-w)}}
 aside{{display:flex;flex-direction:column;height:100vh;padding:20px 12px 14px;overflow:hidden}} body.native aside{{padding-top:48px}}
 .brand{{margin:0 8px 12px}} .brand-name{{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .add-toggle{{display:grid;place-items:center;width:24px;height:24px;padding:0;border:1px solid var(--line-soft);border-radius:7px;background:rgb(var(--ink)/.055);color:rgb(var(--secondary));font-size:16px;line-height:1}} .add-toggle:hover,.add-toggle[aria-expanded=true]{{background:rgb(var(--ink)/.1);color:rgb(var(--ink))}}
@@ -209,14 +224,14 @@ main,body.native main{{position:relative;padding:0;overflow:hidden}}
 .home-empty{{padding:20px;border:1px dashed var(--line);border-radius:10px;color:rgb(var(--muted));text-align:center}}
 /* Artifacts are named by sentence-length titles, and Library shows them too: a wider sidebar, one line each, and the whole
    title in the hover card. */
-body.kind-html .shell,body.kind-library .shell{{grid-template-columns:290px minmax(0,1fr)}}
+body.kind-html .shell,body.kind-library .shell{{--side-w:290px}}
 /* Sidebar: pinned, it sits in the grid; unpinned, it floats over the reader and comes out when the pointer rests on the
    left edge, as in Zen's compact mode: #side-edge, 24 px deep so the pointer needn't find a sliver, laid over the reader
    because its iframe would swallow the pointer (a page's first 24 px are margin; they can't be clicked while unpinned). */
-.side-toggle{{display:grid;place-items:center;flex:none;width:26px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}} .side-toggle:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .side-toggle svg{{width:16px;height:16px}} #side-pin[aria-pressed=true] .pin-head{{fill:currentColor}}
+.side-toggle{{display:grid;place-items:center;flex:none;width:26px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}} .side-toggle:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .side-toggle svg{{width:16px;height:16px}} #side-pin[aria-pressed=true] .pin-head,#outline-pin[aria-pressed=true] .pin-head{{fill:currentColor}}
 @media(max-width:800px){{.shell,body.kind-html .shell,body.kind-library .shell{{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}} aside,body.native aside{{position:static;height:auto;max-height:45vh;padding:12px 12px 8px}} body.native aside{{padding-top:38px}} .aside-foot{{display:flex}} #home{{padding:24px 18px 40px}}}}
 #side-edge{{position:fixed;top:0;bottom:0;left:0;z-index:39;display:none;width:24px}} body.side-unpinned #side-edge{{display:block}}
-body.side-unpinned .shell,body.side-unpinned.kind-html .shell,body.side-unpinned.kind-library .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
+body.side-unpinned .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
 /* Floating, it is a panel lying on the page: inset, rounded, shadowed, and on a ground thick enough to read over a page's
    text even where the blur is not drawn; the window's glass is too thin (the Obsidian look brings an opaque ground of its own). */
 body.side-unpinned #vault-side{{position:fixed;top:8px;bottom:8px;left:8px;z-index:40;width:min(260px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(-100% - 16px))}} body.side-unpinned.kind-html #vault-side,body.side-unpinned.kind-library #vault-side{{width:min(290px,86vw)}} body.native.side-unpinned #vault-side{{padding-top:40px}}
@@ -234,6 +249,27 @@ body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1)
 #tree .pinned{{display:grid;flex:none;margin-left:auto;color:rgb(var(--faint))}} #tree .pinned svg{{width:11px;height:11px}} #tree .pinned+.sym{{margin-left:4px}}
 #tree .new-folder>svg{{flex:none;width:16px;height:16px;color:rgb(var(--ink)/.6)}} #tree .lbl:has(.name-edit){{flex:1}}
 #tree .name-edit{{width:100%;min-width:0;margin:-3px 0;padding:2px 6px;border:1px solid rgb(var(--accent));border-radius:6px;background:rgb(var(--bg-input));color:rgb(var(--ink));font:inherit;outline:2px solid rgb(var(--accent)/.26)}}
+/* Outline: the page's headings on the reader's right, as Obsidian's outline pane. Docked (pinned), it is the grid's third
+   column; floating (the default), it lies over the reader like the unpinned sidebar and comes out from the round toggle in
+   the reader's top-right corner — not from the window's edge, which is where the page's scrollbar lives. */
+#outline-side{{border-right:0;border-left:1px solid var(--line-soft)}} #outline-side .brand{{margin-bottom:10px}} .outline-title{{flex:1;min-width:0}} .outline-mark{{display:grid;flex:none;place-items:center;width:22px;height:22px;color:rgb(var(--secondary))}} .outline-mark svg{{width:18px;height:18px}}
+#outline-filter{{width:100%;margin:0 0 8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:rgb(var(--bg-input)/.88);color:rgb(var(--ink));font-size:12.5px;box-shadow:inset 0 1px 0 rgb(255 255 255/.025)}} #outline-filter:focus{{outline:2px solid rgb(var(--accent)/.26);outline-offset:0;border-color:rgb(var(--accent))}}
+#outline-fold .up,#outline-fold.all-shut .down{{display:none}} #outline-fold.all-shut .up{{display:block}}
+#outline{{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:2px 6px;font-size:13px}} #outline ul{{list-style:none;margin:0;padding:0}} #outline ul ul{{margin-left:11px;padding-left:9px;border-left:1px solid var(--line-soft)}}
+#outline .row{{display:flex;align-items:flex-start;gap:2px;margin:1px 0;padding:3px 6px 3px 2px;border-radius:7px;color:rgb(var(--ink)/.84);transition:background-color .12s,color .12s}} #outline .row:hover{{background:rgb(var(--ink)/.045);color:rgb(var(--ink))}}
+#outline .h{{flex:1;min-width:0;padding:1px 2px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;line-height:1.35;text-align:left;overflow-wrap:anywhere;cursor:default}} #outline .h.active{{color:rgb(var(--ink));font-weight:600}} #outline li:has(> .row > .h.active) > .row{{background:rgb(var(--ink)/.09)}}
+#outline .tw{{display:grid;flex:none;place-items:center;width:16px;height:19px;padding:0;border:0;border-radius:4px;background:transparent;color:rgb(var(--faint));visibility:hidden;cursor:default}} #outline li.has-kids>.row .tw{{visibility:visible}} #outline .tw:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}}
+#outline .tw svg{{width:12px;height:12px;transform:rotate(90deg);transition:transform .12s}} #outline li.shut>.row .tw svg{{transform:none}} #outline li.shut>ul{{display:none}} #outline.filtering li.shut>ul{{display:block}} #outline li.miss{{display:none}}
+#outline .h:focus-visible,#outline .tw:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} #outline .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px}}
+.outline-toggle{{position:absolute;top:12px;right:12px;z-index:2;display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:999px;background:rgb(var(--bg-elevated)/.82);color:rgb(var(--secondary));box-shadow:0 6px 18px rgb(0 0 0/.1);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);transition:background-color .15s,color .15s}}
+.outline-toggle:hover,.outline-toggle[aria-expanded=true]{{background:rgb(var(--bg-elevated)/.97);color:rgb(var(--ink))}} .outline-toggle svg{{width:15px;height:15px}} .outline-toggle:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:2px}}
+body.outline-docked .outline-toggle,body.reader-blank .outline-toggle{{display:none}} body.outline-out .outline-toggle{{visibility:hidden}}
+body:not(.outline-docked) #outline-side{{position:fixed;top:8px;right:8px;bottom:8px;z-index:40;width:min(250px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(100% + 16px))}} body.native:not(.outline-docked) #outline-side{{padding-top:40px}}
+body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar)/.96);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
+@media(prefers-reduced-transparency:reduce){{body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
+body.outline-out:not(.outline-docked) #outline-side{{visibility:visible;transform:none}}
+body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.outline-out:not(.outline-docked) #outline-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.outline-still #outline-side{{transition:none!important}}
+@media(prefers-reduced-motion:reduce){{body:not(.outline-docked) #outline-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.outline-out:not(.outline-docked) #outline-side{{opacity:1;transition:opacity .15s linear,visibility 0s}} #outline .tw svg{{transition:none}}}}
 {panels_css}
 </style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Library and vaults"><a href="/"{library_active} data-kind=library>Library</a><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
@@ -248,7 +284,10 @@ body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1)
 <div class=home-h><h2>Recently opened</h2></div><div id=home-docs class=home-grid></div>
 <div class=home-h><h2>Recent asks</h2><button type=button id=home-all class=link>See all</button></div><div id=home-asks class=home-list></div>
 </div></section>
-<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe></main></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
+<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe><button id=outline-toggle class=outline-toggle type=button title="Outline (⌘⇧\\)" aria-label="Show outline" aria-controls=outline-side aria-expanded=false>{OUTLINE_ICON}</button></main>
+<aside id=outline-side aria-label="Outline"><div class=brand><span class=outline-mark>{OUTLINE_ICON}</span><span class=outline-title>Outline</span><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin outline (⌘⇧\\)" aria-label="Pin outline" aria-controls=outline-side>{PIN_ICON}</button></div>
+<input id=outline-filter type=search placeholder="Filter headings…" autocomplete=off spellcheck=false aria-label="Filter headings">
+<nav id=outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 {panels_html}
 <script src=/app-menu.js></script>
 <script>
@@ -316,14 +355,64 @@ function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.sh
 pin.onclick=()=>setPinned(!pinned()); document.addEventListener('keydown',sideKey);
 edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),40)}}); edge.addEventListener('mouseleave',e=>{{if(side.contains(e.relatedTarget))return;clearTimeout(sideTimer);if(document.body.classList.contains('side-out'))sideLater()}});
 side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}); side.addEventListener('mouseleave',()=>{{sideOver=false;sideLater()}}); side.addEventListener('focusout',()=>{{if(!sideOver)sideLater()}});
+// MARK: outline — the page's headings, read out of the reader's document (same origin) and nested by level, as Obsidian's
+// outline pane: a row scrolls the page to its heading, the twisty folds a section, the filter keeps matching rows and
+// their parents, and the section being read stays marked as the page scrolls. Pinned, it docks as the grid's third
+// column; unpinned (the default) it floats out from the round toggle in the reader's corner and goes a moment after the
+// pointer leaves it, unless it is being typed in. ⌘⇧\\ pins and unpins, also from inside the reader; a narrow window never
+// docks it. The pin is remembered; a fold is kept while its page stays open.
+const OUT_KEY='askw:vault:outline', outSide=$('#outline-side'), outNav=$('#outline'), outPin=$('#outline-pin'), outToggle=$('#outline-toggle'), outFilter=$('#outline-filter'), outFold=$('#outline-fold'), narrow=matchMedia('(max-width:800px)');
+let outPinned=recall(OUT_KEY)==='pinned', outOver=false, outTimer=0, outBuildTimer=0, outRaf=0, outObserver=null, outActive=-1, outSig=''; let HEADS=[]; const outShut=new Set();
+function outDocked(){{return document.body.classList.contains('outline-docked')}} function outShown(){{return outDocked()||document.body.classList.contains('outline-out')}}
+function outOut(out){{document.body.classList.toggle('outline-out',out);outSide.inert=!outDocked()&&!out;outToggle.setAttribute('aria-expanded',String(outShown()))}}
+function outInUse(){{const a=document.activeElement;return !!(a&&outSide.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))}}
+function outLater(){{clearTimeout(outTimer);if(outDocked())return;outTimer=setTimeout(function check(){{if(outDocked()||outOver)return;if(outInUse()){{outTimer=setTimeout(check,400);return}}outOut(false)}},400)}}
+// The context pill in the reader's corner moves left of the toggle while the toggle is there (ask.js reads the variable).
+function pillRoom(){{try{{const st=reader.contentDocument.documentElement.style;if(outDocked())st.removeProperty('--askw-pill-right');else st.setProperty('--askw-pill-right','50px')}}catch(e){{}}}}
+function applyOutlinePin(){{const dock=outPinned&&!narrow.matches;document.body.classList.toggle('outline-docked',dock);outPin.setAttribute('aria-pressed',String(outPinned));outPin.title=(outPinned?'Unpin':'Pin')+' outline (⌘⇧\\\\)';clearTimeout(outTimer);outOut(!dock&&(outOver||outInUse()));if(!dock&&!outOver)outLater();pillRoom()}}
+function setOutlinePinned(on){{outPinned=on;store(OUT_KEY,on?'pinned':'');applyOutlinePin()}}
+function outKey(e){{if((e.key==='\\\\'||e.key==='|')&&e.shiftKey&&(e.metaKey||e.ctrlKey)&&!e.altKey){{e.preventDefault();setOutlinePinned(!outPinned)}}}}
+outPin.onclick=()=>setOutlinePinned(!outPinned); document.addEventListener('keydown',outKey); narrow.addEventListener('change',applyOutlinePin);
+outToggle.addEventListener('mouseenter',()=>{{clearTimeout(outTimer);outTimer=setTimeout(()=>outOut(true),40)}}); outToggle.addEventListener('mouseleave',e=>{{if(outSide.contains(e.relatedTarget))return;clearTimeout(outTimer);if(document.body.classList.contains('outline-out'))outLater()}});
+outToggle.onclick=()=>{{clearTimeout(outTimer);outOut(true)}};
+outSide.addEventListener('mouseenter',()=>{{outOver=true;clearTimeout(outTimer)}}); outSide.addEventListener('mouseleave',()=>{{outOver=false;outLater()}}); outSide.addEventListener('focusout',()=>{{if(!outOver)outLater()}});
+outSide.addEventListener('keydown',e=>{{if(e.key!=='Escape')return;if(document.activeElement===outFilter&&outFilter.value){{outFilter.value='';applyOutFilter()}}else{{document.activeElement.blur();if(!outDocked())outOut(false)}}}});
+// The reader's document, while it holds a page (about:blank and the home page have no outline).
+function readerDoc(){{try{{const d=reader.contentDocument;return d&&d.body&&readerPage()?d:null}}catch(e){{return null}}}}
+// Every heading in the page's own content: not the widget's (answers carry headings of their own), not a page's nav rail,
+// and not one hidden away — except inside a shut <details>, which a click opens on the way to it.
+function headingsOf(doc){{const out=[];for(const el of doc.querySelectorAll('h1,h2,h3,h4,h5,h6')){{if(el.closest('.askw-root,nav,[hidden],[aria-hidden=true]'))continue;const text=(el.textContent||'').replace(/\\s+/g,' ').trim();if(!text)continue;const r=el.getBoundingClientRect();if(!r.width&&!r.height&&!el.closest('details'))continue;out.push({{el,level:+el.tagName[1],text}})}}return out}}
+function outlineTree(list){{const root={{kids:[]}},stack=[{{level:0,node:root}}];list.forEach((h,i)=>{{const node={{i,h,kids:[]}};while(stack.length>1&&stack[stack.length-1].level>=h.level)stack.pop();stack[stack.length-1].node.kids.push(node);stack.push({{level:h.level,node}})}});return root.kids}}
+function outRow(n){{const k=n.h.level+':'+n.h.text,kids=n.kids.length>0,shut=kids&&outShut.has(k);return `<li class="${{kids?'has-kids':''}}${{shut?' shut':''}}" data-k="${{esc(k)}}"><div class=row><button class=tw type=button tabindex=-1 aria-label="${{shut?'Expand':'Collapse'}}" aria-expanded=${{!shut}}>${{ICON.chev}}</button><button class=h type=button data-i=${{n.i}} title="${{esc(n.h.text)}}">${{esc(n.h.text)}}</button></div>${{kids?'<ul>'+n.kids.map(outRow).join('')+'</ul>':''}}</li>`}}
+function foldState(){{const open=outNav.querySelector('li.has-kids:not(.shut)');outFold.classList.toggle('all-shut',!open&&!!outNav.querySelector('li.has-kids'));const label=open?'Collapse all':'Expand all';outFold.title=label;outFold.setAttribute('aria-label',label+' headings')}}
+// Redrawn only when the headings themselves change (a page's script, or an answer, may add to the document later), so a
+// fold survives; a redraw that finds the same headings just picks up their new elements.
+function buildOutline(){{const doc=readerDoc(),list=doc?headingsOf(doc):[],sig=(doc?'page\\n':'')+list.map(h=>h.level+h.text).join('\\n');HEADS=list;
+if(sig!==outSig){{outSig=sig;outActive=-1;outNav.innerHTML=!doc?'<div class=none>Open a page to see its outline.</div>':!list.length?'<div class=none>No headings on this page.</div>':'<ul class=root>'+outlineTree(list).map(outRow).join('')+'</ul>';applyOutFilter();foldState()}}trackOutline()}}
+function watchReader(){{if(outObserver)outObserver.disconnect();outObserver=null;const doc=readerDoc();if(!doc)return;outObserver=new MutationObserver(()=>{{clearTimeout(outBuildTimer);outBuildTimer=setTimeout(buildOutline,200)}});outObserver.observe(doc.body,{{childList:true,subtree:true,attributeFilter:['open','hidden']}})}}
+// The section being read: the last heading at or above the top of the reader (a beat below it) — the first while none
+// is yet — or the last of all once the page is scrolled to its end, where a short last section never reaches the top.
+function trackOutline(){{const doc=readerDoc();if(!doc||!HEADS.length){{setOutActive(-1);return}}const win=doc.defaultView,end=win.scrollY+win.innerHeight>=doc.documentElement.scrollHeight-2;let a=0;if(end)a=HEADS.length-1;else for(let i=0;i<HEADS.length;i++){{const r=HEADS[i].el.getBoundingClientRect();if(!r.width&&!r.height)continue;if(r.top<=80)a=i;else break}}setOutActive(a)}}
+function outScrolled(){{if(outRaf)return;outRaf=requestAnimationFrame(()=>{{outRaf=0;trackOutline()}})}}
+function setOutActive(i){{if(i===outActive)return;outActive=i;outNav.querySelectorAll('.h.active').forEach(b=>b.classList.remove('active'));const b=i>=0?outNav.querySelector(`.h[data-i="${{i}}"]`):null;if(!b)return;b.classList.add('active');if(!outOver)b.scrollIntoView({{block:'nearest'}})}}
+function goHeading(i){{const h=HEADS[i];if(!h)return;for(let d=h.el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))d.open=true;h.el.scrollIntoView({{block:'start',behavior:stillMotion.matches?'auto':'smooth'}});setOutActive(i)}}
+function setShut(li,shut){{li.classList.toggle('shut',shut);const tw=li.querySelector(':scope > .row .tw');tw.setAttribute('aria-expanded',String(!shut));tw.setAttribute('aria-label',shut?'Expand':'Collapse');if(shut)outShut.add(li.dataset.k);else outShut.delete(li.dataset.k)}}
+outNav.addEventListener('click',e=>{{const tw=e.target.closest('.tw');if(tw){{setShut(tw.closest('li'),!tw.closest('li').classList.contains('shut'));foldState();return}}const b=e.target.closest('.h');if(b)goHeading(+b.dataset.i)}});
+outFold.onclick=()=>{{const shut=!!outNav.querySelector('li.has-kids:not(.shut)');outNav.querySelectorAll('li.has-kids').forEach(li=>setShut(li,shut));foldState()}};
+// The filter keeps a row that matches, and every row above it, with folds opened for the look.
+function applyOutFilter(){{const q=outFilter.value.trim().toLowerCase();outNav.classList.toggle('filtering',!!q);const lis=[...outNav.querySelectorAll('li')];lis.forEach(li=>li.classList.remove('miss'));if(!q)return;
+for(const li of lis.reverse()){{const own=li.querySelector(':scope > .row .h').textContent.toLowerCase().includes(q),kid=li.querySelector(':scope > ul > li:not(.miss)');li.classList.toggle('miss',!own&&!kid)}}}}
+let outFilterTimer; outFilter.oninput=()=>{{clearTimeout(outFilterTimer);outFilterTimer=setTimeout(applyOutFilter,120)}};
+// A page just loaded: its folds start open, its headings are read once the widget has drawn, and followed from then on.
+function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('keydown',outKey);w.addEventListener('scroll',outScrolled,{{passive:true}});w.addEventListener('resize',outScrolled)}}catch(e){{}}outShut.clear();outSig='';outFilter.value='';watchReader();buildOutline();pillRoom()}}
 // MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads.
 // History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
 function traversed(){{try{{const n=reader.contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
 // Library rests on its home page, in the reader's place; Notes and Artifacts say what to pick instead.
-function syncOverlays(){{const page=!!readerPage(),lib=KIND==='library',show=lib&&!page;empty.hidden=lib||page;if(show&&home.hidden)loadHome();home.hidden=!show}}
+function syncOverlays(){{const page=!!readerPage(),lib=KIND==='library',show=lib&&!page;empty.hidden=lib||page;if(show&&home.hidden)loadHome();home.hidden=!show;document.body.classList.toggle('reader-blank',!page)}}
 function shellUrl(k,src,folder){{const p=new URLSearchParams();if(k==='html')p.set('vault','html');if(src)p.set('src',src);if(folder)p.set('folder',folder);const q=p.toString();return (k==='library'?'/':'/vault')+(q?'?'+q:'')}}
 function readerFolder(){{try{{return new URLSearchParams(reader.contentWindow.location.search).get('folder')||''}}catch(e){{return ''}}}}
-reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}syncOverlays();const src=currentSrc();if(!src){{if(!readerPage()){{history.replaceState(null,'',shellUrl(KIND,''));document.title=VAULT.name}}return}}
+reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}syncOverlays();outlineLoaded();const src=currentSrc();if(!src){{if(!readerPage()){{history.replaceState(null,'',shellUrl(KIND,''));document.title=VAULT.name}}return}}
 const k=vaultOf(src);if(k&&KIND!=='library'&&k!==KIND&&traversed())switchVault(k,true);highlight(src);history.replaceState(null,'',shellUrl(KIND,src,KIND==='library'&&!k?readerFolder():''));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+VAULT.name;if(k)store(keyOf(k)+'last',src)}});
 // A saved document or conversation, into the reader: by its vault path when it lives in a vault (the tree highlights it,
 // and a page in Artifacts keeps its link's context), else as it was read, with the folder it was read with.
@@ -494,6 +583,8 @@ window.onyxVault={{switchTo:k=>{{if(!VAULTS[k])return false;switchVault(k);retur
 window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory()}};
 // Put back as it was left without a slide: the page opens with the sidebar already away.
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
+// The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.
+document.body.classList.add('outline-still');applyOutlinePin();requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('outline-still')));
 // Both trees load up front: Library draws them together, and the first switch is as instant as the rest.
 const FIRST=KIND; if(FIRST==='library'&&!INITIAL_SRC)loadHome();
 (FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)reader.src=viewHref(last,FIRST)}});

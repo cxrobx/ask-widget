@@ -1590,6 +1590,112 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_outline_lists_the_page_headings_and_docks_on_the_right(self) -> None:
+        # The outline: the page's headings on the reader's right, nested by level. Away by default, it comes out from
+        # the toggle in the reader's corner (the context pill moves left of it); a row scrolls the page to its heading
+        # and the section being read stays marked; its pin docks it as a third column, remembered; ⌘⇧\ works from
+        # inside the reader; folds and the filter narrow it. Both engines: the app is WebKit.
+        vault = self.root / "vault"
+        vault.mkdir()
+        filler = "\n\n".join(f"Filler paragraph {i}." for i in range(30))  # enough to scroll under each heading
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        storage.add_root(vault)
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    # A note of its own per engine: the reader restores a page's last scroll position, saved by the service.
+                    note = vault / f"Guide {engine}.md"
+                    note.write_text(
+                        f"# Guide\n\n{filler}\n\n## One\n\n{filler}\n\n### One A\n\n{filler}\n\n## Two\n\n{filler}\n",
+                        encoding="utf-8",
+                    )
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 700})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/vault?src={urllib.parse.quote(str(note))}", wait_until="networkidle")
+                    reader = page.frame_locator("iframe[name=reader]")
+                    reader.locator("h1").wait_for()
+                    outline, toggle, pin = page.locator("#outline-side"), page.locator("#outline-toggle"), page.locator("#outline-pin")
+                    rows, pill = page.locator("#outline .h"), reader.locator(".askw-pill")
+
+                    def reader_width() -> float:
+                        return page.locator("#reader").bounding_box()["width"]
+
+                    # Away by default: the reader keeps its width, the toggle rests in its corner and the pill left of it.
+                    expect(outline).to_be_hidden()
+                    expect(toggle).to_be_visible()
+                    expect(pin).to_have_attribute("aria-pressed", "false")
+                    expect(pill).to_have_css("right", "50px")
+                    self.assertEqual(reader_width(), 840)
+
+                    # Hovering the toggle brings it out: every heading, nested, the first marked as the section being read.
+                    toggle.hover()
+                    expect(outline).to_be_visible()
+                    expect(rows).to_have_text(["Guide", "One", "One A", "Two"])
+                    self.assertEqual(page.locator("#outline li.has-kids").count(), 2)  # Guide holds One and Two; One holds One A
+                    expect(rows.nth(0)).to_have_class(re.compile(r"\bactive\b"))
+
+                    # A row scrolls the page to its heading, which becomes the section being read.
+                    rows.nth(3).click()
+                    page.frame(name="reader").wait_for_function(
+                        "() => Math.abs(document.querySelectorAll('h2')[1].getBoundingClientRect().top) < 2"
+                    )
+                    expect(rows.nth(3)).to_have_class(re.compile(r"\bactive\b"))
+                    expect(rows.nth(0)).not_to_have_class(re.compile(r"\bactive\b"))
+
+                    # Its pin docks it: a third column, the toggle gone, the pill back in its corner; remembered.
+                    pin.click()
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    page.mouse.move(400, 350)
+                    page.wait_for_timeout(600)
+                    expect(outline).to_be_visible()
+                    self.assertEqual(reader_width(), 590)
+                    expect(toggle).to_be_hidden()
+                    expect(pill).to_have_css("right", "12px")
+                    page.reload(wait_until="networkidle")
+                    reader.locator("h1").wait_for()
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    expect(outline).to_be_visible()
+                    expect(rows).to_have_text(["Guide", "One", "One A", "Two"])
+
+                    # A twisty folds a section; the header's button folds and unfolds them all; the filter keeps a match
+                    # and the rows above it.
+                    page.locator("#outline li[data-k='2:One'] > .row .tw").click()
+                    expect(rows.nth(2)).to_be_hidden()
+                    expect(rows.nth(1)).to_be_visible()
+                    fold = page.locator("#outline-fold")
+                    fold.click()
+                    expect(rows.nth(1)).to_be_hidden()
+                    expect(fold).to_have_attribute("aria-label", "Expand all headings")
+                    fold.click()
+                    expect(rows.nth(2)).to_be_visible()
+                    page.locator("#outline-filter").fill("two")
+                    expect(rows.nth(1)).to_be_hidden()
+                    expect(rows.nth(0)).to_be_visible()
+                    expect(rows.nth(3)).to_be_visible()
+                    page.locator("#outline-filter").fill("")
+                    expect(rows.nth(1)).to_be_visible()
+
+                    # ⌘⇧\ from inside the reader unpins it: away again (the pointer is off it and its filter no longer
+                    # has focus), and the reader takes the width back.
+                    page.mouse.click(400, 350)  # into the page: focus leaves the filter, the pointer leaves the pane
+                    reader.locator("body").press("Control+Shift+Backslash")
+                    expect(pin).to_have_attribute("aria-pressed", "false")
+                    expect(outline).to_be_hidden()
+                    self.assertEqual(reader_width(), 840)
+                    expect(toggle).to_be_visible()
+
+                    # Library's home is no page: no toggle to hover.
+                    page.locator(".vault-switch a[data-kind=library]").click()
+                    expect(page.locator("#home")).to_be_visible()
+                    expect(toggle).to_be_hidden()
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_switch_swaps_in_place_without_a_reload(self) -> None:
         # Notes ⇄ Artifacts is one shell: the sidebar stays put (no reload, no "Loading…" between trees), the segment's
         # pill slides across, the reader brings back each vault's last page, and history that crosses vaults brings the

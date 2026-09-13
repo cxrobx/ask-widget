@@ -183,6 +183,17 @@ out to type in. Pin it to dock it again; the choice is remembered.
 Symlinked vault folders are followed and keep their vault-visible paths, so
 links between notes inside them stay in the vault.
 
+On the reader's right is the **Outline**, as in Obsidian: the page's headings,
+nested by level, for any note, artifact, or other document that has some. It
+rests as a small round icon in the reader's top-right corner; hover or click the
+icon and the outline floats out over the page, going again once the pointer
+leaves it. Click a heading to scroll the page to it, and the section you are
+reading stays marked as you scroll. A twisty folds a section, the button in the
+header folds or unfolds them all, and the filter box keeps matching headings
+with their parents. The pin in its header (or ⌘⇧\, also from inside the page)
+docks it as a third column beside the reader; that is remembered too. A window
+too narrow for three columns keeps it floating.
+
 Right-click a note or folder for its menu: **Open**, **Reveal in Finder** (the
 real file), and — for anything reached through a symlink — **Reveal Link in
 Finder**, which shows the link itself in the vault folder. Hold ⌥ and they read

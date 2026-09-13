@@ -116,7 +116,7 @@ def stylesheet(snapshot: dict[str, Any] | None) -> str:
     rules = [
         f"{s} aside{{{tokens};color:rgb(var(--ink));color-scheme:{mode}"
         + (f";background:{background};backdrop-filter:none;-webkit-backdrop-filter:none" if background else "") + "}",
-        f"{s} #tree{{{_decls(pane, 'font-family', 'font-size', 'font-weight', 'letter-spacing', 'line-height')}}}",
+        f"{s} #tree,{s} #outline{{{_decls(pane, 'font-family', 'font-size', 'font-weight', 'letter-spacing', 'line-height')}}}",
         # Obsidian's shape: a chevron that turns, not a folder; rows flush; guides down the left.
         f"{s} #tree .fold{{display:none}} {s} #tree .chev{{display:block}}",
         f"{s} #tree summary,{s} #tree .file{{gap:6px;min-height:0;margin:0;padding:4px 8px}} {s} #tree .file{{padding-left:28px}}",

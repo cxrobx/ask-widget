@@ -366,6 +366,9 @@ class VaultApiTests(unittest.TestCase):
         )
         self.assertIn(f'<iframe id=reader name=reader src="/view?{expected.replace("&", "&amp;")}"', page.text)
         self.assertIn("<title>Alpha.md — Vault</title>", page.text)
+        # The outline pane and its toggle ship with every view; the shell fills the pane from the reader's headings.
+        self.assertIn("<aside id=outline-side", page.text)
+        self.assertIn("id=outline-toggle", page.text)
         self.assertIn("<title>Vault</title>", self.client.get("/vault").text)  # no page: the name once
         self.assertIn('<a href="/vault" data-kind=notes>Notes</a>', self.client.get("/").text)
         self.assertIn("id=vault-form", self.client.get("/").text)
