@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from ask_widget.app import create_app
 from ask_widget.claude_runner import _sse
 from ask_widget.config import AppConfig
+from ask_widget.panels_ui import answer_markdown
 from ask_widget.storage import Storage
 
 
@@ -342,6 +343,16 @@ class VaultApiTests(unittest.TestCase):
         self.assertEqual(unset.status_code, 400)
         self.assertEqual(unset.json()["error"], "No vault folder is configured.")
         self.assertEqual(self.client.get("/api/vault/search", params={"q": "al"}).status_code, 400)
+
+    def test_saved_answers_are_drawn_with_the_widgets_own_markdown(self) -> None:
+        # Recent conversations lifts ask.js's renderer out by its section rules; lose one and every answer reads raw.
+        renderer = answer_markdown()
+        self.assertTrue(renderer.startswith("(()=>{"), renderer[:80])
+        self.assertIn("function mdToHtml(src)", renderer)
+        self.assertNotIn("</script", renderer.lower())  # it is inlined in the shell's <script>
+        page = self.client.get("/").text
+        self.assertIn("answerHtml=(()=>{", page)
+        self.assertNotIn("__ANSWER_MARKDOWN__", page)
 
     def test_vault_page_embeds_the_reader_iframe(self) -> None:
         self.set_vault(str(self.vault))

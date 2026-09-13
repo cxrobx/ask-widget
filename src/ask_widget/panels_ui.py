@@ -17,14 +17,18 @@ The script runs inside the shell's ``<script>`` and leans on it: ``$``,
 ``esc``, ``shortPath``, ``TOKEN``, ``native``, the glass functions
 (``launcher_ui.glass_script``), and three hooks — ``openItem(item, action)``,
 which puts a saved conversation in the reader, ``reloadTrees()`` after a vault
-folder changes, and ``syncSidebarTheme(force)``.
+folder changes, and ``syncSidebarTheme(force)``. A saved answer is drawn by
+ask.js's own Markdown renderer, which ``answer_markdown`` inlines.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .launcher_ui import theme_settings
+
+logger = logging.getLogger("ask_widget.panels")
 
 _ICON = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
@@ -88,8 +92,14 @@ PANELS_CSS = """/* The two modals. cxtasks' SettingsDialog: opaque (a translucen
 .hist-row .q{display:-webkit-box;overflow:hidden;color:rgb(var(--secondary));-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .badges{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 0} .badge{display:inline-flex;padding:1px 7px;border-radius:999px;background:rgb(var(--ink)/.065);color:rgb(var(--secondary));font-size:9px;font-weight:650;letter-spacing:.035em;text-transform:uppercase;vertical-align:1px}
 .badge.generated{background:rgb(var(--good)/.12);color:rgb(var(--good))} .badge.rerun,.badge.edited,.badge.continue{background:rgb(var(--accent)/.13);color:rgb(var(--accent))}
-.hist-block{margin-top:14px} .hist-block h4{margin:0 0 5px;color:rgb(var(--faint));font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
-.hist-block pre{max-height:240px;margin:0;padding:11px 12px;overflow:auto;border:1px solid var(--line-soft);border-radius:8px;background:rgb(var(--ink)/.035);color:rgb(var(--ink));font:12.5px/1.55 var(--ui-font);white-space:pre-wrap}
+.hist-block{margin-top:14px} .hist-block>h4{margin:0 0 5px;color:rgb(var(--faint));font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.hist-block>pre,.hist-answer{max-height:240px;margin:0;padding:11px 12px;overflow:auto;border:1px solid var(--line-soft);border-radius:8px;background:rgb(var(--ink)/.035);color:rgb(var(--ink));font:12.5px/1.55 var(--ui-font)} .hist-block>pre,.hist-answer.plain{white-space:pre-wrap}
+/* The answer is Markdown, drawn by the widget's own renderer (answer_markdown below): the panel's answer rules
+   (ask.js, .askw-body) in the shell's tokens, which the vault look sets. */
+.hist-answer :is(p,ul,ol,pre,.askw-table){margin:0 0 8px} .hist-answer>:last-child{margin-bottom:0} .hist-answer :is(ul,ol){padding-left:20px} .hist-answer li{margin:2px 0}
+.hist-answer :is(h1,h2,h3,h4,h5,h6){margin:12px 0 6px;font-size:13px;font-weight:700} .hist-answer>:first-child{margin-top:0} .hist-answer a{color:rgb(var(--accent))}
+.hist-answer code{padding:1px 5px;border-radius:4px;background:rgb(var(--ink)/.07);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px} .hist-answer pre{padding:9px 11px;overflow-x:auto;border-radius:7px;background:rgb(var(--ink)/.07)} .hist-answer pre code{padding:0;background:none}
+.hist-answer .askw-table{overflow-x:auto} .hist-answer table{border-collapse:collapse;font-size:12px} .hist-answer :is(th,td){padding:4px 8px;border:1px solid var(--line);text-align:left;vertical-align:top} .hist-answer th{background:rgb(var(--ink)/.05)}
 .hist-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
 @media(max-width:560px){.set-grid,.hist-filters{grid-template-columns:1fr} .hist-bar{flex-wrap:wrap}}"""
 
@@ -123,7 +133,7 @@ PANELS_HTML = """<dialog id=settings-modal class="modal settings-modal" aria-lab
 <div id=history-action class=seg role=radiogroup aria-label="Question type"><button type=button role=radio aria-checked=true data-action="">All</button><button type=button role=radio aria-checked=false data-action=ask>Questions</button><button type=button role=radio aria-checked=false data-action=eli5>ELI5</button><button type=button role=radio aria-checked=false data-action=prove>Prove it</button></div></div>
 <details class=hist-more><summary>More filters</summary><div class=hist-filters><select id=history-provider aria-label="Filter by provider"><option value="">All providers</option></select><select id=history-model aria-label="Filter by model"><option value="">All models</option></select><select id=history-document aria-label="Filter by document"><option value="">All documents</option></select><select id=history-date aria-label="Filter by date"><option value=0>Any time</option><option value=1>Today</option><option value=7>Past week</option><option value=30>Past month</option><option value=365>Past year</option></select></div></details>
 <p id=history-count class=meta></p><div id=history-results class=hist-list></div></div>
-<div id=history-detail hidden><p id=history-detail-meta class=meta></p><div id=history-detail-badges class=badges></div><div class=hist-block><h4>Passage</h4><pre id=history-detail-selection></pre></div><div class=hist-block><h4>Question</h4><pre id=history-detail-question></pre></div><div class=hist-block><h4>Answer</h4><pre id=history-detail-answer></pre></div><div id=history-detail-actions class=hist-actions></div></div>
+<div id=history-detail hidden><p id=history-detail-meta class=meta></p><div id=history-detail-badges class=badges></div><div class=hist-block><h4>Passage</h4><pre id=history-detail-selection></pre></div><div class=hist-block><h4>Question</h4><pre id=history-detail-question></pre></div><div class=hist-block><h4>Answer</h4><div id=history-detail-answer class=hist-answer></div></div><div id=history-detail-actions class=hist-actions></div></div>
 </div></dialog>"""
 
 PANELS_JS = r"""// MARK: panels — Settings and Recent conversations (panels_ui.py). One dialog at a time; a click on the dim closes it.
@@ -170,7 +180,7 @@ async function loadDiagnostics(probe){const box=$('#diag');box.textContent=probe
 $('#refresh-diag').onclick=()=>loadDiagnostics(false);$('#probe').onclick=()=>loadDiagnostics(true);
 function openSettings(section){show(settingsDlg);loadSettings().catch(e=>say(e.message,'bad'));loadDiagnostics(false);const target=section&&document.getElementById(section);if(target)requestAnimationFrame(()=>target.scrollIntoView({block:'start'}));return true}
 // MARK: Recent conversations. The list, then one conversation in its place; that conversation's actions put it in the reader.
-const HIST=new Map();let histAction='',histTimer=0;
+const HIST=new Map(),answerHtml=__ANSWER_MARKDOWN__;let histAction='',histTimer=0;
 function modeLabel(c){return({generated:'Generated',rerun:'Asked again',edited:'Edited & asked',continue:'Continued'})[c.request_mode]||'Generated'}
 function actionLabel(a){return({ask:'Question',eli5:'ELI5',prove:'Prove it'})[a]||a}
 function remember(items){for(const c of items||[])HIST.set(c.request_id,c)}
@@ -183,7 +193,7 @@ async function showConversation(id){let item=HIST.get(id);if(!item){try{item=(aw
 show(historyDlg);$('#history-list-view').hidden=true;$('#history-detail').hidden=false;$('#history-back').hidden=false;$('#history-title').textContent=item.document_title||'Saved answer';
 $('#history-detail-meta').textContent=new Date(item.started_at*1000).toLocaleString()+' · '+(item.provider||'claude')+' · '+item.model+(item.effort?' · '+item.effort:'')+(item.latency_ms?' · '+(item.latency_ms/1000).toFixed(1)+'s':'');
 $('#history-detail-badges').innerHTML=`<span class="badge ${esc(item.request_mode||'generated')}">${esc(modeLabel(item))}</span><span class=badge>${esc(actionLabel(item.action))}</span>`;
-$('#history-detail-selection').textContent=item.selection||'No saved passage';$('#history-detail-question').textContent=item.question||actionLabel(item.action);$('#history-detail-answer').textContent=item.answer||item.error||'No answer';
+$('#history-detail-selection').textContent=item.selection||'No saved passage';$('#history-detail-question').textContent=item.question||actionLabel(item.action);const answer=$('#history-detail-answer'),md=!!(item.answer&&answerHtml);answer.classList.toggle('plain',!md);if(md)answer.innerHTML=answerHtml(item.answer);else answer.textContent=item.answer||item.error||'No answer';answer.scrollTop=0;
 $('#history-detail-actions').innerHTML=[['rerun','Ask again','primary'],['edited','Edit & ask','secondary'],['continue','Continue','secondary'],['open','Open document','secondary']].map(([a,l,c])=>`<button type=button class=${c} data-act=${a} data-id="${esc(item.request_id)}">${l}</button>`).join('');
 historyDlg.querySelector('.modal-body').scrollTop=0;$('#history-detail-actions button').focus();return true}
 $('#history-results').addEventListener('click',e=>{const r=e.target.closest('[data-id]');if(r)showConversation(r.dataset.id)});
@@ -210,5 +220,29 @@ def panels_markup(settings: dict[str, Any] | None) -> str:
     )
 
 
+# ask.js's Markdown section runs between two of its own section rules and needs nothing else from the widget.
+_MD_START = "// ============================================================ markdown"
+_MD_END = "// ============================================================ helpers"
+
+
+def answer_markdown() -> str:
+    """The widget's own Markdown renderer, lifted out of ``static/ask.js`` as a JS expression.
+
+    A saved answer is the Markdown the panel streamed, so Recent conversations draws it with the same renderer rather
+    than a second one that would drift. Read on every render, as GET /ask.js is, so an edit shows on reload. Without
+    the section the answer shows as plain text: never a broken shell over formatting.
+    """
+    from .app import ASK_JS  # app imports this module, through vault_ui
+
+    try:
+        text = ASK_JS.read_text(encoding="utf-8")
+        start = text.index(_MD_START)
+        end = text.index(_MD_END, start)
+    except (OSError, ValueError):
+        logger.warning("No Markdown section in %s; saved answers show as plain text", ASK_JS)
+        return "null"
+    return "(()=>{" + text[start:end] + "return mdToHtml})()"
+
+
 def panels_script() -> str:
-    return PANELS_JS
+    return PANELS_JS.replace("__ANSWER_MARKDOWN__", answer_markdown())

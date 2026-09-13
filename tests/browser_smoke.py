@@ -1764,7 +1764,7 @@ class BrowserSmokeTests(unittest.TestCase):
             document_page=None, selection="A note.", context="", action="ask", question="What is this note?",
             folder=str(notes), provider="claude", model="sonnet",
         )
-        storage.finish_conversation("req-alpha", status="complete", answer="It is a note.")
+        storage.finish_conversation("req-alpha", status="complete", answer="It is a **note**.")
 
         def saved_theme() -> str:
             return storage.settings(model_default="sonnet")["appearance_theme"]
@@ -1837,6 +1837,7 @@ class BrowserSmokeTests(unittest.TestCase):
                     recent.locator("#history-action [role=radio]", has_text="All").click()
                     row.click()
                     expect(page.locator("#history-detail-answer")).to_have_text("It is a note.")
+                    expect(page.locator("#history-detail-answer strong")).to_have_text("note")  # drawn, not **raw**
                     recent.get_by_role("button", name="Continue", exact=True).click()
                     expect(recent).to_be_hidden()
                     expect(reader.locator("h1")).to_have_text("Alpha")
