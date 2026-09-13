@@ -338,6 +338,61 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_answer_tables_render_as_tables(self) -> None:
+        # A table in an answer used to print as raw "| a | b |" lines.
+        answer = (
+            "No. Row two is Claude's **first** reply.\n\n"
+            "| Row | Role | Who wrote it |\n"
+            "|---|:---:|---:|\n"
+            "| 1 | `user` | your app |\n"
+            "| 2 | `assistant` | <b>Claude</b> \\| model |\n"
+            "So row two asks for the tool.\n"
+        )
+
+        async def table_stream(*args, **kwargs):
+            # In pieces, so the half-arrived table renders along the way too.
+            for start in range(0, len(answer), 25):
+                yield _sse("token", {"text": answer[start:start + 25]})
+                await asyncio.sleep(0.01)
+            yield _sse("done", {"elapsed_ms": 5})
+
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", table_stream), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 640})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            query = urllib.parse.urlencode({"src": str(self.document), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            paragraph = page.locator("main p").first
+            paragraph.select_text()
+            paragraph.dispatch_event("mouseup", {"button": 0})
+            page.get_by_role("button", name="Ask about the selected text").click()
+            page.get_by_role("button", name="Ask a question…").click()
+            page.get_by_label("Question about the highlighted text").fill("Which row?")
+            page.get_by_role("button", name="Go", exact=True).click()
+
+            panel = page.get_by_role("dialog", name="Onyx answer")
+            expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            reply = panel.locator(".askw-a").last
+            table = reply.locator("table")
+            expect(table).to_have_count(1)
+            self.assertEqual(table.locator("th").all_inner_texts(), ["Row", "Role", "Who wrote it"])
+            rows = table.locator("tbody tr")
+            self.assertEqual(rows.count(), 2)
+            self.assertEqual(rows.nth(0).locator("code").inner_text(), "user")
+            # Markup in a cell stays text, and an escaped pipe stays in its cell.
+            cell = rows.nth(1).locator("td").nth(2)
+            self.assertEqual(cell.inner_text(), "<b>Claude</b> | model")
+            self.assertEqual(cell.locator("b").count(), 0)
+            self.assertEqual(cell.evaluate("e => getComputedStyle(e).textAlign"), "right")
+            self.assertEqual(table.locator("th").nth(1).evaluate("e => getComputedStyle(e).textAlign"), "center")
+            self.assertNotIn("|---", reply.inner_text())
+            expect(reply.locator("p", has_text="So row two asks for the tool.")).to_have_count(1)
+            expect(reply.locator("td", has_text="So row two")).to_have_count(0)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_shell_navigates_reader_iframe(self) -> None:
         vault = self.root / "vault"
         (vault / "notes").mkdir(parents=True)

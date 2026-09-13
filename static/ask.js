@@ -95,6 +95,10 @@
     '.askw-body pre code{background:transparent;color:inherit;padding:0;}',
     '.askw-body h1,.askw-body h2,.askw-body h3{font-size:14.5px;margin:12px 0 6px;font-weight:700;}',
     '.askw-body a{color:var(--askw-accent);}',
+    '.askw-body .askw-table{overflow-x:auto;margin:0 0 9px;}.askw-body .askw-table:last-child{margin-bottom:0;}',
+    '.askw-body table{border-collapse:collapse;font-size:13px;line-height:1.45;}',
+    '.askw-body th,.askw-body td{border:1px solid rgba(127,127,127,.32);padding:4px 8px;text-align:left;vertical-align:top;}',
+    '.askw-body th{font-weight:700;background:rgba(127,127,127,.08);}',
     '.askw-fallback{white-space:pre-wrap;}',
     '.askw-think{display:flex;align-items:center;gap:8px;color:#78716c;font-size:13px;}',
     '.askw-err{color:#b91c1c;font-size:13px;}',
@@ -196,6 +200,49 @@
     return s;
   }
 
+  // GFM table pieces. A row's outer pipes are optional, and `\|` is a literal
+  // pipe inside a cell.
+  var MD_PIPE = String.fromCharCode(0xE004);
+  function mdCells(row) {
+    var s = row.replace(/\\\|/g, MD_PIPE).trim();
+    if (s.charAt(0) === '|') s = s.slice(1);
+    if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+    return s.split('|').map(function (c) { return c.split(MD_PIPE).join('|').trim(); });
+  }
+  function mdIsTableSep(line) {
+    return line.indexOf('|') >= 0 && mdCells(line).every(function (c) { return /^:?-+:?$/.test(c); });
+  }
+
+  // The first table in a block: a header row, then a delimiter row with as many
+  // cells. Body rows run for as long as lines still carry a pipe, so a sentence
+  // written straight after the table stays a paragraph.
+  function mdTableAt(lines) {
+    for (var i = 0; i + 1 < lines.length; i++) {
+      if (lines[i].indexOf('|') < 0 || !mdIsTableSep(lines[i + 1])) continue;
+      if (mdCells(lines[i]).length !== mdCells(lines[i + 1]).length) continue;
+      var end = i + 2;
+      while (end < lines.length && lines[end].indexOf('|') >= 0) end++;
+      return { start: i, end: end };
+    }
+    return null;
+  }
+
+  function mdTable(lines) {
+    var aligns = mdCells(lines[1]).map(function (c) {
+      var l = c.charAt(0) === ':', r = c.charAt(c.length - 1) === ':';
+      return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+    });
+    function row(line, tag) {
+      var cells = mdCells(line);
+      return '<tr>' + aligns.map(function (a, i) {
+        return '<' + tag + (a ? ' style="text-align:' + a + '"' : '') + '>' +
+          inlineMd(esc(cells[i] || '')) + '</' + tag + '>';
+      }).join('') + '</tr>';
+    }
+    return '<div class="askw-table"><table><thead>' + row(lines[0], 'th') + '</thead><tbody>' +
+      lines.slice(2).map(function (l) { return row(l, 'td'); }).join('') + '</tbody></table></div>';
+  }
+
   // Self-contained Markdown -> safe HTML. Escapes everything first, then only adds
   // our own tags, so reflected file contents from "Prove it" can't inject script
   // (no CDN, no DOMPurify, works offline).
@@ -207,12 +254,21 @@
       return MD_F0 + (fences.length - 1) + MD_F1;
     });
     var out = [];
-    src.split(/\n{2,}/).forEach(function (block) {
-      block = block.replace(/^\n+|\n+$/g, '');
-      if (!block) return;
-      var fm = block.match(MD_RE_FENCE);
+    function block(text) {
+      text = text.replace(/^\n+|\n+$/g, '');
+      if (!text) return;
+      var fm = text.match(MD_RE_FENCE);
       if (fm) { out.push(fences[+fm[1]]); return; }
-      var lines = block.split('\n');
+      var lines = text.split('\n');
+      var table = mdTableAt(lines);
+      if (table) {
+        // A table needs no blank line around it: whatever shares its block
+        // renders as blocks of its own, before and after.
+        block(lines.slice(0, table.start).join('\n'));
+        out.push(mdTable(lines.slice(table.start, table.end)));
+        block(lines.slice(table.end).join('\n'));
+        return;
+      }
       if (lines.every(function (l) { return /^\s*[-*]\s+/.test(l); })) {
         out.push('<ul>' + lines.map(function (l) { return '<li>' + inlineMd(esc(l.replace(/^\s*[-*]\s+/, ''))) + '</li>'; }).join('') + '</ul>');
         return;
@@ -221,10 +277,11 @@
         out.push('<ol>' + lines.map(function (l) { return '<li>' + inlineMd(esc(l.replace(/^\s*\d+\.\s+/, ''))) + '</li>'; }).join('') + '</ol>');
         return;
       }
-      var hm = lines.length === 1 && block.match(/^(#{1,6})\s+(.*)$/);
+      var hm = lines.length === 1 && text.match(/^(#{1,6})\s+(.*)$/);
       if (hm) { var lv = Math.min(hm[1].length, 6); out.push('<h' + lv + '>' + inlineMd(esc(hm[2])) + '</h' + lv + '>'); return; }
       out.push('<p>' + lines.map(function (l) { return inlineMd(esc(l)); }).join('<br>') + '</p>');
-    });
+    }
+    src.split(/\n{2,}/).forEach(function (text) { block(text); });
     return out.join('\n');
   }
 
