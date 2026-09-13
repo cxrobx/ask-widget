@@ -365,6 +365,90 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_a_selection_never_runs_into_pinned_chrome(self) -> None:
+        # Selecting a term beside an artifact's sticky contents rail selected the whole
+        # page above it. Pinned chrome sits beside the text on screen but before all of
+        # it in the DOM, so a drag that touched the rail or a sticky bar, or one begun on
+        # the bar's faded lower edge, ran from there to the pointer. Both engines; the app
+        # is WebKit.
+        for engine in ("chromium", "webkit"):
+            with self.subTest(engine=engine):
+                self._selection_stays_out_of_pinned_chrome(engine)
+
+    def _selection_stays_out_of_pinned_chrome(self, engine: str) -> None:
+        prose = "Filler prose standing in for the page above the passage, one line of it."
+        paragraphs = "".join(f"<p>{index}. {prose}</p>" for index in range(40))
+        links = "".join(f'<a href="#part-{index}">Part {index}</a>' for index in range(12))
+        pinned = self.root / "pinned.html"
+        pinned.write_text(
+            "<!doctype html><html><head><title>Pinned chrome</title><style>"
+            "body{margin:0;font:16px/1.6 Helvetica,Arial,sans-serif}"
+            ".bar{position:sticky;top:0;z-index:5;padding:10px 24px 30px;"
+            "background:linear-gradient(#fff 70%,transparent)}.bar p{margin:6px 0 0}"
+            ".layout{display:grid;grid-template-columns:200px 1fr;gap:48px;padding:0 24px}"
+            ".rail{position:sticky;top:110px;align-self:start}.rail a{display:block;padding:6px 0}"
+            "dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px}dd{margin:0}"
+            "#banner{position:fixed;left:0;right:0;bottom:0;height:44px;background:#eee}"
+            "</style></head><body>"
+            '<div class="bar"><label><input type="checkbox" id="flag"> Flag</label>'
+            '<p id="note">Pinned note text.</p></div>'
+            f'<div class="layout"><aside class="rail"><nav>{links}</nav></aside><main>{paragraphs}'
+            '<dl><dt id="term">tool_use_id</dt><dd>The field that quotes back the id of the call.</dd></dl>'
+            f"{paragraphs}</main></div>"
+            "<div id=\"banner\" onclick=\"this.dataset.clicked = 'yes'\"><span>Banner</span></div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        with sync_playwright() as playwright:
+            browser = getattr(playwright, engine).launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 700})
+            query = urllib.parse.urlencode({"src": str(pinned), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            # Scroll the term's row beside one of the rail's links.
+            page.evaluate("scrollBy(0, document.getElementById('term').getBoundingClientRect().top - 330)")
+            at = page.evaluate("""() => {
+              const range = document.createRange();
+              range.selectNodeContents(document.getElementById('term'));
+              const term = range.getBoundingClientRect(), mid = (term.top + term.bottom) / 2;
+              const link = [...document.querySelectorAll('.rail a')].find(a => {
+                const r = a.getBoundingClientRect();
+                return r.top <= mid && mid <= r.bottom;
+              });
+              const l = link.getBoundingClientRect(), note = document.getElementById('note').getBoundingClientRect();
+              const bar = document.querySelector('.bar').getBoundingClientRect();
+              return {left: term.left, right: term.right, mid, href: link.getAttribute('href'),
+                      link: [l.left + 20, (l.top + l.bottom) / 2], note: [term.left + 30, (note.top + note.bottom) / 2],
+                      fade: [term.left + 30, bar.bottom - 8]};
+            }""")
+            end = (at["right"] - 2, at["mid"])
+
+            def drag(start, stop) -> str:
+                page.evaluate("getSelection().removeAllRanges()")
+                page.mouse.move(*start)
+                page.mouse.down()
+                page.mouse.move(*stop, steps=12)
+                page.mouse.up()
+                page.wait_for_timeout(200)
+                return " ".join(page.evaluate("getSelection().toString()").split())
+
+            self.assertEqual(drag(end, (at["left"] + 2, at["mid"])), "tool_use_id")
+            self.assertEqual(drag(end, tuple(at["link"])), "tool_use_id")  # onto the rail beside it
+            # Up into the sticky bar, and down from its faded edge: the passage under it, never the page.
+            for gesture in (drag(end, tuple(at["note"])), drag(tuple(at["fade"]), end)):
+                self.assertTrue(gesture.endswith("tool_use_id"), gesture[-60:])
+                self.assertNotIn("Part ", gesture)
+                self.assertNotIn("Pinned note", gesture)
+                self.assertLess(len(gesture), 1200)
+            self.assertEqual(page.evaluate("document.querySelectorAll('[data-askw-passthrough]').length"), 0)
+
+            # The chrome's own controls still work, and a click on its background stays a click.
+            page.mouse.click(*at["link"])
+            self.assertEqual(page.evaluate("location.hash"), at["href"])
+            page.get_by_label("Flag").check()
+            page.mouse.click(450, 692)
+            self.assertEqual(page.evaluate("document.getElementById('banner').dataset.clicked"), "yes")
+            browser.close()
+
     def test_follow_up_box_drags_taller_and_keeps_its_height(self) -> None:
         # The follow-up box could not be resized: it grew to four lines as you typed
         # and no further. Both engines, with the panel at full height: the app is

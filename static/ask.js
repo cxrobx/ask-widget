@@ -206,6 +206,9 @@
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-menu,.askw-panel,.askw-picker{background:#fff}.askw-pill{--askw-glass:#fff;--askw-frost:#fff}}',
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:#242424}html[data-askw-page="dark"] .askw-pill{--askw-glass:#242424;--askw-frost:#242424}}',
     '@media(prefers-reduced-transparency:reduce){.askw-menu,.askw-panel,.askw-picker{background:rgba(255,255,255,.98)}.askw-menu,.askw-panel,.askw-picker,.askw-pill{backdrop-filter:none;-webkit-backdrop-filter:none}.askw-pill{--askw-glass:rgba(255,255,255,.98);--askw-frost:rgba(255,255,255,.98)}html[data-askw-color="dark"] .askw-menu,html[data-askw-color="dark"] .askw-panel,html[data-askw-color="dark"] .askw-picker{background:rgba(36,36,36,.98)}html[data-askw-page="dark"] .askw-pill{--askw-glass:rgba(36,36,36,.98);--askw-frost:rgba(36,36,36,.98)}}',
+    // Pinned chrome lets the pointer through while a press elsewhere is held (see
+    // watchPinnedChrome), its descendants too, whatever pointer-events they set.
+    '[data-askw-passthrough],[data-askw-passthrough] *{pointer-events:none!important;}',
     '@media(prefers-reduced-motion:reduce){.askw-dot{animation:none}.askw-toast,.askw-pill,.askw-pill b{transition:none}}'
   ].join('\n');
 
@@ -1675,9 +1678,115 @@
       .catch(function (e) { toast(e.message || 'Could not restore saved answer.'); });
   }
 
+  // ============================================================ pinned chrome
+  // A page's pinned chrome (a sticky contents rail, a sticky bar of switches, a fixed
+  // header, Onyx's own pill and panel) stays beside or over the text on screen, but it
+  // sits elsewhere in the DOM, usually before all of the text. A selection dragged onto
+  // it ran from there to the pointer: the whole page above the passage. So while the
+  // button is down, pinned elements that don't hold the press let the pointer through
+  // to the text beside or beneath them. A press on one's background (a sticky bar's
+  // faded lower edge, which shows the text through it) starts at that text instead,
+  // and once it turns into a drag the bar lets it through too; a click stays a click.
+  var PASS_ATTR = 'data-askw-passthrough';
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var PRESS_CONTROLS = 'a[href],button,input,select,textarea,label,summary,audio,video,' +
+    '[contenteditable]:not([contenteditable="false"]),[tabindex]:not([tabindex="-1"]),' +
+    '[role=button],[role=link],[role=tab],[role=checkbox],[role=radio],[role=switch],' +
+    '[role=menuitem],[role=option],[role=slider],[role=textbox]';
+  var passing = [], pendingPress = null;
+
+  // Sticky and fixed elements, except any that cover the viewport: a full-page layer
+  // (a modal's backdrop, an app shell) is the page, not chrome beside it.
+  function pinnedChrome() {
+    var found = [], stack = document.body ? [document.body] : [];
+    var wide = window.innerWidth * 0.9, tall = window.innerHeight * 0.9;
+    while (stack.length) {
+      for (var el = stack.pop().firstElementChild; el; el = el.nextElementSibling) {
+        var style = getComputedStyle(el);
+        if (style.display === 'none') continue;
+        if (style.position === 'sticky' || style.position === 'fixed') {
+          var box = el.getBoundingClientRect();
+          if (box.width < wide || box.height < tall) { found.push(el); continue; }
+        }
+        if (el.namespaceURI !== SVG_NS) stack.push(el);   // nothing inside an <svg> can be pinned
+      }
+    }
+    return found;
+  }
+
+  function letThrough(el) {
+    el.setAttribute(PASS_ATTR, '');
+    passing.push(el);
+  }
+
+  function stopLettingThrough() {
+    for (var i = 0; i < passing.length; i++) passing[i].removeAttribute(PASS_ATTR);
+    passing = [];
+    pendingPress = null;
+  }
+
+  // Is (x, y) on a glyph, not merely nearest one? caretRangeFromPoint answers with the
+  // closest caret even from the empty padding beside a line.
+  function pointOnText(x, y) {
+    var caret = document.caretRangeFromPoint(x, y);
+    if (!caret || caret.startContainer.nodeType !== 3) return false;
+    var node = caret.startContainer, probe = document.createRange();
+    for (var i = Math.max(0, caret.startOffset - 1); i <= caret.startOffset && i < node.length; i++) {
+      probe.setStart(node, i);
+      probe.setEnd(node, i + 1);
+      var rects = probe.getClientRects();
+      for (var k = 0; k < rects.length; k++) {
+        var r = rects[k];
+        if (x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2) return true;
+      }
+    }
+    return false;
+  }
+
+  // The caret in the text beneath `home` at (x, y), or null when there is none.
+  function caretBeneath(home, x, y) {
+    home.forEach(function (el) { el.setAttribute(PASS_ATTR, ''); });
+    var caret = document.caretRangeFromPoint(x, y);
+    home.forEach(function (el) { el.removeAttribute(PASS_ATTR); });
+    if (!caret || caret.startContainer.nodeType !== 3) return null;
+    for (var i = 0; i < home.length; i++) if (home[i].contains(caret.startContainer)) return null;
+    return caret;
+  }
+
+  function watchPinnedChrome() {
+    document.addEventListener('mousedown', function (e) {
+      stopLettingThrough();
+      if (e.button !== 0 || isOurs(e.target)) return;
+      var home = [];
+      pinnedChrome().forEach(function (el) {
+        if (el.contains(e.target)) home.push(el);
+        else letThrough(el);
+      });
+      // A press on the chrome itself: its text and controls work as they always did.
+      if (!home.length || e.shiftKey || e.detail > 1 || !document.caretRangeFromPoint) return;
+      if (e.target.closest(PRESS_CONTROLS) || pointOnText(e.clientX, e.clientY)) return;
+      var caret = caretBeneath(home, e.clientX, e.clientY);
+      if (!caret) return;
+      pendingPress = { home: home, x: e.clientX, y: e.clientY };
+      // Once the engine has put its own caret in the chrome, move it to the text.
+      setTimeout(function () { window.getSelection().collapse(caret.startContainer, caret.startOffset); }, 0);
+    }, true);
+    document.addEventListener('mousemove', function (e) {
+      var press = pendingPress;
+      if (!press || Math.abs(e.clientX - press.x) + Math.abs(e.clientY - press.y) < 4) return;
+      pendingPress = null;
+      press.home.forEach(letThrough);
+    }, true);
+    ['mouseup', 'dragstart', 'dragend', 'pointercancel'].forEach(function (type) {
+      document.addEventListener(type, stopLettingThrough, true);
+    });
+    window.addEventListener('blur', stopLettingThrough);
+  }
+
   // ============================================================ global events
   function wire() {
     var debounce = null;
+    watchPinnedChrome();
     document.addEventListener('mouseup', function (e) {
       if (isOurs(e.target)) return;
       if (debounce) clearTimeout(debounce);
