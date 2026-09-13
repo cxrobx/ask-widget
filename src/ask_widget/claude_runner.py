@@ -11,7 +11,8 @@ parsed here was locked against a live ``claude`` v2.1.160 probe:
     {"type":"stream_event","event":{"type":"content_block_start",
         "content_block":{"type":"tool_use","name":"Grep"}}}  # tool pill
     {"type":"assistant","message":{"content":[{"type":"text",...}]}}  # whole turn
-    {"type":"rate_limit_event",...}                    # skip
+    {"type":"rate_limit_event","rate_limit_info":{
+        "status":"allowed",...}}                       # every run; shown only if "rejected"
     {"type":"result","is_error":false,"result":"..."}  # end
 
 Both stdout and stderr are PIPEd; because we read stdout line-by-line instead of
@@ -231,9 +232,16 @@ async def stream_answer(
             if kind == "system":
                 continue
             if kind == "rate_limit_event":
+                # Sent on every run to report the usage window, almost always
+                # with status "allowed". Only "rejected" means Claude is
+                # actually being held back, so only that reaches the reader.
                 saw_activity = True
-                status = obj.get("status") or obj.get("message") or "Claude is rate limited; waiting…"
-                yield _sse("status", {"kind": "rate_limit", "message": str(status), "retryable": True})
+                info = obj.get("rate_limit_info") or {}
+                if info.get("status") == "rejected":
+                    yield _sse(
+                        "status",
+                        {"kind": "rate_limit", "message": "Claude is rate limited; waiting…", "retryable": True},
+                    )
                 continue
 
             if kind == "stream_event":

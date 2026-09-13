@@ -143,6 +143,56 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("before sending a final result", "".join(chunks))
         self.assertNotIn("event: done", "".join(chunks))
 
+    async def _claude_stream(self, payloads: list[dict]) -> str:
+        stdout = asyncio.StreamReader()
+        for payload in payloads:
+            stdout.feed_data(json_line(payload))
+        stdout.feed_eof()
+        with tempfile.TemporaryDirectory() as raw:
+            with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(stdout)):
+                chunks = [
+                    chunk
+                    async for chunk in stream_answer("prompt", Path(raw), "sonnet", "system")
+                ]
+        return "".join(chunks)
+
+    async def test_routine_rate_limit_event_is_not_reported_as_a_limit(self) -> None:
+        # The CLI sends this on every run; "allowed" is the normal case.
+        for status in ("allowed", "allowed_warning"):
+            with self.subTest(status=status):
+                stream = await self._claude_stream(
+                    [
+                        {
+                            "type": "rate_limit_event",
+                            "rate_limit_info": {"status": status, "rateLimitType": "five_hour"},
+                        },
+                        {
+                            "type": "stream_event",
+                            "event": {
+                                "type": "content_block_delta",
+                                "delta": {"type": "text_delta", "text": "Yes."},
+                            },
+                        },
+                        {"type": "result", "is_error": False, "result": "Yes."},
+                    ]
+                )
+                self.assertNotIn("event: status", stream)
+                self.assertNotIn("rate limited", stream)
+                self.assertIn("event: done", stream)
+
+    async def test_rejected_rate_limit_event_is_reported(self) -> None:
+        stream = await self._claude_stream(
+            [
+                {
+                    "type": "rate_limit_event",
+                    "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour"},
+                },
+                {"type": "result", "is_error": False, "result": "Yes."},
+            ]
+        )
+        self.assertIn("event: status", stream)
+        self.assertIn("rate limited", stream)
+
     async def test_codex_jsonl_is_translated_to_widget_events(self) -> None:
         stdout = asyncio.StreamReader()
         for payload in (
