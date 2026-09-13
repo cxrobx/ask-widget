@@ -250,8 +250,8 @@ body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1)
 #tree .new-folder>svg{{flex:none;width:16px;height:16px;color:rgb(var(--ink)/.6)}} #tree .lbl:has(.name-edit){{flex:1}}
 #tree .name-edit{{width:100%;min-width:0;margin:-3px 0;padding:2px 6px;border:1px solid rgb(var(--accent));border-radius:6px;background:rgb(var(--bg-input));color:rgb(var(--ink));font:inherit;outline:2px solid rgb(var(--accent)/.26)}}
 /* Outline: the page's headings on the reader's right, as Obsidian's outline pane. Docked (pinned), it is the grid's third
-   column; floating (the default), it lies over the reader like the unpinned sidebar and comes out from the round toggle in
-   the reader's top-right corner — not from the window's edge, which is where the page's scrollbar lives. */
+   column; floating (the default), it lies over the reader like the unpinned sidebar and comes out on the reader's right
+   edge (watched in script, not an overlay: the page's scrollbar lives there) or from the round toggle in its corner. */
 #outline-side{{border-right:0;border-left:1px solid var(--line-soft)}} #outline-side .brand{{margin-bottom:10px}} .outline-title{{flex:1;min-width:0}} .outline-mark{{display:grid;flex:none;place-items:center;width:22px;height:22px;color:rgb(var(--secondary))}} .outline-mark svg{{width:18px;height:18px}}
 #outline-filter{{width:100%;margin:0 0 8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:rgb(var(--bg-input)/.88);color:rgb(var(--ink));font-size:12.5px;box-shadow:inset 0 1px 0 rgb(255 255 255/.025)}} #outline-filter:focus{{outline:2px solid rgb(var(--accent)/.26);outline-offset:0;border-color:rgb(var(--accent))}}
 #outline-fold .up,#outline-fold.all-shut .down{{display:none}} #outline-fold.all-shut .up{{display:block}}
@@ -358,8 +358,9 @@ side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}
 // MARK: outline — the page's headings, read out of the reader's document (same origin) and nested by level, as Obsidian's
 // outline pane: a row scrolls the page to its heading, the twisty folds a section, the filter keeps matching rows and
 // their parents, and the section being read stays marked as the page scrolls. Pinned, it docks as the grid's third
-// column; unpinned (the default) it floats out from the round toggle in the reader's corner and goes a moment after the
-// pointer leaves it, unless it is being typed in. ⌘⇧\\ pins and unpins, also from inside the reader; a narrow window never
+// column; unpinned (the default) it floats out after a beat on the reader's right edge or the round toggle in its corner,
+// and goes a moment after the pointer leaves it, unless it is being typed in. The edge is watched from the reader's own
+// pointer moves (same origin), not an overlay as on the left, so the page's scrollbar under it stays clickable. ⌘⇧\\ pins and unpins, also from inside the reader; a narrow window never
 // docks it. The pin is remembered; a fold is kept while its page stays open.
 const OUT_KEY='askw:vault:outline', outSide=$('#outline-side'), outNav=$('#outline'), outPin=$('#outline-pin'), outToggle=$('#outline-toggle'), outFilter=$('#outline-filter'), outFold=$('#outline-fold'), narrow=matchMedia('(max-width:800px)');
 let outPinned=recall(OUT_KEY)==='pinned', outOver=false, outTimer=0, outBuildTimer=0, outRaf=0, outObserver=null, outActive=-1, outSig=''; let HEADS=[]; const outShut=new Set();
@@ -375,6 +376,7 @@ function outKey(e){{if((e.key==='\\\\'||e.key==='|')&&e.shiftKey&&(e.metaKey||e.
 outPin.onclick=()=>setOutlinePinned(!outPinned); document.addEventListener('keydown',outKey); narrow.addEventListener('change',applyOutlinePin);
 outToggle.addEventListener('mouseenter',()=>{{clearTimeout(outTimer);outTimer=setTimeout(()=>outOut(true),40)}}); outToggle.addEventListener('mouseleave',e=>{{if(outSide.contains(e.relatedTarget))return;clearTimeout(outTimer);if(document.body.classList.contains('outline-out'))outLater()}});
 outToggle.onclick=()=>{{clearTimeout(outTimer);outOut(true)}};
+let outAtEdge=false; function outEdgeMove(e){{const w=e.view||window,at=!outDocked()&&w.innerWidth-e.clientX<=24;if(at===outAtEdge)return;outAtEdge=at;clearTimeout(outTimer);if(at)outTimer=setTimeout(()=>outOut(true),40);else if(document.body.classList.contains('outline-out'))outLater()}}
 outSide.addEventListener('mouseenter',()=>{{outOver=true;clearTimeout(outTimer)}}); outSide.addEventListener('mouseleave',()=>{{outOver=false;outLater()}}); outSide.addEventListener('focusout',()=>{{if(!outOver)outLater()}});
 outSide.addEventListener('keydown',e=>{{if(e.key!=='Escape')return;if(document.activeElement===outFilter&&outFilter.value){{outFilter.value='';applyOutFilter()}}else{{document.activeElement.blur();if(!outDocked())outOut(false)}}}});
 // The reader's document, while it holds a page (about:blank and the home page have no outline).
@@ -404,7 +406,7 @@ function applyOutFilter(){{const q=outFilter.value.trim().toLowerCase();outNav.c
 for(const li of lis.reverse()){{const own=li.querySelector(':scope > .row .h').textContent.toLowerCase().includes(q),kid=li.querySelector(':scope > ul > li:not(.miss)');li.classList.toggle('miss',!own&&!kid)}}}}
 let outFilterTimer; outFilter.oninput=()=>{{clearTimeout(outFilterTimer);outFilterTimer=setTimeout(applyOutFilter,120)}};
 // A page just loaded: its folds start open, its headings are read once the widget has drawn, and followed from then on.
-function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('keydown',outKey);w.addEventListener('scroll',outScrolled,{{passive:true}});w.addEventListener('resize',outScrolled)}}catch(e){{}}outShut.clear();outSig='';outFilter.value='';watchReader();buildOutline();pillRoom()}}
+function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('keydown',outKey);w.addEventListener('scroll',outScrolled,{{passive:true}});w.addEventListener('resize',outScrolled);w.addEventListener('mousemove',outEdgeMove,{{passive:true}})}}catch(e){{}}outAtEdge=false;outShut.clear();outSig='';outFilter.value='';watchReader();buildOutline();pillRoom()}}
 // MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads.
 // History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
 function traversed(){{try{{const n=reader.contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}

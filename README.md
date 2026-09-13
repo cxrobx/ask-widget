@@ -185,9 +185,9 @@ links between notes inside them stay in the vault.
 
 On the reader's right is the **Outline**, as in Obsidian: the page's headings,
 nested by level, for any note, artifact, or other document that has some. It
-rests as a small round icon in the reader's top-right corner; hover or click the
-icon and the outline floats out over the page, going again once the pointer
-leaves it. Click a heading to scroll the page to it, and the section you are
+rests as a small round icon in the reader's top-right corner; rest the pointer on
+the reader's right edge, or hover or click the icon, and the outline floats out
+over the page, going again once the pointer leaves it. Click a heading to scroll the page to it, and the section you are
 reading stays marked as you scroll. A twisty folds a section, the button in the
 header folds or unfolds them all, and the filter box keeps matching headings
 with their parents. The pin in its header (or ⌘⇧\, also from inside the page)

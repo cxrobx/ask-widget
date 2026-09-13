@@ -1631,7 +1631,15 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(pill).to_have_css("right", "50px")
                     self.assertEqual(reader_width(), 840)
 
-                    # Hovering the toggle brings it out: every heading, nested, the first marked as the section being read.
+                    # A beat on the reader's right edge brings it out (24 px deep: 30 px in is just the page), and off it,
+                    # it goes; so does hovering the toggle. Out: every heading, nested, the first marked as being read.
+                    page.mouse.move(1070, 350)
+                    page.wait_for_timeout(300)
+                    expect(outline).to_be_hidden()
+                    page.mouse.move(1090, 350)
+                    expect(outline).to_be_visible()
+                    page.mouse.move(700, 350)
+                    expect(outline).to_be_hidden()
                     toggle.hover()
                     expect(outline).to_be_visible()
                     expect(rows).to_have_text(["Guide", "One", "One A", "Two"])
