@@ -943,6 +943,106 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_chat_bubble_lists_the_pages_chats_and_continues_one(self) -> None:
+        # A page with saved answers shows a chat bubble in its bottom-right corner, with how many. It lists every chat
+        # about the page, newest first, and a row continues that conversation in the answer panel. A page with none
+        # shows no bubble until its first answer lands. Both engines: the app is WebKit.
+        chats = self.root / "chats.html"
+        chats.write_text(
+            "<!doctype html><title>Chats</title><body style='background:#FDF6E3'>"
+            "<p id=first>First passage.</p><p id=second>Second passage.</p></body>",
+            encoding="utf-8",
+        )
+        storage: Storage = self.app.state.storage
+
+        def saved(request_id: str, document: Path, selection: str, action: str, question: str, answer: str) -> None:
+            source = str(document.resolve())
+            doc_id = storage.upsert_document(source=source, title=document.stem, kind="html", folder=str(self.root))
+            storage.start_conversation(
+                request_id=request_id, document_id=doc_id, document_source=source, document_title=document.stem,
+                document_page=None, selection=selection, context="", action=action, question=question,
+                folder=str(self.root), provider="claude", model="sonnet",
+            )
+            if answer:
+                storage.finish_conversation(request_id, status="complete", answer=answer)
+            else:
+                storage.finish_conversation(request_id, status="error", error="It failed.")
+
+        saved("chat-first", chats, "First passage.", "ask", "What does the first say?", "It opens the page.")
+        saved("chat-second", chats, "Second passage.", "eli5", "", "It comes second.")
+        saved("chat-failed", chats, "Second passage.", "prove", "", "")  # no answer, so not a chat
+        saved("chat-elsewhere", self.root / "elsewhere.html", "Elsewhere.", "ask", "Somewhere else?", "Yes.")
+
+        async def one_answer(*args, **kwargs):
+            yield _sse("token", {"text": "Only, and simply."})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", one_answer), sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    # WebKit runs a dark app over the cream page, where the app theme once turned the bubble's ink white.
+                    scheme = "dark" if engine == "webkit" else "light"
+                    page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme=scheme)
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/view?src={urllib.parse.quote(str(chats))}", wait_until="networkidle")
+                    bubble = page.get_by_role("button", name="2 chats on this page")
+                    expect(bubble).to_be_visible()
+                    expect(bubble).to_have_text("2")
+                    for ink in (bubble.locator("svg"), bubble.locator(".askw-chats-n")):
+                        expect(ink).to_have_css("color", "rgb(58, 131, 247)")
+                    box = bubble.bounding_box()
+                    self.assertGreater(box["x"] + box["width"], 1100 - 40)
+                    self.assertGreater(box["y"] + box["height"], 700 - 40)
+
+                    bubble.click()
+                    listing = page.get_by_role("dialog", name="Chats on this page")
+                    expect(listing).to_be_visible()
+                    expect(bubble).to_have_attribute("aria-expanded", "true")
+                    expect(listing.locator(".askw-chats-title")).to_have_text("2 chats on this page")
+                    rows = listing.locator(".askw-chats-row")
+                    expect(rows).to_have_count(2)
+                    expect(rows.nth(0)).not_to_be_focused()  # a click opens it without picking a row
+                    expect(rows.nth(0).locator(".askw-chats-q")).to_have_text("ELI5")
+                    expect(rows.nth(0).locator(".askw-chats-sel")).to_have_text("“Second passage.”")
+                    expect(rows.nth(0).locator(".askw-chats-meta")).to_contain_text("claude · sonnet")
+                    expect(rows.nth(1).locator(".askw-chats-q")).to_have_text("What does the first say?")
+
+                    # Escape puts the list away and hands focus back to the bubble.
+                    page.keyboard.press("Escape")
+                    expect(listing).to_be_hidden()
+                    expect(bubble).to_be_focused()
+
+                    # From the keyboard the list takes focus, and a row continues that conversation in the answer panel.
+                    page.keyboard.press("Enter")
+                    expect(rows.nth(0)).to_be_focused()
+                    page.keyboard.press("ArrowDown")
+                    expect(rows.nth(1)).to_be_focused()
+                    page.keyboard.press("Enter")
+                    expect(listing).to_be_hidden()
+                    panel = page.get_by_role("dialog", name="Onyx answer")
+                    expect(panel.locator(".askw-eyebrow")).to_have_text("Continue saved answer")
+                    expect(panel.locator(".askw-selq")).to_have_text("“First passage.”")
+                    expect(panel.locator(".askw-body")).to_contain_text("It opens the page.")
+                    expect(panel.get_by_label("Follow-up question")).to_be_enabled()
+
+                    # A page with no chats shows no bubble; its first answer brings one.
+                    fresh = self.root / f"fresh-{engine}.html"
+                    fresh.write_text("<!doctype html><title>Fresh</title><p id=only>Only passage.</p>", encoding="utf-8")
+                    page.goto(f"{self.base_url}/view?src={urllib.parse.quote(str(fresh))}", wait_until="networkidle")
+                    expect(page.locator(".askw-chats")).to_be_hidden()
+                    paragraph = page.locator("#only")
+                    paragraph.select_text()
+                    paragraph.dispatch_event("mouseup", {"button": 0})
+                    page.get_by_role("button", name="Ask about the selected text").click()
+                    page.get_by_role("button", name="ELI5", exact=True).click()
+                    expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+                    expect(page.get_by_role("button", name="1 chat on this page")).to_have_text("1")
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_rows_open_the_apps_own_menu_and_option_turns_reveal_into_copy(self) -> None:
         # WebKit's stock menu can't be themed, so the sidebar draws its own
         # (static/app-menu.js) and the app suppresses the stock one elsewhere.

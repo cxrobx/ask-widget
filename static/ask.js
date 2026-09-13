@@ -54,6 +54,7 @@
   var panelEl, panelTitle, panelSel, panelTools, panelBody, claudeBtn, stopBtn, retryBtn, historyBtn;
   var followWrap, followInput, followGo;
   var pillEl, pillLabel, pickerEl, toastEl;
+  var chatsEl, chatsCount, chatsListEl, chatsRows;
 
   // ============================================================ styles
   var CSS = [
@@ -137,6 +138,33 @@
     '.askw-pill:hover b,.askw-pill:focus-visible b,.askw-pill[aria-expanded="true"] b{max-width:180px;margin-left:6px;opacity:1;}',
     'html[data-askw-page="dark"] .askw-pill{--askw-glass:rgba(22,22,22,.24);--askw-frost:rgba(30,30,30,.74);border-color:rgba(255,255,255,.14);box-shadow:0 6px 18px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.1);color:#cdcdcd;}',
     'html[data-askw-page="dark"] .askw-pill b{color:#fff;}',
+    // The page's chats rest in the corner opposite the pill: a bubble and how many
+    // there are, which opens a list of them. Its glass takes the page's tone like
+    // the pill's, but frosted from the start, since it always carries a number.
+    // The list is a surface like the picker, in the app theme. The icon and count
+    // carry their own ink, as the pill's icon does: the dark app theme recolours
+    // .askw-root, which would leave white on the light glass of a light page.
+    '.askw-chats{--askw-glass:rgba(255,255,255,.74);--askw-frost:rgba(255,255,255,.92);position:fixed;right:12px;bottom:12px;z-index:2147483599;display:flex;align-items:center;gap:5px;height:30px;padding:0 10px 0 8px;background:var(--askw-glass);border:1px solid rgba(255,255,255,.55);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.6);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer;transition:background-color .15s ease;}',
+    '.askw-chats[hidden]{display:none;}',
+    '.askw-chats .askw-ico{display:block;flex:none;width:15px;height:15px;}',
+    '.askw-chats .askw-ico,.askw-chats-n{color:var(--askw-accent);}',
+    '.askw-chats:hover,.askw-chats:focus-visible,.askw-chats[aria-expanded="true"]{background:var(--askw-frost);}',
+    'html[data-askw-page="dark"] .askw-chats{--askw-glass:rgba(30,30,30,.74);--askw-frost:rgba(38,38,38,.92);border-color:rgba(255,255,255,.14);box-shadow:0 6px 18px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.1);}',
+    '.askw-chats-list{position:fixed;right:12px;bottom:50px;z-index:2147483602;display:none;flex-direction:column;width:320px;max-width:calc(100vw - 24px);max-height:min(440px,calc(100vh - 70px));background:rgba(255,255,255,.86);border:1px solid var(--askw-line);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.19),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(24px) saturate(1.32);-webkit-backdrop-filter:blur(24px) saturate(1.32);padding:6px;font-size:12.5px;}',
+    '.askw-chats-list.open{display:flex;}',
+    '.askw-chats-title{flex:none;margin:4px 8px 6px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#78716c;}',
+    '.askw-chats-rows{overflow-y:auto;overscroll-behavior:contain;min-height:0;}',
+    '.askw-chats-row{display:block;width:100%;padding:7px 9px;border:0;border-radius:7px;background:transparent;font:inherit;text-align:left;cursor:pointer;color:#0d0d0d;}',
+    '.askw-chats-row:hover{background:rgba(13,13,13,.07);}',
+    '.askw-chats:focus-visible{outline:2px solid var(--askw-accent);outline-offset:2px;}.askw-chats-row:focus-visible{outline:2px solid var(--askw-accent);outline-offset:-2px;}',
+    '.askw-chats-q{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.askw-chats-sel{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:2px;font-size:11.5px;line-height:1.4;color:#5d5d5d;}',
+    '.askw-chats-meta{display:block;margin-top:3px;font-size:10px;color:#a8a29e;}',
+    'html[data-askw-color="dark"] .askw-chats-list{background:rgba(35,35,35,.84);box-shadow:0 26px 70px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.10);}',
+    'html[data-askw-color="dark"] .askw-chats-row{color:#fff;}html[data-askw-color="dark"] .askw-chats-row:hover{background:rgba(255,255,255,.10);}html[data-askw-color="dark"] .askw-chats-sel{color:#cdcdcd;}',
+    '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-chats-list{background:#fff}.askw-chats{--askw-glass:#fff;--askw-frost:#fff}html[data-askw-color="dark"] .askw-chats-list{background:#242424}html[data-askw-page="dark"] .askw-chats{--askw-glass:#242424;--askw-frost:#242424}}',
+    '@media(prefers-reduced-transparency:reduce){.askw-chats,.askw-chats-list{backdrop-filter:none;-webkit-backdrop-filter:none}.askw-chats-list{background:rgba(255,255,255,.98)}.askw-chats{--askw-glass:rgba(255,255,255,.98);--askw-frost:rgba(255,255,255,.98)}html[data-askw-color="dark"] .askw-chats-list{background:rgba(36,36,36,.98)}html[data-askw-page="dark"] .askw-chats{--askw-glass:rgba(36,36,36,.98);--askw-frost:rgba(36,36,36,.98)}}',
+    '@media(prefers-reduced-motion:reduce){.askw-chats{transition:none}}',
     '.askw-picker{position:fixed;top:42px;right:12px;z-index:2147483602;display:none;width:300px;background:rgba(255,255,255,.86);border:1px solid var(--askw-line);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.19),inset 0 1px 0 rgba(255,255,255,.7);backdrop-filter:blur(24px) saturate(1.32);-webkit-backdrop-filter:blur(24px) saturate(1.32);padding:10px;font-size:12.5px;}',
     '.askw-picker.open{display:block;}',
     '.askw-picker label{display:block;font-weight:600;color:#44403c;margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;}',
@@ -508,6 +536,39 @@
         } catch (e) { toast('Folder picker failed.'); }
       });
     }
+
+    // --- the page's chats: a bubble in the corner, and the list it opens ---
+    chatsEl = document.createElement('button');
+    chatsEl.type = 'button';
+    chatsEl.className = 'askw-root askw-chats';
+    chatsEl.hidden = true;   // until the page has a chat
+    chatsEl.innerHTML = '<svg class="askw-ico" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 2.5c3.3 0 6 2.2 6 5s-2.7 5-6 5c-.8 0-1.5-.1-2.2-.3L2.5 13.5l.9-2.6C2.5 10 2 8.8 2 7.5c0-2.8 2.7-5 6-5z"/></svg><span class="askw-chats-n"></span>';
+    chatsCount = chatsEl.querySelector('.askw-chats-n');
+    chatsEl.title = 'Chats on this page';
+    chatsEl.setAttribute('aria-haspopup', 'dialog');
+    chatsEl.setAttribute('aria-expanded', 'false');
+    document.body.appendChild(chatsEl);
+    chatsEl.addEventListener('click', toggleChats);
+
+    chatsListEl = document.createElement('div');
+    chatsListEl.className = 'askw-root askw-chats-list';
+    chatsListEl.setAttribute('role', 'dialog');
+    chatsListEl.setAttribute('aria-label', 'Chats on this page');
+    chatsListEl.setAttribute('aria-hidden', 'true');
+    chatsListEl.innerHTML = '<p class="askw-chats-title"></p><div class="askw-chats-rows"></div>';
+    chatsRows = chatsListEl.querySelector('.askw-chats-rows');
+    document.body.appendChild(chatsListEl);
+    chatsListEl.addEventListener('keydown', function (e) {
+      var rows = Array.prototype.slice.call(chatsRows.querySelectorAll('.askw-chats-row'));
+      if (!rows.length || ['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;
+      e.preventDefault();
+      var index = rows.indexOf(document.activeElement);
+      if (e.key === 'Home') index = 0;
+      else if (e.key === 'End') index = rows.length - 1;
+      else if (e.key === 'ArrowDown') index = (index + 1 + rows.length) % rows.length;
+      else index = (index - 1 + rows.length) % rows.length;
+      rows[index].focus();
+    });
   }
 
   // ============================================================ menu
@@ -1087,6 +1148,7 @@
       liveEl.appendChild(detail);
     }
     finishMeta();
+    loadChats();   // the answer is saved by now, and may be the page's first
   }
   // Re-enable the composer and detach the live element after a turn settles.
   function finishMeta() {
@@ -1165,6 +1227,76 @@
         });
         toast(items.length + ' saved answer' + (items.length === 1 ? '' : 's'));
       }).catch(function () { toast('Could not load history.'); });
+  }
+
+  // ============================================================ chats on this page
+  // Every saved answer about this page: the History button's list without its
+  // passage. The bubble shows once there is one, with how many; a row continues
+  // that conversation in the panel, as Recent conversations' Continue does.
+  var CHAT_LABEL = { eli5: 'ELI5', prove: 'Prove it', ask: 'Question' };
+  var chatsLoad = 0;
+  function loadChats() {
+    if (!chatsEl) return;
+    var mine = ++chatsLoad;
+    fetch(SERVER + '/api/history?source=' + encodeURIComponent(documentSource()) + '&limit=100', { cache: 'no-store' })
+      .then(function (r) { return r.json(); }).then(function (d) {
+        if (mine !== chatsLoad || !d || !d.ok) return;
+        renderChats((d.conversations || []).filter(function (c) { return c.status === 'complete'; }));
+      }).catch(function () { /* Keep what the bubble last showed while offline. */ });
+  }
+  function renderChats(items) {
+    var n = items.length, label = n + (n === 1 ? ' chat' : ' chats') + ' on this page';
+    chatsEl.hidden = !n;
+    chatsCount.textContent = n > 99 ? '99+' : String(n);
+    chatsEl.setAttribute('aria-label', label);
+    chatsListEl.querySelector('.askw-chats-title').textContent = label;
+    chatsRows.innerHTML = '';
+    items.forEach(function (item) {
+      var row = document.createElement('button'); row.type = 'button'; row.className = 'askw-chats-row';
+      row.title = new Date(item.started_at * 1000).toLocaleString();
+      var q = document.createElement('span'); q.className = 'askw-chats-q';
+      q.textContent = item.question || CHAT_LABEL[item.action] || 'Question';
+      var passage = document.createElement('span'); passage.className = 'askw-chats-sel';
+      passage.textContent = '“' + String(item.selection || '').replace(/\s+/g, ' ').trim() + '”';
+      var meta = document.createElement('span'); meta.className = 'askw-chats-meta';
+      meta.textContent = [ago(item.started_at), item.provider || 'claude', item.model].filter(Boolean).join(' · ');
+      row.appendChild(q); row.appendChild(passage); row.appendChild(meta);
+      row.addEventListener('click', function () { openChat(item); });
+      chatsRows.appendChild(row);
+    });
+    if (!n) closeChats();
+  }
+  // How long ago, in the Library home page's words: 5m, 3h, 2d, 3w, then the month.
+  function ago(ts) {
+    if (!ts) return '';
+    var d = Math.max(0, Date.now() / 1000 - ts);
+    if (d < 3600) return Math.max(1, Math.floor(d / 60)) + 'm';
+    if (d < 86400) return Math.floor(d / 3600) + 'h';
+    if (d < 86400 * 14) return Math.floor(d / 86400) + 'd';
+    if (d < 86400 * 120) return Math.floor(d / 604800) + 'w';
+    return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  }
+  function toggleChats(e) {
+    if (chatsListEl.classList.contains('open')) { closeChats(); return; }
+    chatsListEl.classList.add('open');
+    chatsListEl.setAttribute('aria-hidden', 'false');
+    chatsEl.setAttribute('aria-expanded', 'true');
+    // Opened from the keyboard (a click with no pointer detail), focus moves into
+    // the list. A pointer click leaves it be: WebKit would ring the first row as
+    // though it had been picked.
+    var first = chatsRows.querySelector('.askw-chats-row');
+    if (first && e && e.detail === 0) first.focus();
+  }
+  function closeChats() {
+    if (!chatsListEl) return;
+    chatsListEl.classList.remove('open');
+    chatsListEl.setAttribute('aria-hidden', 'true');
+    chatsEl.setAttribute('aria-expanded', 'false');
+  }
+  function openChat(item) {
+    closeChats();
+    if (streaming) stopRequest();   // the pick replaces an answer still arriving
+    restoreHistory(item, 'continue');
   }
 
   // ============================================================ folder
@@ -1481,6 +1613,7 @@
       hideMenu();
       hideTrigger();
       closePicker();
+      closeChats();
     });
 
     document.addEventListener('keydown', function (e) {
@@ -1498,6 +1631,7 @@
       if (menuEl.style.display === 'block') { hideMenu(); }
       else if (triggerEl.style.display === 'flex') { hideTrigger(); }
       else if (pickerEl.classList.contains('open')) { closePicker(); pillEl.focus(); }
+      else if (chatsListEl.classList.contains('open')) { closeChats(); chatsEl.focus(); }
       else if (panelEl.classList.contains('open')) { closePanel(); }
     });
     document.addEventListener('keyup', function (e) {
@@ -1536,6 +1670,7 @@
     initMarkdownTheme();
     initVaultLook();
     initPosition();
+    loadChats();
     initAutoSelection();
   }
   if (document.body) boot();

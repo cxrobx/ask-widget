@@ -116,8 +116,8 @@ class VaultLookTests(unittest.TestCase):
     def test_the_answer_panel_takes_the_same_palette(self):
         css = reader_stylesheet(palette(*solarized()))
         self.assertTrue(css.startswith("html[data-askw-look] .askw-root{color:rgb(0 43 54);--askw-accent:rgb(203 75 22);"))
-        self.assertIn("html[data-askw-look] .askw-menu,html[data-askw-look] .askw-panel,html[data-askw-look] .askw-picker"
-                      "{background:rgb(253 246 227/.97)}", css)
+        self.assertIn("html[data-askw-look] .askw-menu,html[data-askw-look] .askw-panel,html[data-askw-look] .askw-picker,"
+                      "html[data-askw-look] .askw-chats-list{background:rgb(253 246 227/.97)}", css)
         self.assertIn(";font-family:" + FONT + "}", css)
         self.assertNotRegex(re.sub(r"font-family:[^}]*", "", css), r"url\(|var\(")
         self.assertEqual(reader_stylesheet(None), "")

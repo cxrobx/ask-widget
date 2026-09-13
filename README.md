@@ -56,6 +56,10 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
   foot, or ⌘Y) with question-type, provider, model, document, and date filters.
   Saved entries can be asked again with the current model, edited before asking,
   or restored as a visible conversation, each in the reader beside the sidebar.
+- **Chats on this page**, a chat bubble in the reader's bottom-right corner on
+  any page with saved answers, with how many there are. It lists every
+  conversation about the page, newest first; pick one to continue it in the
+  answer panel.
 - **Settings**, a dialog behind the cog at the sidebar's foot (or ⌘,), as in
   cxtasks: window glass, provider, model, reasoning effort, response detail,
   caching, history, timeouts, private URL access, and trusted context roots.

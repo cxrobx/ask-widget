@@ -188,14 +188,15 @@ def reader_stylesheet(look: dict[str, Any] | None) -> str:
     return "\n".join([
         rule(".askw-root", f"color:rgb({ink});--askw-accent:rgb({accent});--askw-accent-hover:rgb({t['--accent-hover']});"
              f"--askw-line:rgb({ink}/.14);--askw-soft:rgb({ink}/.07){font}"),
-        rule(".askw-menu,.askw-panel,.askw-picker", f"background:rgb({ground}/.97)"),
+        rule(".askw-menu,.askw-panel,.askw-picker,.askw-chats-list", f"background:rgb({ground}/.97)"),
         rule(".askw-head,.askw-foot,.askw-followup", f"background:rgb({surface}/.45)"),
-        rule(".askw-item,.askw-body,.askw-pill b", f"color:rgb({ink})"),
+        rule(".askw-item,.askw-body,.askw-pill b,.askw-chats-q", f"color:rgb({ink})"),
         rule(".askw-selq,.askw-q,.askw-foot button,.askw-picker label,.askw-recent-item,.askw-history-actions button,"
-             ".askw-citation pre,.askw-pill", f"color:rgb({secondary})"),
-        rule(".askw-think,.askw-citations-title", f"color:rgb({muted})"),
-        rule(".askw-x,.askw-request-meta,.askw-history-meta", f"color:rgb({faint})"),
-        rule(".askw-item:hover,.askw-x:hover,.askw-recent-item:hover", f"background:rgb({ink}/.07);color:rgb({ink})"),
+             ".askw-citation pre,.askw-pill,.askw-chats-sel", f"color:rgb({secondary})"),
+        rule(".askw-think,.askw-citations-title,.askw-chats-title", f"color:rgb({muted})"),
+        rule(".askw-x,.askw-request-meta,.askw-history-meta,.askw-chats-meta", f"color:rgb({faint})"),
+        rule(".askw-item:hover,.askw-x:hover,.askw-recent-item:hover,.askw-chats-row:hover",
+             f"background:rgb({ink}/.07);color:rgb({ink})"),
         rule(".askw-q,.askw-citation,.askw-foot button,.askw-history-entry,.askw-history-actions button",
              f"background:rgb({surface}/.7)"),
         rule(".askw-foot button:hover,.askw-citation:hover", f"background:rgb({surface});color:rgb({ink})"),
