@@ -64,7 +64,7 @@
     // (the HTML Artifact Kit's do) would ink them in the panel too, dark on a dark
     // panel. :where() keeps this at one class's weight, so the panel's own rules win.
     '.askw-root :where(p,h1,h2,h3,h4,h5,h6,strong,b,em,i,code,li,th,td){color:inherit;}',
-    '.askw-menu{position:fixed;z-index:2147483600;display:none;min-width:190px;background:rgba(255,255,255,.82);border:1px solid var(--askw-line);border-radius:11px;box-shadow:0 20px 55px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.65);backdrop-filter:blur(24px) saturate(1.35);-webkit-backdrop-filter:blur(24px) saturate(1.35);padding:6px;font-size:13px;}',
+    '.askw-menu{position:fixed;z-index:2147483600;display:none;min-width:190px;background:rgba(255,255,255,.82);border:1px solid var(--askw-line);border-radius:11px;box-shadow:0 20px 55px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.65);backdrop-filter:blur(24px) saturate(1.35);-webkit-backdrop-filter:blur(24px) saturate(1.35);padding:6px;font-size:13px;cursor:move;}',
     '.askw-trigger{position:fixed;z-index:2147483598;display:none;align-items:center;gap:5px;padding:5px 10px;border:1px solid rgba(255,255,255,.28);border-radius:999px;background:var(--askw-accent);color:#fff;box-shadow:0 10px 28px rgba(0,0,0,.20);font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;cursor:pointer;}',
     '.askw-trigger:hover{background:var(--askw-accent-hover);}',
     '.askw-item{display:flex;width:100%;align-items:center;gap:8px;padding:8px 10px;border:0;border-radius:7px;background:transparent;font:inherit;text-align:left;cursor:pointer;color:#0d0d0d;user-select:none;}',
@@ -73,7 +73,8 @@
     '.askw-item .askw-ico{width:16px;text-align:center;opacity:.75;}',
     '.askw-ask-wrap{display:none;padding:6px 6px 4px;border-top:1px solid var(--askw-soft);margin-top:4px;}',
     '.askw-ask-wrap.open{display:block;}',
-    '.askw-ask-input{width:100%;min-height:54px;resize:vertical;border:1px solid var(--askw-line);border-radius:7px;background:#fff;padding:7px 9px;font:inherit;font-size:13px;color:#0d0d0d;outline:none;}',
+    // Its own cursor, not the menu's move: cursor is inherited.
+    '.askw-ask-input{cursor:auto;width:100%;min-height:54px;resize:vertical;border:1px solid var(--askw-line);border-radius:7px;background:#fff;padding:7px 9px;font:inherit;font-size:13px;color:#0d0d0d;outline:none;}',
     '.askw-ask-input:focus{border-color:var(--askw-accent);box-shadow:0 0 0 2px rgba(58,131,247,.18);}',
     '.askw-ask-go{margin-top:6px;float:right;background:var(--askw-accent);color:#fff;border:none;border-radius:7px;padding:6px 14px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;}',
     '.askw-ask-go:disabled{opacity:.45;cursor:not-allowed;}',
@@ -431,12 +432,38 @@
         var act = item.getAttribute('data-act');
         if (act === 'ask') {
           askWrap.classList.add('open');
+          var r = menuEl.getBoundingClientRect();
+          placeMenu(r.left, r.top);   // the field it opens stays inside the window
           askInput.focus();
         } else {
           start(act);
         }
       });
     });
+    // The menu moves with the pointer from a press anywhere on it but the question
+    // field, which keeps its caret, selection and resize grip. The press leaves focus
+    // where it was, so a half-typed question stays in the field. Under 4px it is
+    // still a click; past that it is a move, and the click it ends in runs nothing.
+    var menuMoved = false;
+    menuEl.addEventListener('mousedown', function (e) {
+      if (e.button !== 0 || e.target === askInput) return;
+      e.preventDefault();
+      var r = menuEl.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+      function mv(ev) {
+        if (!menuMoved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 4) return;
+        menuMoved = true;
+        placeMenu(r.left + ev.clientX - sx, r.top + ev.clientY - sy);
+      }
+      function up() {
+        document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+        setTimeout(function () { menuMoved = false; });   // after the click this release makes
+      }
+      document.addEventListener('mousemove', mv);
+      document.addEventListener('mouseup', up);
+    });
+    menuEl.addEventListener('click', function (e) {
+      if (menuMoved) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
     menuEl.addEventListener('keydown', function (e) {
       var items = Array.prototype.slice.call(menuEl.querySelectorAll('.askw-item'));
       var index = items.indexOf(document.activeElement);
@@ -590,7 +617,8 @@
 
   // ============================================================ menu
   function showTrigger(captured) {
-    if (!triggerEl || !captured || panelEl.classList.contains('open')) return;
+    // Not beside the open menu either: moving the menu can end in a release over the page.
+    if (!triggerEl || !captured || panelEl.classList.contains('open') || menuEl.style.display === 'block') return;
     sel = captured;
     triggerEl.style.display = 'flex';
     triggerEl.setAttribute('aria-hidden', 'false');
@@ -614,12 +642,16 @@
     askInput.value = '';
     menuEl.style.display = 'block';
     menuEl.setAttribute('aria-hidden', 'false');
+    placeMenu(x, y);
+    var firstItem = menuEl.querySelector('.askw-item');
+    if (firstItem) firstItem.focus();
+  }
+  // Put the menu's top-left corner at (x, y), kept whole inside the window.
+  function placeMenu(x, y) {
     var mw = menuEl.offsetWidth || 190;
     var mh = menuEl.offsetHeight || 130;
     menuEl.style.left = Math.max(6, Math.min(x, window.innerWidth - mw - 8)) + 'px';
     menuEl.style.top = Math.max(6, Math.min(y, window.innerHeight - mh - 8)) + 'px';
-    var firstItem = menuEl.querySelector('.askw-item');
-    if (firstItem) firstItem.focus();
   }
   function hideMenu() {
     if (!menuEl) return;

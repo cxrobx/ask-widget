@@ -441,6 +441,94 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_ask_menu_moves_by_dragging_it(self) -> None:
+        # The menu stayed where it opened, over the passage it asks about. Both
+        # engines: the app is WebKit.
+        for engine in ("chromium", "webkit"):
+            with self.subTest(engine=engine):
+                self._ask_menu_moves(engine)
+
+    def _ask_menu_moves(self, engine: str) -> None:
+        async def short_stream(*args, **kwargs):
+            yield _sse("token", {"text": "Because."})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", short_stream), sync_playwright() as playwright:
+            browser = getattr(playwright, engine).launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 640})
+            page.on("pageerror", lambda error: page_errors.append(f"{engine}: {error}"))
+            query = urllib.parse.urlencode({"src": str(self.document), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            paragraph = page.locator("main p").first
+            paragraph.select_text()
+            paragraph.dispatch_event("mouseup", {"button": 0})
+            trigger = page.get_by_role("button", name="Ask about the selected text")
+            trigger.click()
+            menu = page.get_by_role("dialog", name="Ask about selected text")
+            panel = page.get_by_role("dialog", name="Onyx answer")
+            prove = menu.get_by_role("button", name="Prove it", exact=True)
+            field = menu.get_by_label("Question about the highlighted text")
+            self.assertEqual(menu.evaluate("e => getComputedStyle(e).cursor"), "move")
+            self.assertEqual(field.evaluate("e => getComputedStyle(e).cursor"), "auto")
+
+            def press(handle) -> tuple[float, float]:
+                box = handle.bounding_box()
+                x, y = box["x"] + 20, box["y"] + box["height"] / 2
+                page.mouse.move(x, y)
+                page.mouse.down()
+                return x, y
+
+            # Pressed on an action and moved, the menu goes with the pointer and runs nothing.
+            before = menu.bounding_box()
+            x, y = press(prove)
+            page.mouse.move(x + 240, y + 150, steps=8)
+            page.mouse.up()
+            after = menu.bounding_box()
+            self.assertAlmostEqual(after["x"], before["x"] + 240, delta=1)
+            self.assertAlmostEqual(after["y"], before["y"] + 150, delta=1)
+            expect(panel).to_be_hidden()
+
+            # Moved into the window's corner, it stops whole inside it. The release
+            # lands on the page, and the Ask button stays away from the open menu.
+            press(prove)
+            page.mouse.move(1096, 636, steps=8)
+            page.mouse.up()
+            corner = menu.bounding_box()
+            self.assertAlmostEqual(corner["x"] + corner["width"], 1100 - 8, delta=1)
+            self.assertAlmostEqual(corner["y"] + corner["height"], 640 - 8, delta=1)
+            page.wait_for_timeout(300)  # past the reader's selection check on release
+            expect(trigger).to_be_hidden()
+
+            # A press that stays put is a click. The field it opens at the bottom
+            # edge stays inside the window, and a move keeps its question and focus.
+            menu.get_by_role("button", name="Ask a question…").click()
+            expect(field).to_be_focused()
+            box = menu.bounding_box()
+            self.assertLessEqual(box["y"] + box["height"], 640 - 8 + 0.5)
+            field.fill("Why?")
+            x, y = press(prove)
+            page.mouse.move(x - 300, y - 200, steps=8)
+            page.mouse.up()
+            expect(field).to_be_focused()
+            self.assertEqual(field.input_value(), "Why?")
+
+            # Pressed in the field, the pointer selects its text; the menu stays put.
+            before = menu.bounding_box()
+            box = field.bounding_box()
+            page.mouse.move(box["x"] + 10, box["y"] + 12)
+            page.mouse.down()
+            page.mouse.move(box["x"] + 120, box["y"] + 14, steps=5)
+            page.mouse.up()
+            after = menu.bounding_box()
+            self.assertEqual((after["x"], after["y"]), (before["x"], before["y"]))
+
+            menu.get_by_role("button", name="ELI5", exact=True).click()
+            expect(panel).to_be_visible()
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_answer_tables_render_as_tables(self) -> None:
         # A table in an answer used to print as raw "| a | b |" lines.
         answer = (
