@@ -119,9 +119,12 @@
     '.askw-foot .askw-claude:disabled{opacity:.55;cursor:default;}',
     '.askw-foot .askw-stop{display:none;color:#b91c1c}.askw-foot .askw-retry{display:none;color:#2c67c5}',
     '.askw-followup{display:none;align-items:flex-end;gap:7px;padding:9px 13px;border-top:1px solid var(--askw-soft);background:rgba(255,255,255,.2);flex:0 0 auto;}',
-    '.askw-follow-input{flex:1 1 auto;resize:none;max-height:96px;min-height:34px;border:1px solid var(--askw-line);border-radius:9px;background:#fff;padding:7px 10px;font:inherit;font-size:13px;color:#0d0d0d;outline:none;line-height:1.4;}',
+    '.askw-follow-field{flex:1 1 auto;min-width:0;position:relative;}',
+    '.askw-follow-input{display:block;width:100%;resize:none;min-height:34px;border:1px solid var(--askw-line);border-radius:9px;background:#fff;padding:7px 10px;font:inherit;font-size:13px;color:#0d0d0d;outline:none;line-height:1.4;}',
     '.askw-follow-input:focus{border-color:var(--askw-accent);box-shadow:0 0 0 2px rgba(58,131,247,.18);}',
     '.askw-follow-input:disabled{opacity:.55;background:#fafaf9;}',
+    // The follow-up box's own drag grip, drawn as the native one (see dragFollow).
+    '.askw-follow-grip{position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:ns-resize;opacity:.38;background:linear-gradient(135deg,transparent 0 55%,currentColor 55% 62%,transparent 62% 75%,currentColor 75% 82%,transparent 82%);}',
     '.askw-follow-go{flex:0 0 auto;width:34px;height:34px;background:var(--askw-accent);color:#fff;border:none;border-radius:9px;font-size:15px;line-height:1;cursor:pointer;}',
     '.askw-follow-go:hover{background:var(--askw-accent-hover);}',
     '.askw-follow-go:disabled{opacity:.4;cursor:not-allowed;}',
@@ -456,7 +459,7 @@
       '<button type="button" class="askw-x" title="Close" aria-label="Close answer">×</button></div>' +
       '<div class="askw-tools" aria-live="polite"></div>' +
       '<div class="askw-body" aria-live="polite" aria-relevant="additions text"></div>' +
-      '<div class="askw-followup"><textarea class="askw-follow-input" aria-label="Follow-up question" rows="1" placeholder="Ask a follow-up…"></textarea>' +
+      '<div class="askw-followup"><div class="askw-follow-field"><textarea class="askw-follow-input" aria-label="Follow-up question" rows="1" placeholder="Ask a follow-up…"></textarea><span class="askw-follow-grip" aria-hidden="true"></span></div>' +
       '<button type="button" class="askw-follow-go" title="Send (Enter)" aria-label="Send follow-up">↑</button></div>' +
       '<div class="askw-foot"><button class="askw-claude" title="Open a dedicated provider session in this folder — hold ⌥ Option to copy the prompt instead">Open session</button><button class="askw-history">History</button><button class="askw-stop">Stop</button><button class="askw-retry">Retry</button><button class="askw-copy">Copy</button></div>';
     document.body.appendChild(panelEl);
@@ -489,6 +492,7 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitFollowup(); }
     });
     followInput.addEventListener('input', autosizeFollow);
+    panelEl.querySelector('.askw-follow-grip').addEventListener('mousedown', dragFollow);
     makeDragResize(panelEl, panelEl.querySelector('.askw-head'));
     // While the pointer is over the panel the page underneath never scrolls: a
     // wheel nothing in the panel can take (the answer at its top or bottom, or
@@ -756,20 +760,54 @@
   }
 
   // ---- follow-up composer ----
+  // It grows with what you type, up to four lines, and drags taller by the grip
+  // in its corner. The height you drag it to is the least it keeps through
+  // typing and sending, for the rest of this page's answers.
+  var followFloor = 0;
   function showFollowup(enabled) {
     if (!followWrap) return;
     followWrap.style.display = 'flex';
     followInput.disabled = followGo.disabled = !enabled;
+    autosizeFollow();
   }
   function hideFollowup() {
     if (!followWrap) return;
     followWrap.style.display = 'none';
     followInput.value = '';
-    followInput.style.height = '';
+    followInput.style.height = followFloor ? followFloor + 'px' : '';
   }
   function autosizeFollow() {
-    followInput.style.height = 'auto';
-    followInput.style.height = Math.min(followInput.scrollHeight, 96) + 'px';
+    followInput.style.maxHeight = followCap() + 'px';
+    // Measure from the floor, not from nothing: collapsing a tall box even for a
+    // moment would cost the answer above it its scroll position.
+    followInput.style.height = followFloor ? followFloor + 'px' : 'auto';
+    followInput.style.height = Math.max(followFloor, Math.min(followInput.scrollHeight, 96)) + 'px';
+  }
+  // The grip sizes the box by how far the pointer has moved since the press.
+  // Not resize:vertical: with the panel at full height the box grows upward,
+  // and WebKit, measuring from the moving box, runs it away to the cap.
+  function dragFollow(e) {
+    e.preventDefault();
+    var y0 = e.clientY, h0 = followInput.offsetHeight, cap = followCap();
+    followInput.style.maxHeight = cap + 'px';
+    function mv(ev) {
+      followFloor = Math.round(Math.max(34, Math.min(cap, h0 + ev.clientY - y0)));
+      followInput.style.height = followFloor + 'px';
+    }
+    function up() { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); }
+    document.addEventListener('mousemove', mv);
+    document.addEventListener('mouseup', up);
+  }
+  // The tallest the box may be while the answer keeps a few lines in view and
+  // the footer stays inside the panel.
+  function followCap() {
+    var inner = panelEl.style.height ? panelEl.clientHeight   // the reader sized the panel
+      : parseFloat(getComputedStyle(panelEl).maxHeight) - (panelEl.offsetHeight - panelEl.clientHeight);
+    var rest = followWrap.offsetHeight - followInput.offsetHeight;
+    for (var c = panelEl.firstElementChild; c; c = c.nextElementSibling) {
+      if (c !== panelBody && c !== followWrap) rest += c.offsetHeight;
+    }
+    return Math.max(34, inner - rest - 96);
   }
   function positionPanel() {
     if (!sel || !sel.rect) return;

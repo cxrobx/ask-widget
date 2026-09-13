@@ -338,6 +338,82 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_follow_up_box_drags_taller_and_keeps_its_height(self) -> None:
+        # The follow-up box could not be resized: it grew to four lines as you typed
+        # and no further. Both engines, with the panel at full height: the app is
+        # WebKit, whose own resize:vertical ran the box away to its cap there.
+        for engine in ("chromium", "webkit"):
+            with self.subTest(engine=engine):
+                self._follow_up_box_resizes(engine)
+
+    def _follow_up_box_resizes(self, engine: str) -> None:
+        async def long_stream(*args, **kwargs):
+            for index in range(24):
+                yield _sse("token", {"text": f"Paragraph {index} of an answer long enough to overflow the panel.\n\n"})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", long_stream), sync_playwright() as playwright:
+            browser = getattr(playwright, engine).launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 640})
+            page.on("pageerror", lambda error: page_errors.append(f"{engine}: {error}"))
+            query = urllib.parse.urlencode({"src": str(self.document), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            paragraph = page.locator("main p").first
+            paragraph.select_text()
+            paragraph.dispatch_event("mouseup", {"button": 0})
+            page.get_by_role("button", name="Ask about the selected text").click()
+            page.get_by_role("button", name="Ask a question…").click()
+            page.get_by_label("Question about the highlighted text").fill("Why?")
+            page.get_by_role("button", name="Go", exact=True).click()
+
+            panel = page.get_by_role("dialog", name="Onyx answer")
+            follow = panel.get_by_label("Follow-up question")
+            expect(follow).to_be_enabled(timeout=15000)
+            self.assertLess(panel.evaluate("e => parseFloat(getComputedStyle(e).maxHeight) - e.offsetHeight"), 2)
+
+            def height() -> int:
+                return follow.evaluate("e => e.offsetHeight")
+
+            def press_grip() -> float:
+                box = follow.bounding_box()
+                x, y = box["x"] + box["width"] - 6, box["y"] + box["height"] - 6
+                page.mouse.move(x, y)
+                page.mouse.down()
+                return y
+
+            start = height()
+            follow.fill("one\ntwo\nthree")
+            self.assertGreater(height(), start)  # it still grows with what you type
+            follow.fill("")
+            self.assertEqual(height(), start)
+
+            y = press_grip()
+            page.mouse.move(follow.bounding_box()["x"], y + 50, steps=8)
+            page.mouse.up()
+            tall = height()
+            self.assertAlmostEqual(tall, start + 50, delta=2)  # by the drag, not away to the cap
+            follow.press("a")  # typing no longer snaps it back to one line
+            self.assertEqual(height(), tall)
+            follow.press("Enter")  # sent: the box empties, and keeps its height for the next one
+            expect(follow).to_be_enabled(timeout=15000)
+            self.assertEqual(follow.input_value(), "")
+            self.assertEqual(height(), tall)
+
+            # Dragged far past the window's bottom edge (a pointer Playwright can't
+            # move there itself), it stops where the footer still fits in the panel
+            # and the answer keeps a few lines.
+            y = press_grip()
+            page.evaluate("y => document.dispatchEvent(new MouseEvent('mousemove', {clientY: y, bubbles: true}))", y + 2000)
+            page.mouse.up()
+            self.assertGreater(height(), tall)
+            foot, box = panel.locator(".askw-foot").bounding_box(), panel.bounding_box()
+            self.assertLessEqual(foot["y"] + foot["height"], box["y"] + box["height"] + 0.5)
+            self.assertGreaterEqual(panel.locator(".askw-body").evaluate("e => e.clientHeight"), 90)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_answer_tables_render_as_tables(self) -> None:
         # A table in an answer used to print as raw "| a | b |" lines.
         answer = (
