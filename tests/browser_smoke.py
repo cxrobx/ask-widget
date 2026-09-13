@@ -1679,6 +1679,70 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_home_lists_each_conversation_once_with_its_lines_across_the_row(self) -> None:
+        # A follow-up is saved as an ask of its own naming the one it followed: home lists the conversation once, by its
+        # latest question, with how many asks it holds, while See all keeps every turn. Onyx.app's WebKit (17) gives each
+        # <button> align-items:flex-start, which neither Playwright engine does, so a row's lines shrank to their text
+        # there: the question ran off the page and the age sat against the title. The injected rule stands in for it.
+        notes = self.root / "vault"
+        notes.mkdir()
+        alpha = notes / "Alpha.md"
+        alpha.write_text("# Alpha\n\nA note.\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(notes)}, model_default="sonnet")
+        storage.add_root(notes)
+        source = str(alpha.resolve())
+        doc_id = storage.upsert_document(source=source, title="Alpha", kind="markdown", folder=str(notes))
+        long_question = " ".join(["so the else is basically the wrapping of the entire call in a try/except statement?"] * 4)
+        for request_id, parent, action, question in (
+            ("req-single", None, "ask", "What is this note?"),
+            ("req-root", None, "eli5", ""),
+            ("req-follow", "req-root", "ask", "And the server side limit?"),
+            ("req-latest", "req-follow", "ask", long_question),
+        ):
+            storage.start_conversation(
+                request_id=request_id, document_id=doc_id, document_source=source, document_title="Alpha",
+                document_page=None, selection="A note.", context="", action=action, question=question,
+                folder=str(notes), provider="claude", model="sonnet", parent_request_id=parent,
+            )
+            storage.finish_conversation(request_id, status="complete", answer="An answer.")
+
+        # Every <button> laid out as a column, and how far each of its lines ends from the row's content edge: 0 is across it.
+        line_gaps = r"""() => [...document.querySelectorAll('button')].filter(b => {
+          const s = getComputedStyle(b);
+          return s.display.endsWith('flex') && s.flexDirection === 'column' && b.getClientRects().length;
+        }).map(b => {
+          const edge = b.getBoundingClientRect().right - parseFloat(getComputedStyle(b).paddingRight);
+          return [b.className, [...b.children].map(c => Math.round(edge - c.getBoundingClientRect().right))];
+        })"""
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(self.base_url, wait_until="networkidle")
+                    page.add_style_tag(content="button{align-items:flex-start}")
+                    rows = page.locator("#home-asks .home-ask")
+                    expect(rows).to_have_count(2)
+                    expect(rows.first.locator(".q")).to_have_text(long_question)
+                    expect(rows.first.locator(".a")).to_have_text(re.compile(r"^3 asks · "))
+                    expect(rows.nth(1).locator(".q")).to_have_text("What is this note?")
+                    expect(rows.nth(1).locator(".a")).not_to_contain_text("asks")
+                    page.locator("#home-all").click()
+                    expect(page.locator("#history-results .hist-row")).to_have_count(4)
+                    measured = page.evaluate(line_gaps)
+                    self.assertLessEqual({"home-ask", "hist-row"}, {cls for cls, _ in measured})
+                    for cls, gaps in measured:
+                        self.assertEqual(gaps, [0] * len(gaps), f"{engine} .{cls}: a line stops short of or runs past the row")
+                    self.assertTrue(
+                        rows.first.locator(".q").evaluate("q => q.scrollWidth > q.clientWidth"),
+                        f"{engine}: the long question is not clipped inside its row",
+                    )
+                    browser.close()
+        self.assertEqual(page_errors, [])
+
     def test_library_is_home_and_settings_and_history_are_dialogs(self) -> None:
         # The app opens on Library: both vaults' trees under their headings, and a home page of what was read and asked.
         # Settings and Recent conversations are dialogs at the sidebar's foot; a setting applies as it changes, and a saved
