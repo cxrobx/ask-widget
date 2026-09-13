@@ -393,6 +393,96 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_wheel_over_the_answer_panel_never_scrolls_the_page(self) -> None:
+        # At the answer's top or bottom, or over the panel's header and footer,
+        # the wheel used to carry on into the page underneath. Both engines: the
+        # app is WebKit.
+        for engine in ("chromium", "webkit"):
+            with self.subTest(engine=engine):
+                self._wheel_stays_in_the_panel(engine)
+
+    def _wheel_stays_in_the_panel(self, engine: str) -> None:
+        # An HTML page, as in Artifacts: it keeps its own look, and the panel
+        # stays fixed to the window while the page scrolls.
+        document = self.root / "long.html"
+        document.write_text(
+            "<!doctype html><html><body><main><h1>Long</h1>"
+            + "".join(f"<p>Paragraph {i} of a page long enough to scroll.</p>" for i in range(150))
+            + "</main></body></html>",
+            encoding="utf-8",
+        )
+
+        async def long_stream(*args, **kwargs):
+            for index in range(36):
+                yield _sse("token", {"text": f"Paragraph {index} of an answer long enough to overflow the panel.\n\n"})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        page_top = "() => document.scrollingElement.scrollTop"
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", long_stream), sync_playwright() as playwright:
+            browser = getattr(playwright, engine).launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 640})
+            page.on("pageerror", lambda error: page_errors.append(f"{engine}: {error}"))
+            query = urllib.parse.urlencode({"src": str(document), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            # Scroll the page first, so it could move either way under the panel,
+            # then ask about a passage that is on screen.
+            page.evaluate("() => { document.scrollingElement.scrollTop = 400; }")
+            on_screen = page.evaluate(
+                "() => [...document.querySelectorAll('main p')].findIndex(p => p.getBoundingClientRect().top > 80)"
+            )
+            paragraph = page.locator("main p").nth(on_screen)
+            paragraph.select_text()
+            paragraph.dispatch_event("mouseup", {"button": 0})
+            page.get_by_role("button", name="Ask about the selected text").click()
+            page.get_by_role("button", name="Ask a question…").click()
+            page.get_by_label("Question about the highlighted text").fill("Why?")
+            page.get_by_role("button", name="Go", exact=True).click()
+
+            panel = page.get_by_role("dialog", name="Onyx answer")
+            body = panel.locator(".askw-body")
+            expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            self.assertGreater(body.evaluate("e => e.scrollHeight - e.clientHeight"), 100)
+            body.evaluate("e => { e.scrollTop = 0; }")
+            start = page.evaluate(page_top)
+            self.assertGreater(start, 100)
+
+            def wheel_over(locator, dy: int) -> None:
+                box = locator.bounding_box()
+                x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                # The point must really be the panel's, or the test proves nothing.
+                self.assertTrue(page.evaluate(
+                    "([x, y]) => !!document.elementFromPoint(x, y)?.closest('.askw-panel')", [x, y]
+                ))
+                page.mouse.move(x, y)
+                page.mouse.wheel(0, dy)
+                page.wait_for_timeout(250)
+
+            wheel_over(body, -300)  # the answer is already at its top
+            self.assertEqual(page.evaluate(page_top), start)
+            wheel_over(body, 300)  # the answer itself still scrolls
+            self.assertGreater(body.evaluate("e => e.scrollTop"), 0)
+            self.assertEqual(page.evaluate(page_top), start)
+            body.evaluate("e => { e.scrollTop = e.scrollHeight; }")
+            wheel_over(body, 300)  # ...and now it is at its bottom
+            self.assertEqual(page.evaluate(page_top), start)
+            wheel_over(panel.locator(".askw-head"), 300)
+            wheel_over(panel.locator(".askw-foot"), -300)
+            self.assertEqual(page.evaluate(page_top), start)
+
+            # Off the panel, the page scrolls as ever.
+            box = panel.bounding_box()
+            x = box["x"] - 20 if box["x"] > 40 else box["x"] + box["width"] + 20
+            self.assertFalse(page.evaluate(
+                "([x, y]) => !!document.elementFromPoint(x, y)?.closest('.askw-panel')", [x, 320]
+            ))
+            page.mouse.move(x, 320)
+            page.mouse.wheel(0, 300)
+            page.wait_for_function("start => document.scrollingElement.scrollTop > start", arg=start)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_shell_navigates_reader_iframe(self) -> None:
         vault = self.root / "vault"
         (vault / "notes").mkdir(parents=True)

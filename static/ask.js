@@ -84,7 +84,7 @@
     '.askw-pillt{display:inline-flex;align-items:center;gap:5px;background:rgba(58,131,247,.11);color:#2c67c5;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:999px;}',
     '.askw-dot{width:6px;height:6px;border-radius:50%;background:var(--askw-accent);animation:askw-pulse 1.1s infinite;}',
     '@keyframes askw-pulse{0%,100%{opacity:.35}50%{opacity:1}}',
-    '.askw-body{padding:12px 15px 15px;overflow-y:auto;font-size:14px;line-height:1.55;color:#0d0d0d;flex:1 1 auto;min-height:0;}',
+    '.askw-body{padding:12px 15px 15px;overflow-y:auto;overscroll-behavior:contain;font-size:14px;line-height:1.55;color:#0d0d0d;flex:1 1 auto;min-height:0;}',
     '.askw-q{margin:15px 0 9px;padding:7px 11px;background:rgba(255,255,255,.56);border:1px solid var(--askw-soft);border-radius:9px;font-size:13px;color:#5d5d5d;white-space:pre-wrap;}',
     '.askw-q:first-child{margin-top:1px;}',
     '.askw-a{font-size:14px;}',
@@ -297,6 +297,23 @@
     return !!(el && el.closest && el.closest('.askw-root'));
   }
 
+  // Can anything from `el` up to the answer panel still scroll the way this
+  // wheel turns? Only the dominant axis counts, as it does for the browser.
+  function panelCanScroll(el, dx, dy) {
+    var vertical = Math.abs(dy) >= Math.abs(dx), d = vertical ? dy : dx;
+    if (!d) return true;
+    for (; el && el.nodeType === 1; el = el.parentElement) {
+      var cs = getComputedStyle(el), ov = vertical ? cs.overflowY : cs.overflowX;
+      if (ov === 'auto' || ov === 'scroll') {
+        var pos = vertical ? el.scrollTop : el.scrollLeft;
+        var max = vertical ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+        if (d < 0 ? pos >= 1 : pos <= max - 1) return true;
+      }
+      if (el === panelEl) break;
+    }
+    return false;
+  }
+
   function basename(p) {
     if (!p) return '(none)';
     var parts = String(p).replace(/\/+$/, '').split('/');
@@ -445,6 +462,13 @@
     });
     followInput.addEventListener('input', autosizeFollow);
     makeDragResize(panelEl, panelEl.querySelector('.askw-head'));
+    // While the pointer is over the panel the page underneath never scrolls: a
+    // wheel nothing in the panel can take (the answer at its top or bottom, or
+    // the header and footer, which don't scroll) goes nowhere. Pinch-zoom
+    // (ctrlKey) stays the page's.
+    panelEl.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey && !panelCanScroll(e.target, e.deltaX, e.deltaY)) e.preventDefault();
+    }, { passive: false });
 
     // --- folder pill + picker ---
     pillEl = document.createElement('button');
