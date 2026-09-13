@@ -138,6 +138,20 @@ class VaultLookTests(unittest.TestCase):
                     self.assertGreaterEqual(contrast(rgb(ink), rgb(tokens[fill])), 4.5, fill)
                 self.assertNotIn(f"background:rgb({tokens['--accent']})", css)
 
+    def test_the_send_arrow_is_onyx_red_lifted_only_as_far_as_its_button_needs(self):
+        # The arrow is an icon, so it marks at 3:1 on the button under it, at rest and under the pointer.
+        for snapshots in (solarized(), dark()):
+            look = palette(*snapshots)
+            tokens, css = look["tokens"], reader_stylesheet(look)
+            for state, fill in (("", "--button-bg"), (":hover", "--button-hover")):
+                with self.subTest(theme=look["mode"], state=state or "rest"):
+                    found = re.search(rf"html\[data-askw-look\] \.askw-follow-go{state}\{{color:rgb\(([\d ]+)\)\}}", css)
+                    arrow = rgb(found.group(1))
+                    self.assertGreaterEqual(contrast(arrow, rgb(tokens[fill])), 3.0)
+                    self.assertGreater(arrow[0], 2 * max(arrow[1], arrow[2]))  # still red
+        # On a light vault's ink button the logo's red already marks, so it is left as it is.
+        self.assertIn("html[data-askw-look] .askw-follow-go{color:rgb(240 0 0)}", reader_stylesheet(palette(*solarized())))
+
     def test_the_glass_on_the_page_wears_the_vault_only_over_a_page_of_its_tone(self):
         css = reader_stylesheet(palette(*dark()))
         over_dark = 'html[data-askw-look][data-askw-page="dark"]'

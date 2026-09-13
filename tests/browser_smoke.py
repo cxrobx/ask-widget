@@ -1760,7 +1760,7 @@ class BrowserSmokeTests(unittest.TestCase):
 
                         panel.get_by_label("Follow-up question").fill("And then?")
                         send = panel.locator(".askw-follow-go")
-                        measure("send", send, text)
+                        measure("send", send, mark)  # an icon: the arrow, in Onyx's red
                         failing["now"] = True
                         send.click()
                         measure("error", panel.locator(".askw-err"), text)

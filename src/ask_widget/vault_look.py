@@ -32,6 +32,8 @@ _RGBA = re.compile(r"^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s
 SHADES = {"secondary": 6.0, "muted": 3.2, "faint": 2.1}
 MIN_INK_CONTRAST = 4.5
 MIN_ACCENT_CONTRAST = 3.0
+# Onyx's own red: the glow on the rim of the logo's stone (launcher/onyx-gem.png), its commonest bright red.
+ONYX_RED: RGB = (240.0, 0.0, 0.0)
 
 
 def _parse(value: Any) -> tuple[RGB, float] | None:
@@ -88,6 +90,16 @@ def _shade(ink: RGB, ground: RGB, target: float) -> RGB:
             break
         best = candidate
     return best
+
+
+def _lift(color: RGB, ground: RGB, target: float) -> RGB:
+    """The colour mixed toward white or black only as far as it must go to keep ``target`` contrast on the ground."""
+    for step in range(101):
+        for toward in ((255.0, 255.0, 255.0), (0.0, 0.0, 0.0)):
+            candidate = _mix(color, toward, step / 100)
+            if contrast(candidate, ground) >= target:
+                return candidate
+    return color
 
 
 def _triplet(color: RGB) -> str:
@@ -178,7 +190,8 @@ def reader_stylesheet(look: dict[str, Any] | None) -> str:
     Each colour lands only on a surface it was measured against. The accent is known to read on the vault's grounds
     (palette holds it to 3:1 there), so it is text and marks, never a fill: a filled button is the vault's button, as
     the shell's are. The glass chips lie on the page, so they wear the vault only over a page of the vault's own tone
-    (data-askw-page, which ask.js sets); over the other they keep Onyx's own glass for that page.
+    (data-askw-page, which ask.js sets); over the other they keep Onyx's own glass for that page. The send arrow is
+    Onyx's own red, the logo's, lifted only as far as it must go to mark 3:1 on the vault's button and its hover.
     """
     if not look:
         return ""
@@ -187,6 +200,10 @@ def reader_stylesheet(look: dict[str, Any] | None) -> str:
     ground, surface, field, accent = t["--bg-elevated"], t["--bg-surface"], t["--bg-input"], t["--accent"]
     button, button_hover, button_ink = t["--button-bg"], t["--button-hover"], t["--button-ink"]
     glass = f'{s}[data-askw-page="{look["mode"]}"]'
+    send, send_hover = (
+        _triplet(_lift(ONYX_RED, tuple(float(v) for v in t[fill].split()), MIN_ACCENT_CONTRAST))  # type: ignore[arg-type]
+        for fill in ("--button-bg", "--button-hover")
+    )
     font = f";font-family:{t['--ui-font']}" if t.get("--ui-font") else ""
 
     def rule(selectors: str, body: str, scope: str = s) -> str:
@@ -221,6 +238,8 @@ def reader_stylesheet(look: dict[str, Any] | None) -> str:
         rule(".askw-foot .askw-claude,.askw-history-actions button:first-child", f"border-color:rgb({button})"),
         rule(".askw-trigger:hover,.askw-follow-go:hover,.askw-foot .askw-claude:hover",
              f"background:rgb({button_hover});color:rgb({button_ink})"),
+        rule(".askw-follow-go", f"color:rgb({send})"),
+        rule(".askw-follow-go:hover", f"color:rgb({send_hover})"),
         rule(".askw-pill,.askw-chats", f"--askw-glass-accent:rgb({accent})", glass),
         rule(".askw-pill", f"color:rgb({secondary})", glass),
         rule(".askw-pill b", f"color:rgb({ink})", glass),
