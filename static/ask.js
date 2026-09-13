@@ -81,7 +81,7 @@
     '.askw-selq.clamped{cursor:pointer;}.askw-selq.expanded{display:block;max-height:30vh;overflow-y:auto;}',
     '.askw-x{position:absolute;top:9px;right:9px;width:26px;height:26px;border:none;background:transparent;color:#a8a29e;font-size:17px;line-height:1;border-radius:6px;cursor:pointer;}',
     '.askw-x:hover{background:rgba(13,13,13,.07);color:#0d0d0d;}',
-    '.askw-tools{display:flex;flex-wrap:wrap;gap:6px;padding:9px 15px 0;flex:0 0 auto;}',
+    '.askw-tools{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0;}.askw-tools:empty{display:none;}',
     '.askw-pillt{display:inline-flex;align-items:center;gap:5px;background:rgba(58,131,247,.11);color:#2c67c5;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:999px;}',
     '.askw-dot{width:6px;height:6px;border-radius:50%;background:var(--askw-accent);animation:askw-pulse 1.1s infinite;}',
     '@keyframes askw-pulse{0%,100%{opacity:.35}50%{opacity:1}}',
@@ -457,7 +457,6 @@
     panelEl.innerHTML =
       '<div class="askw-head"><p class="askw-eyebrow"></p><p class="askw-selq"></p>' +
       '<button type="button" class="askw-x" title="Close" aria-label="Close answer">×</button></div>' +
-      '<div class="askw-tools" aria-live="polite"></div>' +
       '<div class="askw-body" aria-live="polite" aria-relevant="additions text"></div>' +
       '<div class="askw-followup"><div class="askw-follow-field"><textarea class="askw-follow-input" aria-label="Follow-up question" rows="1" placeholder="Ask a follow-up…"></textarea><span class="askw-follow-grip" aria-hidden="true"></span></div>' +
       '<button type="button" class="askw-follow-go" title="Send (Enter)" aria-label="Send follow-up">↑</button></div>' +
@@ -465,7 +464,11 @@
     document.body.appendChild(panelEl);
     panelTitle = panelEl.querySelector('.askw-eyebrow');
     panelSel = panelEl.querySelector('.askw-selq');
-    panelTools = panelEl.querySelector('.askw-tools');
+    // The tool pills live in the conversation, straight under the answer being
+    // written (appendLive puts them there), not in a bar under the header.
+    panelTools = document.createElement('div');
+    panelTools.className = 'askw-tools';
+    panelTools.setAttribute('aria-live', 'polite');
     panelBody = panelEl.querySelector('.askw-body');
     followWrap = panelEl.querySelector('.askw-followup');
     followInput = panelEl.querySelector('.askw-follow-input');
@@ -745,13 +748,17 @@
       parent_request_id: item.request_id
     });
   }
-  // Append a fresh answer block (showing "Thinking…") for the stream to fill.
+  // Append a fresh answer block (showing "Thinking…") for the stream to fill,
+  // with the tool pills under it. They sit beside it rather than in it, since
+  // every token re-renders the answer.
   function appendLive() {
+    if (panelTools.parentNode) panelTools.parentNode.removeChild(panelTools);
     var asked = panelBody.lastElementChild;
     liveEl = document.createElement('div');
     liveEl.className = 'askw-a';
     liveEl.innerHTML = '<div class="askw-think"><span class="askw-dot"></span>Thinking…</div>';
     panelBody.appendChild(liveEl);
+    panelBody.appendChild(panelTools);
     anchorTurn(asked && asked.classList.contains('askw-q') ? asked : liveEl);
   }
   function liveError(msg) {
@@ -943,7 +950,9 @@
   }
   function clearTools() {
     toolPills = {};
-    if (panelTools) panelTools.innerHTML = '';
+    if (!panelTools) return;
+    panelTools.innerHTML = '';
+    if (panelTools.parentNode) panelTools.parentNode.removeChild(panelTools);
   }
   function prettyTool(t) { return String(t).replace(/_/g, ' '); }
 

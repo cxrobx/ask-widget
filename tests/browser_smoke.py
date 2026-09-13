@@ -559,6 +559,55 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_tool_calls_show_under_the_answer_being_written(self) -> None:
+        # The tool pills sat in a bar under the panel's header, far above the
+        # "Thinking…" line at the foot of a long conversation.
+        async def tool_stream(*args, **kwargs):
+            yield _sse("tool_status", {"tool": "Grep", "status": "calling"})
+            await asyncio.sleep(1.5)
+            yield _sse("tool_status", {"tool": "Grep", "status": "complete"})
+            yield _sse("token", {"text": "Found it."})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        # The pill's row comes straight after the newest answer, inside the conversation.
+        under_newest = """p => p.closest('.askw-body') !== null
+            && p.parentElement.previousElementSibling === [...document.querySelectorAll('.askw-a')].pop()"""
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", tool_stream), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1100, "height": 640})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            query = urllib.parse.urlencode({"src": str(self.document), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            paragraph = page.locator("main p").first
+            paragraph.select_text()
+            paragraph.dispatch_event("mouseup", {"button": 0})
+            page.get_by_role("button", name="Ask about the selected text").click()
+            page.get_by_role("button", name="Ask a question…").click()
+            page.get_by_label("Question about the highlighted text").fill("Where is it?")
+            page.get_by_role("button", name="Go", exact=True).click()
+
+            panel = page.get_by_role("dialog", name="Onyx answer")
+            pill = panel.locator(".askw-pillt", has_text="Grep")
+            expect(pill).to_be_visible()
+            self.assertTrue(pill.evaluate(under_newest))
+            thinking = panel.locator(".askw-a").last.locator(".askw-think")
+            self.assertGreater(pill.bounding_box()["y"], thinking.bounding_box()["y"])
+            expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            expect(pill).to_have_count(0)
+
+            # A follow-up's tools sit under the follow-up's answer, not the first one.
+            follow = panel.get_by_label("Follow-up question")
+            follow.fill("And the second one?")
+            follow.press("Enter")
+            expect(pill).to_be_visible()
+            expect(panel.locator(".askw-a")).to_have_count(2)
+            self.assertTrue(pill.evaluate(under_newest))
+            expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_shell_navigates_reader_iframe(self) -> None:
         vault = self.root / "vault"
         (vault / "notes").mkdir(parents=True)
