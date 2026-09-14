@@ -60,6 +60,12 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
   place (`ONYX_VAULT_INDEX` names another), and meaning from its embedding
   model in a local Ollama. Without Ollama it searches words; without the
   index, titles.
+- **Find in page** (⌘F, or Edit ▸ Find ▸ Find…), a bar at the reader's
+  top-right that finds words in the note, artifact, or PDF being read, as in
+  Safari: every match tinted and the current one stronger, ↩ or ⌘G for the
+  next, ⇧↩ or ⇧⌘G for the previous, and a match folded inside a shut section
+  opened on the way. Case and accents don't matter. Escape leaves the match
+  selected, so a right-click can ask about it.
 - **Recent conversations**, a searchable dialog (the clock at the sidebar's
   foot, or ⌘Y) with question-type, provider, model, document, and date filters.
   Saved entries can be asked again with the current model, edited before asking,

@@ -1059,6 +1059,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func openSearch() {
         shellCall("onyxShell.openSearch()", fallback: "/#search")
     }
+    @objc private func openFind() { findInPage("open") }
+    @objc private func findNext() { findInPage("next") }
+    @objc private func findPrevious() { findInPage("previous") }
+    /// Edit ▸ Find: the shell's find bar, over the page in its reader. Off the shell there is no reader to search, so
+    /// unlike `shellCall` this never loads anything in its place. ⌘F and ⌘G typed in the page reach the bar first
+    /// (the page takes the key); these items serve a click, and any key the page leaves alone.
+    private func findInPage(_ verb: String) {
+        guard let webView, ["/", "/vault"].contains(webView.url?.path ?? "") else { return }
+        webView.evaluateJavaScript(
+            "!!(window.onyxShell && onyxShell.find && onyxShell.find('\(verb)'))", completionHandler: nil
+        )
+    }
     /// On the shell (Library, Notes, Artifacts) a view comes in place, so the sidebar never reloads
     /// (a load blanks the glass window for a frame); from any other page, or if the shell can't, it loads.
     private func switchVault(_ kind: String, path: String) {
@@ -1236,6 +1248,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
         editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
         editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenu.addItem(.separator())
+        // Find, where every Mac app files it: the reader's find bar (find_ui.py).
+        let findItem = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+        let findMenu = NSMenu(title: "Find")
+        findItem.submenu = findMenu
+        findMenu.addItem(menuItem("Find…", #selector(openFind), "f"))
+        findMenu.addItem(menuItem("Find Next", #selector(findNext), "g"))
+        findMenu.addItem(menuItem("Find Previous", #selector(findPrevious), "G"))
+        editMenu.addItem(findItem)
 
         let viewItem = NSMenuItem()
         main.addItem(viewItem)

@@ -2351,6 +2351,143 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_command_f_finds_words_in_the_page_and_steps_through_them(self) -> None:
+        # ⌘F, as in Safari and Obsidian: a bar over the reader that finds words in the page it shows and nowhere else (not
+        # text the page hides, not Onyx's own panel), whatever their case or accents, across a bold word but never from
+        # one paragraph into the next. ↩ and ⌘G step through them, each brought into view, a shut <details> opened for
+        # one; Escape leaves the current one selected, to ask about. Matches are highlights, so the page's HTML is never
+        # edited. The bar stays from page to page, counting without moving the page, and counts again when what the page
+        # shows changes. Both engines: the app is WebKit.
+        filler = "".join(f"<p>Filler paragraph {i} of the page.</p>" for i in range(60))
+        found = self.root / "find.html"
+        found.write_text(
+            "<!doctype html><title>Find me</title><style>.more{display:none} #show:checked~.more{display:block}</style>"
+            f"<h1>Find me</h1>{filler}<p id=first>The <b>nas</b>-tunnel carries every service.</p>{filler}"
+            "<details id=fold><summary>More</summary><p>A nas-tunnel sleeps in here.</p></details>"
+            "<p hidden>A hidden nas-tunnel.</p><div class=askw-root>The panel's own nas-tunnel.</div>"
+            "<input type=checkbox id=show><label for=show id=reveal>Show one more</label><p class=more>An extra nas-tunnel.</p>"
+            f"{filler}<p id=last>Last NAS-Tunnel.</p><p>cross boun</p><p>dary line</p><p>in<em>line</em>word, Café Résumé</p>",
+            encoding="utf-8",
+        )
+        # The match the bar is on, as the reader draws it.
+        current = """() => {
+          const h = CSS.highlights.get('onyx-find-current');
+          if (!h || !h.size) return null;
+          const r = [...h][0], box = r.getBoundingClientRect();
+          return {text: r.toString(), top: box.top, bottom: box.bottom, height: innerHeight};
+        }"""
+        select_in_last = """p => {
+          const t = p.firstChild, r = document.createRange();
+          r.setStart(t, 5); r.setEnd(t, 15);
+          getSelection().removeAllRanges(); getSelection().addRange(r);
+        }"""
+
+        def in_view(hit) -> None:
+            self.assertIsNotNone(hit)
+            self.assertGreaterEqual(hit["top"], 0)
+            self.assertLessEqual(hit["bottom"], hit["height"])
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/?{urllib.parse.urlencode({'src': str(found)})}", wait_until="networkidle")
+                    frame = page.frame_locator("iframe[name=reader]")
+                    expect(frame.locator("#first")).to_be_attached()
+                    reader = page.frame(name="reader")
+                    bar, field, count = page.locator("#find-bar"), page.locator("#find-input"), page.locator("#find-count")
+
+                    # ⌘F with focus inside the reader. The first match below the top, across the <b>, comes into view,
+                    # and the context pill steps out of the bar's way.
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+f")
+                    expect(bar).to_be_visible()
+                    expect(field).to_be_focused()
+                    field.fill("nas-tunnel")
+                    expect(count).to_have_text("1 of 3")
+                    hit = reader.evaluate(current)
+                    self.assertEqual(hit["text"], "nas-tunnel")
+                    in_view(hit)
+                    expect(frame.locator(".askw-pill")).to_be_visible()
+                    pill, box = frame.locator(".askw-pill").bounding_box(), bar.bounding_box()
+                    self.assertLessEqual(pill["x"] + pill["width"], box["x"])
+
+                    # ↩ steps on, opening the shut <details> the next one is folded in; the ends wrap; ⇧↩ steps back, and
+                    # ⌘G, ⇧⌘G and Edit ▸ Find's items (through window.onyxShell) do the same.
+                    field.press("Enter")
+                    expect(count).to_have_text("2 of 3")
+                    self.assertTrue(frame.locator("#fold").evaluate("d => d.open"))
+                    in_view(reader.evaluate(current))
+                    field.press("Enter")
+                    expect(count).to_have_text("3 of 3")
+                    self.assertEqual(reader.evaluate(current)["text"], "NAS-Tunnel")
+                    field.press("Enter")
+                    expect(count).to_have_text("1 of 3")
+                    field.press("Shift+Enter")
+                    expect(count).to_have_text("3 of 3")
+                    page.keyboard.press("Meta+g")
+                    expect(count).to_have_text("1 of 3")
+                    page.keyboard.press("Meta+Shift+g")
+                    expect(count).to_have_text("3 of 3")
+                    self.assertTrue(page.evaluate("onyxShell.find('previous')"))
+                    expect(count).to_have_text("2 of 3")
+
+                    # Accents and case don't matter, and an inline tag doesn't split a word; a paragraph break does.
+                    field.fill("resume")
+                    expect(count).to_have_text("1 of 1")
+                    field.fill("inlineword")
+                    expect(count).to_have_text("1 of 1")
+                    field.fill("boundary")
+                    expect(count).to_have_text("No matches")
+
+                    # What the page's CSS shows on a click counts once it shows, and so does text its script adds;
+                    # neither moves the page.
+                    field.fill("nas-tunnel")
+                    expect(count).to_have_text(re.compile(r"^\d of 3$"))
+                    frame.locator("#reveal").click()
+                    expect(count).to_have_text(re.compile(r"^\d of 4$"))
+                    y = reader.evaluate("scrollY")
+                    reader.evaluate("document.getElementById('last').insertAdjacentHTML('afterend', '<p>One more nas-tunnel.</p>')")
+                    expect(count).to_have_text(re.compile(r"^\d of 5$"))
+                    self.assertEqual(reader.evaluate("scrollY"), y)
+
+                    # Escape: the bar and its tints go, and the match it was on is left selected, to ask about. The page's
+                    # HTML was never touched.
+                    was = reader.evaluate(current)["text"]
+                    field.press("Escape")
+                    expect(bar).to_be_hidden()
+                    self.assertEqual(reader.evaluate("getSelection().toString()"), was)
+                    self.assertFalse(reader.evaluate("CSS.highlights.has('onyx-find') || CSS.highlights.has('onyx-find-current')"))
+                    self.assertEqual(frame.locator("#first").inner_html(), "The <b>nas</b>-tunnel carries every service.")
+                    self.assertEqual(reader.evaluate("document.querySelectorAll('mark').length"), 0)
+
+                    # A passage selected in the page becomes the query, and the match it is is the current one.
+                    frame.locator("#last").evaluate(select_in_last)
+                    page.keyboard.press("Meta+f")
+                    expect(field).to_have_value("NAS-Tunnel")
+                    expect(count).to_have_text("4 of 5")
+
+                    # Another page: the bar stays and counts there, and the page opens as it would, unmoved.
+                    field.fill("passage")
+                    expect(count).to_have_text("No matches")
+                    page.evaluate("href => navigate(href)", "/view?" + urllib.parse.urlencode({"src": str(self.document)}))
+                    expect(count).to_have_text("1 match")
+                    self.assertEqual(reader.evaluate("scrollY"), 0)
+                    field.press("Enter")
+                    expect(count).to_have_text("1 of 1")
+
+                    # Library's home page has nothing to find in: the bar goes, and ⌘F there leaves it away.
+                    page.evaluate("goHome()")
+                    expect(bar).to_be_hidden()
+                    page.keyboard.press("Meta+f")
+                    expect(bar).to_be_hidden()
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_the_reader_and_the_answer_panel_wear_the_vault_look(self) -> None:
         # Match vault appearance dresses the reader too: a text page takes the vault's reading styles and the answer
         # panel its palette, in the vault's mode whatever the app theme says; off, they are Onyx's own again, live.
