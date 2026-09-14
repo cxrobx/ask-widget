@@ -234,13 +234,22 @@ body.kind-html .shell,body.kind-library .shell{{--side-w:290px}}
 body.side-unpinned .shell{{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}}
 /* Floating, it is a panel lying on the page: inset, rounded, shadowed, and on a ground thick enough to read over a page's
    text even where the blur is not drawn; the window's glass is too thin (the Obsidian look brings an opaque ground of its own). */
-body.side-unpinned #vault-side{{position:fixed;top:8px;bottom:8px;left:8px;z-index:40;width:min(260px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(-100% - 16px))}} body.side-unpinned.kind-html #vault-side,body.side-unpinned.kind-library #vault-side{{width:min(290px,86vw)}} body.native.side-unpinned #vault-side{{padding-top:40px}}
+body.side-unpinned #vault-side{{position:fixed;top:8px;bottom:8px;left:8px;z-index:40;width:min(var(--side-w),86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(-100% - 16px))}} body.native.side-unpinned #vault-side{{padding-top:40px}}
 body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar)/.96);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
 @media(prefers-reduced-transparency:reduce){{body.side-unpinned:not(.obsidian-tree) #vault-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.side-unpinned.side-out #vault-side{{visibility:visible;transform:none}}
 /* Motion: out with an ease-out slide; away with a quicker ease-in one, hidden only once it is off. Reduce Motion fades in place. */
-body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.side-unpinned.side-out #vault-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s,width .15s cubic-bezier(.2,.8,.2,1)}} body.side-still #vault-side{{transition:none!important}}
+body.side-unpinned #vault-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.side-unpinned.side-out #vault-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s,width .15s cubic-bezier(.2,.8,.2,1)}} body.side-still #vault-side,body.side-still .shell{{transition:none!important}}
 @media(prefers-reduced-motion:reduce){{body.side-unpinned #vault-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.side-unpinned.side-out #vault-side{{opacity:1;transition:opacity .15s linear,visibility 0s}}}}
+/* The sidebar's width is the reader's: drag its right edge, pinned or floating (the grip lies inside the edge, since the
+   aside clips), double-click to put the default back. While dragging, nothing glides and the reader's iframe can't swallow
+   the pointer. One width across Library, Notes and Artifacts, remembered (askw:vault:side-w, inline on .shell). */
+#side-grip{{position:absolute;top:0;right:0;bottom:0;z-index:3;width:8px;cursor:col-resize;touch-action:none}}
+#side-grip::after{{content:"";position:absolute;top:0;right:1px;bottom:0;width:2px;border-radius:2px;background:rgb(var(--accent));opacity:0;transition:opacity .1s}}
+body.side-unpinned #side-grip::after{{top:10px;bottom:10px;right:2px}}
+#side-grip:hover::after,body.side-resizing #side-grip::after{{opacity:.7}}
+body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select:none;-webkit-user-select:none}} body.side-resizing .shell,body.side-resizing #vault-side{{transition:none!important}} body.side-resizing #reader{{pointer-events:none}}
+@media(max-width:800px){{#side-grip{{display:none}}}}
 /* The row a menu is open for wears a ring, as Finder's does. */
 #tree .menu-for{{box-shadow:inset 0 0 0 2px rgb(var(--accent))}}
 /* Reorganising Artifacts: the row being dragged fades, the folder it would land in wears that ring over a wash (the whole
@@ -276,7 +285,7 @@ body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
 <nav id=tree aria-label="{tree_label}"><div class=none>Loading…</div></nav>
-<div class=aside-foot><span id=vault-count>v{version}</span><button id=open-history class=foot-btn type=button title="Recent conversations (⌘Y)" aria-label="Recent conversations">{history_icon}</button><button id=open-settings class=foot-btn type=button title="Settings (⌘,)" aria-label="Settings">{settings_icon}</button></div></aside>
+<div class=aside-foot><span id=vault-count>v{version}</span><button id=open-history class=foot-btn type=button title="Recent conversations (⌘Y)" aria-label="Recent conversations">{history_icon}</button><button id=open-settings class=foot-btn type=button title="Settings (⌘,)" aria-label="Settings">{settings_icon}</button></div><div id=side-grip role=separator aria-orientation=vertical aria-label="Resize sidebar" title="Drag to resize · double-click to reset"></div></aside>
 <main id=reader-pane><div id=reader-empty{empty_hidden}><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
 <section id=home aria-label="Library"{home_hidden}><div class=home-inner>
 <form id=open-form class=open-row><input id=open-src placeholder="Open a file or URL — HTML, Markdown, text, PDF, or https://…" spellcheck=false autocomplete=off aria-label="Document URL or local file"><button type=button class="secondary pick" data-pick=file data-target=open-src>Choose…</button><button class=primary>Open</button></form>
@@ -348,13 +357,24 @@ function vaultOf(src){{let best='',depth=0;for(const k in TREES){{const r=TREES[
 const SIDE_KEY='askw:vault:sidebar', side=$('#vault-side'), pin=$('#side-pin'), edge=$('#side-edge'); let sideOver=false, sideTimer=0;
 function pinned(){{return !document.body.classList.contains('side-unpinned')}}
 function sideOut(out){{document.body.classList.toggle('side-out',out);side.inert=!pinned()&&!out;if(!out)hidePeek()}}
-function inUse(){{const a=document.activeElement,p=$('#add-panel');return !!(DRAG||(window.OnyxMenu&&OnyxMenu.isOpen())||(p&&!p.hidden)||(a&&side.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)))}}
+function inUse(){{const a=document.activeElement,p=$('#add-panel');return !!(DRAG||gripFrom||(window.OnyxMenu&&OnyxMenu.isOpen())||(p&&!p.hidden)||(a&&side.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)))}}
 function sideLater(){{clearTimeout(sideTimer);if(pinned())return;sideTimer=setTimeout(function check(){{if(pinned()||sideOver)return;if(inUse()){{sideTimer=setTimeout(check,400);return}}sideOut(false)}},400)}}
 function setPinned(on){{document.body.classList.toggle('side-unpinned',!on);store(SIDE_KEY,on?'':'unpinned');pin.setAttribute('aria-pressed',String(on));pin.title=(on?'Unpin':'Pin')+' sidebar (⌘\\\\)';clearTimeout(sideTimer);sideOut(!on&&(sideOver||inUse()));if(!on&&!sideOver)sideLater()}}
 function sideKey(e){{if(e.key==='\\\\'&&(e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey){{e.preventDefault();setPinned(!pinned())}}}}
 pin.onclick=()=>setPinned(!pinned()); document.addEventListener('keydown',sideKey);
 edge.addEventListener('mouseenter',()=>{{clearTimeout(sideTimer);sideTimer=setTimeout(()=>sideOut(true),40)}}); edge.addEventListener('mouseleave',e=>{{if(side.contains(e.relatedTarget))return;clearTimeout(sideTimer);if(document.body.classList.contains('side-out'))sideLater()}});
 side.addEventListener('mouseenter',()=>{{sideOver=true;clearTimeout(sideTimer)}}); side.addEventListener('mouseleave',()=>{{sideOver=false;sideLater()}}); side.addEventListener('focusout',()=>{{if(!sideOver)sideLater()}});
+// MARK: sidebar width — drag the grip on its right edge, pinned or floating; double-click puts the kind's default back.
+// Pointer capture keeps the drag alive past the edge; inUse() (above) keeps the floating panel out meanwhile.
+const WIDE_KEY='askw:vault:side-w', sideGrip=$('#side-grip'), shell=$('.shell'); let gripFrom=null;
+function sideWidth(w){{if(w==null){{shell.style.removeProperty('--side-w');store(WIDE_KEY,'');return}}w=Math.round(Math.min(Math.max(w,200),Math.max(200,innerWidth*.5)));shell.style.setProperty('--side-w',w+'px');store(WIDE_KEY,String(w))}}
+sideGrip.addEventListener('pointerdown',e=>{{if(e.button!==0)return;e.preventDefault();gripFrom={{x:e.clientX,w:side.getBoundingClientRect().width}};try{{sideGrip.setPointerCapture(e.pointerId)}}catch(err){{}}document.body.classList.add('side-resizing')}});
+sideGrip.addEventListener('pointermove',e=>{{if(gripFrom)sideWidth(gripFrom.w+e.clientX-gripFrom.x)}});
+function gripEnd(){{if(!gripFrom)return;gripFrom=null;document.body.classList.remove('side-resizing');if(!pinned()&&!sideOver)sideLater()}}
+sideGrip.addEventListener('pointerup',gripEnd); sideGrip.addEventListener('pointercancel',gripEnd); sideGrip.addEventListener('lostpointercapture',gripEnd);
+sideGrip.addEventListener('dblclick',()=>sideWidth(null));
+// Put back as it was left without a glide: the width is set under side-still, lifted once the first frame has painted.
+{{const w=parseInt(recall(WIDE_KEY)||'',10);if(w>0){{document.body.classList.add('side-still');sideWidth(w);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}}}
 // MARK: outline — the page's headings, read out of the reader's document (same origin) and nested by level, as Obsidian's
 // outline pane: a row scrolls the page to its heading, the twisty folds a section, the filter keeps matching rows and
 // their parents, and the section being read stays marked as the page scrolls. Pinned, it docks as the grid's third
