@@ -526,12 +526,14 @@ def _markdown_html(raw: str, title: str, *, ctx: RenderContext) -> str:
 
 
 def _reading_shell(title: str, body: str, *, kind: str) -> str:
+    # ``main`` is relative so WebKit takes it for a selection root: a selection across blocks fills the gaps
+    # between them out to the root's edges, which were the window's while the root was ``body``.
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>{_html.escape(title)}</title>
 <style>
 :root{{color-scheme:light dark;--reader-bg:247 247 247;--reader-pane:255 255 255;--reader-ink:38 36 33;--reader-muted:87 83 78;--reader-faint:168 162 158;--reader-line:0 0 0;--reader-code:243 242 239;--reader-accent:58 131 247}}
 html,body{{min-height:100%;background:transparent}} body{{margin:0;background:rgb(var(--reader-bg)/.76);color:rgb(var(--reader-ink));font:17px/1.72 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backdrop-filter:saturate(1.08)}}
-main{{box-sizing:border-box;max-width:860px;min-height:100vh;margin:0 auto;padding:64px 72px 110px;background:rgb(var(--reader-pane)/.86);border-inline:1px solid rgb(var(--reader-line)/.09);box-shadow:0 18px 55px rgb(0 0 0/.06);backdrop-filter:blur(22px) saturate(1.16)}}
+main{{position:relative;box-sizing:border-box;max-width:860px;min-height:100vh;margin:0 auto;padding:64px 72px 110px;background:rgb(var(--reader-pane)/.86);border-inline:1px solid rgb(var(--reader-line)/.09);box-shadow:0 18px 55px rgb(0 0 0/.06);backdrop-filter:blur(22px) saturate(1.16)}}
 h1,h2,h3{{line-height:1.2;letter-spacing:-.02em}} h1{{font-size:2.35rem}} h2{{margin-top:2.2em}}
 pre{{overflow:auto;padding:18px;border-radius:10px;background:rgb(var(--reader-code)/.88);font:14px/1.55 ui-monospace,SFMono-Regular,monospace}}
 code{{background:rgb(var(--reader-code)/.88);padding:.12em .32em;border-radius:4px}} pre code{{padding:0}}

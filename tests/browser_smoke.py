@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import uvicorn
+from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 
 from ask_widget.app import create_app
@@ -447,6 +449,50 @@ class BrowserSmokeTests(unittest.TestCase):
             page.get_by_label("Flag").check()
             page.mouse.click(450, 692)
             self.assertEqual(page.evaluate("document.getElementById('banner').dataset.clicked"), "yes")
+            browser.close()
+
+    def test_a_note_selection_stays_inside_the_reading_column(self) -> None:
+        # Selecting from a paragraph into a callout painted the gaps between them across the
+        # whole window: WebKit fills a selection's between-block gaps out to its selection
+        # root, and a note's root was <body>. An artifact's column was already a root.
+        for engine in ("chromium", "webkit"):
+            with self.subTest(engine=engine):
+                self._note_selection_stays_in_column(engine)
+
+    def _note_selection_stays_in_column(self, engine: str) -> None:
+        note = self.root / "callout.md"
+        note.write_text(
+            "## Claims-made\n\n" + "Professional liability is claims-made, not occurrence based. " * 5
+            + "\n\n> **Consequence:** " + "the uninsured tail only grows. " * 8
+            + "\n\n" + "A closing paragraph runs on after the quote. " * 4 + "\n",
+            encoding="utf-8",
+        )
+        with sync_playwright() as playwright:
+            browser = getattr(playwright, engine).launch(headless=True)
+            page = browser.new_page(viewport={"width": 1400, "height": 900}, color_scheme="light")
+            query = urllib.parse.urlencode({"src": str(note), "folder": str(self.root)})
+            page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+            at = page.evaluate("""() => {
+              const p = document.querySelector('main > p'), quote = document.querySelector('blockquote');
+              const range = document.createRange();
+              range.setStart(p.firstChild, 120);
+              range.setEnd(quote.querySelector('p').lastChild, 40);
+              getSelection().removeAllRanges();
+              getSelection().addRange(range);
+              const main = document.querySelector('main').getBoundingClientRect();
+              const a = p.getBoundingClientRect(), b = quote.getBoundingClientRect();
+              return {left: main.left, right: main.right, gap: (a.bottom + b.top) / 2, line: a.bottom - 12};
+            }""")
+            page.wait_for_timeout(200)
+
+            def selected(y: float) -> list[int]:
+                shot = page.screenshot(clip={"x": 0, "y": int(y), "width": 1400, "height": 1})
+                pixels = Image.open(io.BytesIO(shot)).convert("RGB")
+                return [x for x in range(pixels.width) if pixels.getpixel((x, 0))[2] - pixels.getpixel((x, 0))[0] > 25]
+
+            self.assertTrue(selected(at["line"]), "the selection should show on its last paragraph line")
+            outside = [x for x in selected(at["gap"]) if x < at["left"] or x >= at["right"]]
+            self.assertFalse(outside, f"selection painted outside the column, x={outside[:1]}..{outside[-1:]}")
             browser.close()
 
     def test_follow_up_box_drags_taller_and_keeps_its_height(self) -> None:
