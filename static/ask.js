@@ -1541,8 +1541,19 @@
     else document.documentElement.removeAttribute('data-askw-look');
     applyAppearance(appearanceTheme);
   }
+  // A /view page arrives wearing the vault look (app.py `_first_paint`): take it as the look from the start, so the first
+  // appearance applied is the final one, not the app theme for a frame and then the vault's.
+  function seedLook() {
+    var style = document.getElementById('askw-vault-look'), mode = metaValue('askw-look');
+    if (!(style && style.textContent && mode)) return;
+    // After ask.js's own sheet (injectStyle, just before this), as a fetched look is: its rules match that sheet's weight
+    // and win by coming later.
+    (document.head || document.documentElement).appendChild(style);
+    vaultLook = { mode: mode, reader_css: style.textContent };
+    document.documentElement.setAttribute('data-askw-look', mode);  // set already, unless the page has no <html> tag
+  }
   function initVaultLook() {
-    var pending = false, revision = null;
+    var pending = false, revision = metaValue('askw-look-revision') || null;
     function refresh() {
       if (pending || document.hidden) return;
       pending = true;
@@ -1604,7 +1615,7 @@
       var saved = JSON.parse(sessionStorage.getItem('askw:reload') || 'null');
       if (saved && saved.src === reloadSrc) {
         sessionStorage.removeItem('askw:reload');
-        window.addEventListener('load', function () { window.scrollTo(0, saved.y || 0); });
+        window.addEventListener('load', function () { jumpTo(saved.y || 0); });
         toast('Document updated');
       }
     } catch (e) {}
@@ -1629,17 +1640,36 @@
     }
   }
 
+  // To a position at once. A page's own `scroll-behavior:smooth` (the HTML kit sets it) would otherwise ride the whole page
+  // past from the top on every open.
+  function jumpTo(y) {
+    var root = document.documentElement, was = root.style.scrollBehavior;
+    root.style.scrollBehavior = 'auto';
+    window.scrollTo(0, y);
+    root.style.scrollBehavior = was;
+  }
+  // Taken again once the page has loaded, since late images and fonts can move it, unless the reader has scrolled meanwhile.
+  function restorePosition(y) {
+    if (!(y > 0)) return;
+    jumpTo(y);
+    var landed = window.scrollY;
+    window.addEventListener('load', function () { if (Math.abs(window.scrollY - landed) < 2 && landed < y) jumpTo(y); });
+  }
   function initPosition() {
     var source = documentSource();
     if (!source) return;
-    fetch(SERVER + '/api/document?source=' + encodeURIComponent(source)).then(function (r) { return r.json(); }).then(function (d) {
-      // A #fragment (a guide's "#predict" link) is where the reader asked to
-      // land; the remembered scroll position must not override it.
-      if (location.hash) return;
-      if (d.document && d.document.scroll_y > 0 && !sessionStorage.getItem('askw:reload')) {
-        requestAnimationFrame(function () { window.scrollTo(0, d.document.scroll_y); });
-      }
-    }).catch(function () {});
+    // A #fragment (a guide's "#predict" link) is where the reader asked to land, and a live reload puts back its own
+    // position: neither is overridden. A /view page brings its remembered position with it (<meta name="askw-scroll">),
+    // so it is taken before the first frame rather than jumped to after a fetch.
+    var reloading = false;
+    try { reloading = !!sessionStorage.getItem('askw:reload'); } catch (e) {}
+    if (!location.hash && !reloading) {
+      var seeded = metaValue('askw-scroll');
+      if (seeded !== '') restorePosition(Number(seeded));
+      else fetch(SERVER + '/api/document?source=' + encodeURIComponent(source)).then(function (r) { return r.json(); }).then(function (d) {
+        if (d.document) restorePosition(d.document.scroll_y);
+      }).catch(function () {});
+    }
     var timer = null;
     window.addEventListener('scroll', function () {
       clearTimeout(timer);
@@ -1856,7 +1886,8 @@
   function boot() {
     injectStyle();
     guardTransparentCanvas();
-    applyAppearance('system');
+    seedLook();
+    applyAppearance(metaValue('askw-appearance') || 'system');
     if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
       if (appearanceTheme === 'system') applyAppearance('system');
     });

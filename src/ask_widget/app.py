@@ -245,6 +245,11 @@ def _esc(s: str) -> str:
     )
 
 
+_HTML_TAG_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
+_HEAD_END_RE = re.compile(r"</head\s*>", re.IGNORECASE)
+_DOCTYPE_RE = re.compile(r"\s*<!doctype[^>]*>", re.IGNORECASE)
+
+
 def _error_page(message: str) -> str:
     return (
         "<!doctype html><meta charset=utf-8><title>Onyx — can't open</title>"
@@ -494,6 +499,7 @@ def create_app(config: AppConfig) -> FastAPI:
             asset_token=capability,
             allow_document_scripts=interactive_local_html,
         )
+        out = first_paint(out, doc_src, settings)
         caps: OrderedDict = app.state.asset_caps
         caps[capability] = {
             "assets": assets,
@@ -1190,6 +1196,27 @@ def create_app(config: AppConfig) -> FastAPI:
                 "mode": worn["mode"] if worn else None, "base": worn["base"] if worn else None,
                 "css": vault_look.stylesheet(worn), "reader_css": vault_look.reader_stylesheet(worn),
                 "revision": vault_look.revision(worn)}
+
+    # A page comes already as it will look, and knowing where the reader left it, so nothing about it changes after its
+    # first frame: the vault look's stylesheet, and its mode on <html> (its rules key on html[data-askw-look]); the app
+    # theme; the remembered scroll position. ask.js takes each at boot (seedLook, initPosition) instead of fetching it and
+    # restyling or jumping once the page had painted, which made every change of page look jerky.
+    def first_paint(html_text: str, source: str, settings: dict) -> str:
+        look, row = current_vault_look(), app.state.storage.document(source)
+        head = (f'<meta name="askw-appearance" content="{_esc(str(settings.get("appearance_theme") or "system"))}">'
+                f'<meta name="askw-scroll" content="{float(row["scroll_y"]) if row else 0.0:g}">')
+        if look["reader_css"]:
+            mode = _esc(look["mode"])
+            head += (f'<meta name="askw-look" content="{mode}"><meta name="askw-look-revision" content="{_esc(look["revision"])}">'
+                     f'<style id="askw-vault-look">{look["reader_css"]}</style>')
+            html_text = _HTML_TAG_RE.sub(
+                lambda m: m.group(0)[:-1].rstrip("/") + f' data-askw-look="{mode}" data-askw-color="{mode}">', html_text, count=1
+            )
+        # Into the head; a page without one takes it just after its doctype, never before it (that would put the page
+        # in quirks mode, where a table stops inheriting the page's text colour).
+        end = _HEAD_END_RE.search(html_text)
+        at = end.start() if end else (m.end() if (m := _DOCTYPE_RE.match(html_text)) else 0)
+        return html_text[:at] + head + html_text[at:]
 
     @app.get("/api/vault-look")
     async def vault_look_api(request: Request):

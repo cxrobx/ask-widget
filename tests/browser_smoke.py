@@ -1704,134 +1704,125 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
-    def test_pages_arrive_with_a_fade_and_never_flash(self) -> None:
-        # Between pages, and between a page and home, Onyx fades, and quickly: the reader hides and the load starts at once
-        # (no wait), it is held invisible while the page loads, and the page fades in (no rise, 150 ms at most) once loaded — from a sidebar row, a home card,
-        # a wikilink inside the page, the switch, or the URL the shell opened on. A navigation the shell can't see coming
-        # (back/forward) is shown at once, since a fade begun after the paint would flash. Both engines: the app is WebKit.
+    def test_page_changes_are_instant_and_right_from_the_first_frame(self) -> None:
+        # Moving between notes, and between Notes and Artifacts, is instant, as in Obsidian, and nothing about a page
+        # changes after its first frame: the reader never fades or animates, the vault look is on the page when it first
+        # paints (not fetched after it) and the theme never flips, a remembered position is where the page opens (no ride
+        # from the top, even under the page's own scroll-behavior:smooth), and a switch resizes the sidebar at once. The
+        # page the shell opened on is remembered as its vault's last page even when it loads before the tree does.
+        # Both engines: the app is WebKit.
         notes = self.root / "vault"
         notes.mkdir()
         alpha = notes / "Alpha.md"
-        alpha.write_text("# Alpha\n\nRead [[Beta]] next. See [the top](#alpha) too.\n", encoding="utf-8")
-        (notes / "Beta.md").write_text("# Beta\n\nBack to [[Alpha]].\n", encoding="utf-8")
-        storage: Storage = self.app.state.storage
-        storage.update_settings({"vault_root": str(notes)}, model_default="sonnet")
-        storage.add_root(notes)
-        # At each load of the reader, what the shell had done to it by then: its opacity, and the keyframes of whatever
-        # animation it started. The shell's own listener was bound first, so it has already run.
-        WATCH = (
-            "() => { window.__loads = []; const r = document.getElementById('reader'); r.addEventListener('load', () => {"
-            " __loads.push({ src: r.contentWindow.location.href, opacity: getComputedStyle(r).opacity,"
-            " frames: r.getAnimations().map(a => a.effect.getKeyframes()),"
-            " duration: Math.max(0, ...r.getAnimations().map(a => a.effect.getTiming().duration)) }) }) }"
+        alpha.write_text("# Alpha\n\nRead [[Beta]] next.\n", encoding="utf-8")
+        beta = notes / "Beta.md"
+        beta.write_text("# Beta\n\n" + "\n\n".join(f"Paragraph {i}. " + "words " * 60 for i in range(80)), encoding="utf-8")
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Pages").mkdir(parents=True)
+        long_page = artifacts / "Pages" / "long.html"
+        long_page.write_text(
+            "<!doctype html><html><head><title>Long page</title><style>html{scroll-behavior:smooth}</style></head><body>"
+            + "".join(f"<p style='height:120px'>Paragraph {i}</p>" for i in range(100)) + "</body></html>",
+            encoding="utf-8",
         )
+        storage: Storage = self.app.state.storage
+        storage.update_settings(
+            {"vault_root": str(notes), "html_vault_root": str(artifacts), "appearance_theme": "dark",
+             "markdown_follow_obsidian": True, "sidebar_follow_obsidian": True},
+            model_default="sonnet",
+        )
+        storage.save_markdown_theme(notes, {"mode": "light", "styles": {
+            "content": {"background-color": "rgb(253, 246, 227)", "color": "rgb(0, 43, 54)"},
+        }})
+        storage.add_root(notes)
+
+        def remember(path: Path, y: float) -> None:
+            # The reader keys a document by the path it was read at; on macOS the temp dir is also /private/var.
+            rows = [src for src in {str(path), os.path.realpath(path)} if storage.document(src)]
+            self.assertTrue(rows, f"{path.name} was never recorded")
+            for src in rows:
+                storage.update_position(src, y)
+
+        # Every frame from the click on: the reader's opacity and animations, its width, and the page in it.
+        SAMPLE = """() => { const out = window.__frames = [], r = document.getElementById('reader'), t0 = performance.now();
+          (function tick() { let d = null; try { d = r.contentDocument } catch (e) {}
+            const de = d && d.documentElement, look = d && d.getElementById('askw-vault-look');
+            out.push({ t: performance.now() - t0, op: getComputedStyle(r).opacity, anims: r.getAnimations().length,
+              w: Math.round(r.getBoundingClientRect().width), href: decodeURIComponent(r.contentWindow.location.href),
+              ready: d ? d.readyState : '', body: !!(d && d.body && d.body.childElementCount),
+              look: de ? de.getAttribute('data-askw-look') : null, css: !!(look && look.textContent),
+              color: de ? de.getAttribute('data-askw-color') : null, y: r.contentWindow.scrollY });
+            if (performance.now() - t0 < 1500) requestAnimationFrame(tick) })() }"""
+
         page_errors: list[str] = []
         with sync_playwright() as playwright:
             for engine in ("chromium", "webkit"):
                 with self.subTest(engine=engine):
                     browser = getattr(playwright, engine).launch(headless=True)
-                    page = browser.new_page(viewport={"width": 1100, "height": 700})
+                    page = browser.new_page(viewport={"width": 1100, "height": 700}, color_scheme="dark")
                     page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
                     reader = page.frame_locator("iframe[name=reader]")
-                    log = lambda: page.evaluate(  # noqa: E731
-                        "onyxMotion.log.map(e => e[0] + ':' + (e[1] && (new URL(e[1], location.href).searchParams.get('src') || e[1]).replace(/.*[/]/, '')))"
-                    )
-                    since = lambda n: [e for e in log()[n:]]  # noqa: E731
 
-                    # Opened on a page: it arrives (held invisible from the first frame, never shown then faded). The tree is
-                    # made to come AFTER the page, as it can by a few ms: the page is still remembered as the vault's last.
+                    # Read each once, so each has a row to remember a position in.
+                    for path in (beta, long_page):
+                        page.goto(f"{self.base_url}/view?{urllib.parse.urlencode({'src': str(path)})}", wait_until="networkidle")
+                    remember(beta, 900)
+                    remember(long_page, 1500)
+
+                    # The tree made to come AFTER the page, as it can by a few ms: the page is still its vault's last.
                     page.route(re.compile(r"/api/vault/tree"), lambda route: (page.wait_for_timeout(250), route.continue_()))
                     page.goto(f"{self.base_url}/vault?src={urllib.parse.quote(str(alpha))}", wait_until="networkidle")
                     expect(reader.locator("h1")).to_have_text("Alpha")
-                    self.assertEqual(log(), ["arrive:reader"])
                     page.unroute(re.compile(r"/api/vault/tree"))
                     self.assertEqual(page.evaluate("localStorage.getItem('askw:vault:last')"), str(alpha))
                     expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(alpha))
-                    page.evaluate(WATCH)
 
-                    # A wikilink inside the page: the reader leaves, then navigates, then the new page arrives.
-                    n = len(log())
-                    reader.get_by_role("link", name="Beta", exact=True).click()
+                    def measure(action, name: str) -> list[dict]:
+                        page.evaluate(SAMPLE)
+                        action()
+                        page.wait_for_function(
+                            "name => { const f = window.__frames, l = f[f.length - 1]; return l && l.t > 900 && l.href.includes(name) && l.ready === 'complete' }",
+                            arg=name,
+                        )
+                        return page.evaluate("window.__frames")
+
+                    def check(frames: list[dict], name: str, y: float, widths: int = 1) -> None:
+                        new = [f for f in frames if name in f["href"] and f["body"]]
+                        self.assertTrue(new, f"{name} never showed")
+                        self.assertEqual({f["op"] for f in frames}, {"1"}, "the reader faded")
+                        self.assertEqual({f["anims"] for f in frames}, {0}, "the reader animated")
+                        self.assertLessEqual(len({f["w"] for f in frames}), widths, "the reader's width eased")
+                        bare = [f for f in new if not (f["look"] == "light" and f["css"])]
+                        self.assertEqual(bare, [], f"{name} painted without the vault look")
+                        self.assertNotIn("dark", {f["color"] for f in new}, f"{name}'s theme flipped")
+                        ys = [f["y"] for f in new]
+                        self.assertAlmostEqual(ys[-1], y, delta=2)
+                        self.assertEqual([v for v in ys if 2 < v < y - 2], [], f"{name} rode to its position")
+                        loaded = [f for f in new if f["ready"] == "complete"]
+                        self.assertAlmostEqual(loaded[0]["y"], y, delta=2, msg=f"{name} jumped after it loaded")
+
+                    # A note to a note, from its row.
+                    frames = measure(lambda: page.locator("#tree a.file[data-path$='Beta.md']").click(), "Beta.md")
+                    check(frames, "Beta.md", 900)
                     expect(reader.locator("h1")).to_have_text("Beta")
-                    page.wait_for_function("() => onyxMotion.log.some(e => e[0] === 'arrive')")
-                    self.assertEqual(since(n), ["leave:reader", "navigate:Beta.md", "arrive:reader"])
-                    loads = page.evaluate("__loads")
-                    self.assertEqual(len(loads), 1)
-                    self.assertEqual(loads[0]["opacity"], "0", "the new page was visible before its fade began")
-                    self.assertIn("Beta.md", loads[0]["src"])
-                    self.assertTrue(loads[0]["frames"], "no fade")
-                    self.assertFalse(any("transform" in f for frames in loads[0]["frames"] for f in frames), "the page moved")
-                    self.assertLessEqual(loads[0]["duration"], 150, "the fade is slow")
-                    # The load started at once: no fade-out held it back.
-                    gap = page.evaluate("(() => { const l = onyxMotion.log, i = l.findIndex(e => e[0] === 'navigate'); return l[i][2] - l[i - 1][2] })()")
-                    self.assertLess(gap, 20, "the load waited on the old page")
 
-                    # A #fragment of the page it is on is not a navigation: no fade, and the page stays.
-                    n = len(log())
-                    page.evaluate("__loads = []")
-                    reader.get_by_role("link", name="Alpha", exact=True).click()
-                    expect(reader.locator("h1")).to_have_text("Alpha")
-                    page.wait_for_function("() => __loads.length === 1")
-                    self.assertEqual(since(n), ["leave:reader", "navigate:Alpha.md", "arrive:reader"])
-                    n = len(log())
-                    page.evaluate("__loads = []")
-                    reader.get_by_role("link", name="the top", exact=True).click()
-                    page.wait_for_timeout(300)
-                    self.assertEqual(since(n), [])
-                    self.assertEqual(page.evaluate("__loads"), [])
-                    self.assertTrue(page.evaluate("document.querySelector('#reader').contentWindow.location.hash === '#alpha'"))
+                    # Notes to Artifacts: the sidebar is wider there, and the reader takes the narrower width at once.
+                    page.evaluate(SAMPLE)
+                    page.locator(".vault-switch a", has_text="Artifacts").click()
+                    expect(page.locator("#reader-empty")).to_be_visible()
+                    page.wait_for_function("() => window.__frames[window.__frames.length - 1].t > 400")
+                    frames = page.evaluate("window.__frames")
+                    self.assertEqual(len({f["w"] for f in frames}), 2, "the reader's width eased, or never changed")
+                    self.assertEqual({f["anims"] for f in frames}, {0})
 
-                    # Back is unannounced: the page shows at once, no fade begun after its paint.
-                    n = len(log())
-                    page.evaluate("__loads = []")
-                    page.evaluate("history.go(-2)")  # past the #fragment entry too
-                    expect(reader.locator("h1")).to_have_text("Beta")
-                    page.wait_for_function("() => __loads.length === 1")
-                    self.assertEqual(since(n), [])
-                    self.assertEqual(page.evaluate("__loads[0].opacity"), "1")
-                    self.assertEqual(page.evaluate("document.getElementById('reader').getAnimations().length"), 0)
+                    # An artifact whose own CSS scrolls smoothly still opens at its place, not after a ride down the page.
+                    frames = measure(lambda: page.locator("#tree a.file", has_text="Long page").click(), "long.html")
+                    check(frames, "long.html", 1500)
 
-                    # Library: the page leaves, and the home page arrives in its place.
-                    n = len(log())
-                    page.locator(".vault-switch a", has_text="Library").click()
-                    expect(page.locator("#home")).to_be_visible()
-                    page.wait_for_function("() => onyxMotion.log.some(e => e[0] === 'arrive' && e[1] === 'home')")
-                    self.assertEqual(since(n), ["leave:reader", "navigate:about:blank", "arrive:home"])
-                    self.assertEqual(page.evaluate("document.getElementById('reader').getAnimations().length"), 0)
-
-                    # A sidebar row from home: home and the reader leave together, then the page arrives.
-                    n = len(log())
-                    page.evaluate("__loads = []")
-                    page.locator("#tree a.file", has_text="Alpha").click()
-                    expect(reader.locator("h1")).to_have_text("Alpha")
-                    page.wait_for_function("() => __loads.length === 1")
-                    self.assertEqual(since(n), ["leave:reader", "leave:home", "navigate:Alpha.md", "arrive:reader"])
-                    expect(page.locator("#home")).to_be_hidden()
-                    self.assertEqual(page.evaluate("__loads[0].opacity"), "0")
-                    self.assertTrue(page.locator("#tree a.active[data-path$='Alpha.md']").is_visible())
-
-                    # A modified click is left to the browser (a new window, in the app): the shell does not fade or navigate.
-                    n = len(log())
-                    page.locator("#tree a.file", has_text="Beta").click(modifiers=["Meta" if engine == "webkit" else "Control"])
-                    page.wait_for_timeout(300)
-                    self.assertEqual(since(n), [])
-                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    # Back to Notes: its last note comes back, at its place, in the vault look, at the wider width at once.
+                    frames = measure(lambda: page.locator(".vault-switch a", has_text="Notes").click(), "Beta.md")
+                    check(frames, "Beta.md", 900, widths=2)
                     browser.close()
-
-            # Reduce Motion: the page still fades in, and nothing moves.
-            browser = playwright.chromium.launch(headless=True)
-            context = browser.new_context(viewport={"width": 1100, "height": 700}, reduced_motion="reduce")
-            page = context.new_page()
-            page.on("pageerror", lambda error: page_errors.append(f"reduced: {error}"))
-            page.goto(f"{self.base_url}/vault", wait_until="networkidle")
-            page.evaluate(WATCH)
-            page.locator("#tree a.file", has_text="Alpha").click()
-            page.wait_for_function("() => __loads.length === 1")
-            loads = page.evaluate("__loads")
-            self.assertEqual(loads[0]["opacity"], "0")
-            self.assertTrue(loads[0]["frames"], "no fade under Reduce Motion")
-            self.assertFalse(any("transform" in f for frames in loads[0]["frames"] for f in frames), "a rise under Reduce Motion")
-            browser.close()
 
         self.assertEqual(page_errors, [])
 
