@@ -1704,6 +1704,132 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_pages_arrive_with_a_fade_and_never_flash(self) -> None:
+        # Between pages, and between a page and home, Onyx fades: the reader is faded out BEFORE it navigates, held
+        # invisible while the page loads, and the page fades in and rises once loaded — from a sidebar row, a home card,
+        # a wikilink inside the page, the switch, or the URL the shell opened on. A navigation the shell can't see coming
+        # (back/forward) is shown at once, since a fade begun after the paint would flash. Reduce Motion fades without the
+        # rise. Both engines: the app is WebKit.
+        notes = self.root / "vault"
+        notes.mkdir()
+        alpha = notes / "Alpha.md"
+        alpha.write_text("# Alpha\n\nRead [[Beta]] next. See [the top](#alpha) too.\n", encoding="utf-8")
+        (notes / "Beta.md").write_text("# Beta\n\nBack to [[Alpha]].\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(notes)}, model_default="sonnet")
+        storage.add_root(notes)
+        # At each load of the reader, what the shell had done to it by then: its opacity, and the keyframes of whatever
+        # animation it started. The shell's own listener was bound first, so it has already run.
+        WATCH = (
+            "() => { window.__loads = []; const r = document.getElementById('reader'); r.addEventListener('load', () => {"
+            " __loads.push({ src: r.contentWindow.location.href, opacity: getComputedStyle(r).opacity,"
+            " frames: r.getAnimations().map(a => a.effect.getKeyframes()) }) }) }"
+        )
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 700})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    reader = page.frame_locator("iframe[name=reader]")
+                    log = lambda: page.evaluate(  # noqa: E731
+                        "onyxMotion.log.map(e => e[0] + ':' + (e[1] && (new URL(e[1], location.href).searchParams.get('src') || e[1]).replace(/.*[/]/, '')))"
+                    )
+                    since = lambda n: [e for e in log()[n:]]  # noqa: E731
+
+                    # Opened on a page: it arrives (held invisible from the first frame, never shown then faded). The tree is
+                    # made to come AFTER the page, as it can by a few ms: the page is still remembered as the vault's last.
+                    page.route(re.compile(r"/api/vault/tree"), lambda route: (page.wait_for_timeout(250), route.continue_()))
+                    page.goto(f"{self.base_url}/vault?src={urllib.parse.quote(str(alpha))}", wait_until="networkidle")
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    self.assertEqual(log(), ["arrive:reader"])
+                    page.unroute(re.compile(r"/api/vault/tree"))
+                    self.assertEqual(page.evaluate("localStorage.getItem('askw:vault:last')"), str(alpha))
+                    expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(alpha))
+                    page.evaluate(WATCH)
+
+                    # A wikilink inside the page: the reader leaves, then navigates, then the new page arrives.
+                    n = len(log())
+                    reader.get_by_role("link", name="Beta", exact=True).click()
+                    expect(reader.locator("h1")).to_have_text("Beta")
+                    page.wait_for_function("() => onyxMotion.log.some(e => e[0] === 'arrive')")
+                    self.assertEqual(since(n), ["leave:reader", "navigate:Beta.md", "arrive:reader"])
+                    loads = page.evaluate("__loads")
+                    self.assertEqual(len(loads), 1)
+                    self.assertEqual(loads[0]["opacity"], "0", "the new page was visible before its fade began")
+                    self.assertIn("Beta.md", loads[0]["src"])
+                    self.assertTrue(any("transform" in f for frames in loads[0]["frames"] for f in frames), "no rise")
+
+                    # A #fragment of the page it is on is not a navigation: no fade, and the page stays.
+                    n = len(log())
+                    page.evaluate("__loads = []")
+                    reader.get_by_role("link", name="Alpha", exact=True).click()
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    page.wait_for_function("() => __loads.length === 1")
+                    self.assertEqual(since(n), ["leave:reader", "navigate:Alpha.md", "arrive:reader"])
+                    n = len(log())
+                    page.evaluate("__loads = []")
+                    reader.get_by_role("link", name="the top", exact=True).click()
+                    page.wait_for_timeout(300)
+                    self.assertEqual(since(n), [])
+                    self.assertEqual(page.evaluate("__loads"), [])
+                    self.assertTrue(page.evaluate("document.querySelector('#reader').contentWindow.location.hash === '#alpha'"))
+
+                    # Back is unannounced: the page shows at once, no fade begun after its paint.
+                    n = len(log())
+                    page.evaluate("__loads = []")
+                    page.evaluate("history.go(-2)")  # past the #fragment entry too
+                    expect(reader.locator("h1")).to_have_text("Beta")
+                    page.wait_for_function("() => __loads.length === 1")
+                    self.assertEqual(since(n), [])
+                    self.assertEqual(page.evaluate("__loads[0].opacity"), "1")
+                    self.assertEqual(page.evaluate("document.getElementById('reader').getAnimations().length"), 0)
+
+                    # Library: the page leaves, and the home page arrives in its place.
+                    n = len(log())
+                    page.locator(".vault-switch a", has_text="Library").click()
+                    expect(page.locator("#home")).to_be_visible()
+                    page.wait_for_function("() => onyxMotion.log.some(e => e[0] === 'arrive' && e[1] === 'home')")
+                    self.assertEqual(since(n), ["leave:reader", "navigate:about:blank", "arrive:home"])
+                    self.assertEqual(page.evaluate("document.getElementById('reader').getAnimations().length"), 0)
+
+                    # A sidebar row from home: home and the reader leave together, then the page arrives.
+                    n = len(log())
+                    page.evaluate("__loads = []")
+                    page.locator("#tree a.file", has_text="Alpha").click()
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    page.wait_for_function("() => __loads.length === 1")
+                    self.assertEqual(since(n), ["leave:reader", "leave:home", "navigate:Alpha.md", "arrive:reader"])
+                    expect(page.locator("#home")).to_be_hidden()
+                    self.assertEqual(page.evaluate("__loads[0].opacity"), "0")
+                    self.assertTrue(page.locator("#tree a.active[data-path$='Alpha.md']").is_visible())
+
+                    # A modified click is left to the browser (a new window, in the app): the shell does not fade or navigate.
+                    n = len(log())
+                    page.locator("#tree a.file", has_text="Beta").click(modifiers=["Meta" if engine == "webkit" else "Control"])
+                    page.wait_for_timeout(300)
+                    self.assertEqual(since(n), [])
+                    expect(reader.locator("h1")).to_have_text("Alpha")
+                    browser.close()
+
+            # Reduce Motion: the page still fades in, without the rise.
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 1100, "height": 700}, reduced_motion="reduce")
+            page = context.new_page()
+            page.on("pageerror", lambda error: page_errors.append(f"reduced: {error}"))
+            page.goto(f"{self.base_url}/vault", wait_until="networkidle")
+            page.evaluate(WATCH)
+            page.locator("#tree a.file", has_text="Alpha").click()
+            page.wait_for_function("() => __loads.length === 1")
+            loads = page.evaluate("__loads")
+            self.assertEqual(loads[0]["opacity"], "0")
+            self.assertTrue(loads[0]["frames"], "no fade under Reduce Motion")
+            self.assertFalse(any("transform" in f for frames in loads[0]["frames"] for f in frames), "a rise under Reduce Motion")
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_switch_swaps_in_place_without_a_reload(self) -> None:
         # Notes ⇄ Artifacts is one shell: the sidebar stays put (no reload, no "Loading…" between trees), the segment's
         # pill slides across, the reader brings back each vault's last page, and history that crosses vaults brings the

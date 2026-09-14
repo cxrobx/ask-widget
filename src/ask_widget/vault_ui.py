@@ -204,7 +204,12 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
 .foot-btn{{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms}} .foot-btn:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .foot-btn svg{{width:14px;height:14px}}
 main,body.native main{{position:relative;padding:0;overflow:hidden}}
 #reader{{display:block;width:100%;height:100%;border:0;background:transparent}}
-#reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
+/* Motion between pages (the `motion` block in the script): what leaves fades away, what arrives fades in and rises 6 px,
+   as a macOS view swap does. The reader and the home page are driven by script (the reader must be held invisible until
+   its page has loaded); the empty hint and the outline's corner button follow the same curve in CSS. */
+@keyframes arrive{{from{{opacity:0;transform:translateY(6px)}}}}
+#reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none;animation:arrive .22s cubic-bezier(.2,.8,.2,1)}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
+@media(prefers-reduced-motion:reduce){{@keyframes arrive{{from{{opacity:0}}}} #reader-empty{{animation-duration:.12s}}}}
 /* Library's home, in the reader's place while no page is open: open something, what you had open, what you asked. */
 #home{{position:absolute;inset:0;z-index:1;overflow:auto;padding:40px 44px 56px}} body.native #home{{padding-top:52px}} #home[hidden]{{display:none}}
 .home-inner{{max-width:900px;margin:0 auto}} #home h2{{margin:0;color:rgb(var(--faint));font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}}
@@ -272,7 +277,9 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 #outline .h:focus-visible,#outline .tw:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} #outline .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px}}
 .outline-toggle{{position:absolute;top:12px;right:12px;z-index:2;display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:999px;background:rgb(var(--bg-elevated)/.82);color:rgb(var(--secondary));box-shadow:0 6px 18px rgb(0 0 0/.1);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);transition:background-color .15s,color .15s}}
 .outline-toggle:hover,.outline-toggle[aria-expanded=true]{{background:rgb(var(--bg-elevated)/.97);color:rgb(var(--ink))}} .outline-toggle svg{{width:15px;height:15px}} .outline-toggle:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:2px}}
-body.outline-docked .outline-toggle,body.reader-blank .outline-toggle{{display:none}} body.outline-out .outline-toggle{{visibility:hidden}}
+body.outline-docked .outline-toggle{{display:none}} body.outline-out .outline-toggle{{visibility:hidden}}
+/* With no page it fades away, and comes back with the page it belongs to (the `arrive` curve above). */
+.outline-toggle{{animation:arrive .22s cubic-bezier(.2,.8,.2,1)}} body.reader-blank .outline-toggle{{opacity:0;visibility:hidden;pointer-events:none;animation:none}}
 body:not(.outline-docked) #outline-side{{position:fixed;top:8px;right:8px;bottom:8px;z-index:40;width:min(250px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(100% + 16px))}} body.native:not(.outline-docked) #outline-side{{padding-top:40px}}
 body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar)/.96);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
 @media(prefers-reduced-transparency:reduce){{body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
@@ -309,6 +316,39 @@ const VAULTS={vaults_json},GROUPS={groups_json},BOTH=['notes','html']; let HTML,
 function keyOf(k){{return 'askw:vault:'+(k==='notes'?'':k+':')}}
 function setKind(k){{KIND=k;HTML=k==='html';KEY=keyOf(k);VAULT=VAULTS[k];UNIT=VAULT.unit}} setKind(KIND);
 const tree=$('#tree'),reader=$('#reader'),filter=$('#vault-filter'),empty=$('#reader-empty'),home=$('#home'); const TREES={{}};
+// MARK: motion — between pages, and between a page and the home page, as a macOS view swap: what leaves fades away
+// (90 ms, easing in), what arrives fades in and rises 6 px (220 ms, easing out). Reduce Motion fades only, quicker.
+// The reader is an iframe, so nothing can cross-fade its two pages: instead every navigation the shell can see coming
+// (a sidebar row, a home card, a link inside the page, the switch, Open) goes through `navigate`, which fades the reader
+// out FIRST, holds it invisible (fill:forwards) while the page loads, and lets `load` fade the new page in. A navigation
+// it can't see coming — back/forward, a live reload — is left as it is: a fade that starts after the page has painted
+// is a flash, not a transition. `window.onyxMotion.log` says what happened, in order, for the tests.
+const MOTION={{leave:{{duration:90,easing:'cubic-bezier(.4,0,1,1)'}},arrive:{{duration:220,easing:'cubic-bezier(.2,.8,.2,1)'}}}},stillMotion=matchMedia('(prefers-reduced-motion:reduce)');
+window.onyxMotion={{log:[]}}; function noteMotion(what,detail){{const l=window.onyxMotion.log;l.push([what,detail||'']);if(l.length>60)l.shift()}}
+function settle(el){{for(const a of el.getAnimations())a.cancel()}}
+function leave(el){{if(el._leaving)return el._leaving;noteMotion('leave',el.id);settle(el);const still=stillMotion.matches;const a=el.animate([{{opacity:1}},{{opacity:0}}],{{duration:still?60:MOTION.leave.duration,easing:MOTION.leave.easing,fill:'forwards'}});
+return el._leaving=a.finished.catch(()=>{{}}).then(()=>{{el._leaving=null}})}}
+function arrive(el){{noteMotion('arrive',el.id);el._leaving=null;settle(el);const still=stillMotion.matches;el.animate(still?[{{opacity:0}},{{opacity:1}}]:[{{opacity:0,transform:'translateY(6px)'}},{{opacity:1,transform:'none'}}],{{duration:still?120:MOTION.arrive.duration,easing:MOTION.arrive.easing}})}}
+// The home page comes and goes the same way; `showHome(false)` resolves once it is hidden, so a navigation can wait on it.
+let homeSeq=0;
+function showHome(show){{if(show===!home.hidden)return Promise.resolve();const seq=++homeSeq;if(show){{loadHome();home.hidden=false;arrive(home);return Promise.resolve()}}
+return leave(home).then(()=>{{if(seq!==homeSeq)return;home.hidden=true;settle(home)}})}}
+// Only the latest `navigate` lands; `armed` tells the reader's `load` that this page may arrive with the fade. A page
+// that never loads (a server gone away) is shown as it is after eight seconds rather than held invisible.
+let navSeq=0,navTimer,armed=false,navPending=false;
+function navigate(href){{const seq=++navSeq;navPending=true;return Promise.all([leave(reader),showHome(false)]).then(()=>{{if(seq!==navSeq)return;empty.hidden=true;noteMotion('navigate',href);armed=true;reader.src=href;
+clearTimeout(navTimer);navTimer=setTimeout(()=>{{if(armed){{armed=false;navPending=false;settle(reader)}}}},8000)}})}}
+// The reader's `load`: an armed page arrives; any other (back, forward, a reload) shows at once, any hold released.
+function landed(){{const was=armed;armed=false;navPending=false;clearTimeout(navTimer);if(was&&readerPage())arrive(reader);else settle(reader)}}
+// A plain click on a link that would navigate the reader — a sidebar row, a search hit, a home card — goes through
+// `navigate` so the page can leave first. A modified click, or another button, keeps the browser's own behaviour.
+function plainClick(e){{return !e.defaultPrevented&&!e.button&&!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey}}
+document.addEventListener('click',e=>{{const a=e.target.closest&&e.target.closest('a[target=reader]');if(!a||!plainClick(e))return;e.preventDefault();navigate(a.href)}});
+// So does a link inside the page (a wikilink, an embed) that leads to another page of Onyx's own: same origin, /view or
+// /quick, and not merely a #fragment of the page it is on. Bound after the page's own scripts, so theirs answer first.
+function readerClick(e){{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!plainClick(e)||a.hasAttribute('download')||(a.target&&a.target!=='_self'))return;
+let here,u;try{{here=reader.contentWindow.location;u=new URL(a.getAttribute('href'),here.href)}}catch(x){{return}}
+if(u.origin!==location.origin||!/^[/](view|quick)$/.test(u.pathname)||(u.hash&&u.pathname===here.pathname&&u.search===here.search))return;e.preventDefault();navigate(u.href)}}
 function store(k,v){{try{{localStorage.setItem(k,v)}}catch(e){{}}}} function recall(k){{try{{return localStorage.getItem(k)}}catch(e){{return null}}}}
 // Notes remember which folders are OPEN (default shut, the vault is large); Artifacts remembers which are CLOSED (default
 // open, so a project reads at a glance). Library shows those same two trees, and remembers which of its headings is shut.
@@ -431,17 +471,20 @@ function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('
 // History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
 function traversed(){{try{{const n=reader.contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
 // Library rests on its home page, in the reader's place; Notes and Artifacts say what to pick instead.
-function syncOverlays(){{const page=!!readerPage(),lib=KIND==='library',show=lib&&!page;empty.hidden=lib||page;if(show&&home.hidden)loadHome();home.hidden=!show;document.body.classList.toggle('reader-blank',!page)}}
+function syncOverlays(){{const page=!!readerPage(),lib=KIND==='library',show=lib&&!page&&!navPending;empty.hidden=lib||page||navPending;showHome(show);document.body.classList.toggle('reader-blank',!page)}}
 function shellUrl(k,src,folder){{const p=new URLSearchParams();if(k==='html')p.set('vault','html');if(src)p.set('src',src);if(folder)p.set('folder',folder);const q=p.toString();return (k==='library'?'/':'/vault')+(q?'?'+q:'')}}
 function readerFolder(){{try{{return new URLSearchParams(reader.contentWindow.location.search).get('folder')||''}}catch(e){{return ''}}}}
-reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}syncOverlays();outlineLoaded();const src=currentSrc();if(!src){{if(!readerPage()){{history.replaceState(null,'',shellUrl(KIND,''));document.title=VAULT.name}}return}}
-const k=vaultOf(src);if(k&&KIND!=='library'&&k!==KIND&&traversed())switchVault(k,true);highlight(src);history.replaceState(null,'',shellUrl(KIND,src,KIND==='library'&&!k?readerFolder():''));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+VAULT.name;if(k)store(keyOf(k)+'last',src)}});
+reader.addEventListener('load',()=>{{landed();try{{reader.contentWindow.addEventListener('keydown',sideKey);reader.contentDocument.addEventListener('click',readerClick)}}catch(e){{}}syncOverlays();outlineLoaded();const src=currentSrc();if(!src){{if(!readerPage()){{history.replaceState(null,'',shellUrl(KIND,''));document.title=VAULT.name}}return}}
+const k=vaultOf(src);if(k&&KIND!=='library'&&k!==KIND&&traversed())switchVault(k,true);highlight(src);history.replaceState(null,'',shellUrl(KIND,src,KIND==='library'&&!k?readerFolder():''));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+VAULT.name;rememberLast(src)}});
+// The page a vault shows is its last page, the one a switch back brings up. The page the shell opened on can load before
+// its tree does (the two race, a few ms apart), when `vaultOf` can't yet say whose it is: the trees' arrival asks again.
+function rememberLast(src){{const k=vaultOf(src);if(k)store(keyOf(k)+'last',src);return k}}
 // A saved document or conversation, into the reader: by its vault path when it lives in a vault (the tree highlights it,
 // and a page in Artifacts keeps its link's context), else as it was read, with the folder it was read with.
 function itemHref(item,action){{const src=item.source||item.document_source||'',p=new URLSearchParams();let base='/view';
 if(src.startsWith('service://selection/')){{base='/quick';p.set('text',item.selection||'');if(item.folder)p.set('folder',item.folder)}}else{{p.set('src',item.vault_path||src);const folder=item.vault==='notes'?(rootOf('notes')||item.folder):item.vault==='html'?'':item.folder;if(folder)p.set('folder',folder)}}
 if(action){{p.set('history',item.request_id);p.set('history_action',action)}}return base+'?'+p}}
-function openItem(item,action){{if(KIND!=='library'&&(item.vault||'')!==KIND)switchVault('library',true);home.hidden=true;empty.hidden=true;reader.src=itemHref(item,action)}}
+function openItem(item,action){{if(KIND!=='library'&&(item.vault||'')!==KIND)switchVault('library',true);navigate(itemHref(item,action))}}
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
 async function applyFilter(){{const q=filter.value.trim(),k=KIND;if(q.length<2){{renderTree();return}}const lib=k==='library',kinds=lib?BOTH.filter(rootOf):[k];
 try{{const found=await Promise.all(kinds.map(vk=>api('/api/vault/search?vault='+vk+'&q='+encodeURIComponent(q)+(lib?'&limit=25':'')).then(d=>d.items.map(i=>({{...i,k:vk}})))));if(k!==KIND)return;const items=found.flat();hidePeek();NODES.clear();items.forEach(i=>NODES.set(i.path,{{n:i,crumbs:(i.folder||'').split('/').filter(Boolean),k:i.k}}));
@@ -468,7 +511,7 @@ if(own)more.push({{id:'new-folder',label:'New Folder'}});if(entry&&row.tagName==
 if(entry)more.push({{id:pinned?'unpin':'pin',label:pinned?'Unpin':'Pin to Top'}},{{id:'remove',label:'Remove from Artifacts'}});if(more.length)items.push({{separator:true}},...more)}}
 OnyxMenu.open({{items,x,y,label:(d.is_dir?'Folder':vk==='html'?'Page':'Note')+' actions',returnFocus:row,onClose:()=>row.classList.remove('menu-for'),onSelect:id=>rowAction(id,d,row,vk)}});row.classList.add('menu-for')}});
 function copyPath(p){{if(!navigator.clipboard)throw new Error('The clipboard is not available here.');return navigator.clipboard.writeText(p).then(()=>OnyxMenu.toast('Copied '+shortPath(p)))}}
-async function rowAction(id,d,row,vk){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else reader.src=viewHref(d.path,vk)}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:vk,path:d.path,which:id==='reveal'?'real':'link'}})
+async function rowAction(id,d,row,vk){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else navigate(viewHref(d.path,vk))}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:vk,path:d.path,which:id==='reveal'?'real':'link'}})
 else if(id==='new-folder')newFolder(row.parentElement.dataset.rel);else if(id==='rename')renameRow(row);
 else if(id==='pin'||id==='unpin'){{await postJSON('/api/vault/html/pin',{{path:row.dataset.entry,pinned:id==='pin'}});await loadTree()}}
 else if(id==='remove'){{const r=await postJSON('/api/vault/html/remove',{{path:row.dataset.entry}});await loadTree();OnyxMenu.toast(r.removed==='link'?'Removed the link · the original is untouched':'Removed the folder')}}}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
@@ -512,7 +555,7 @@ function remap(from,to){{if(!from||from===to)return;const move=p=>p===from?to:p&
 const f=FOLDS.html;for(const p of [...f]){{const q=move(p);if(q){{f.delete(p);f.add(q)}}}}store(foldKey('html'),JSON.stringify([...f]));
 const lk=keyOf('html')+'last',last=move(recall(lk));if(last)store(lk,last);
 const root=rootOf('html'),dest=recall(DEST_KEY),moved=dest&&move(root+'/'+dest);if(moved)store(DEST_KEY,moved.slice(root.length+1));
-const src=move(currentSrc());if(src){{let hash='';try{{hash=reader.contentWindow.location.hash}}catch(e){{}}reader.src=viewHref(src,'html')+hash}}}}
+const src=move(currentSrc());if(src){{let hash='';try{{hash=reader.contentWindow.location.hash}}catch(e){{}}navigate(viewHref(src,'html')+hash)}}}}
 // New Folder and Rename name a row in place, as Finder does: Return keeps the name, Escape (or nothing typed) puts it back.
 function nameInPlace(slot,initial,save){{const input=document.createElement('input'),was=[...slot.childNodes],held=slot.closest('[draggable]');
 input.className='name-edit';input.value=initial;input.spellcheck=false;input.autocomplete='off';input.setAttribute('aria-label',initial?'New name':'Folder name');if(held)held.draggable=false;slot.replaceChildren(input);let done=false;
@@ -575,29 +618,30 @@ async function loadHome(){{try{{const d=await api('/api/library'),docs=(d.docume
 $('#home-docs').innerHTML=docs.length?docs.map(docCard).join(''):'<div class=home-empty>Documents you open will appear here.</div>';
 $('#home-asks').innerHTML=asks.length?asks.map(askRow).join(''):'<div class=home-empty>Your completed answers will be saved here.</div>'}}catch(e){{$('#home-docs').innerHTML=`<div class=home-empty>${{esc(e.message)}}</div>`}}}}
 $('#home-asks').addEventListener('click',e=>{{const b=e.target.closest('[data-id]');if(b)PANELS.showConversation(b.dataset.id)}}); $('#home-all').onclick=()=>PANELS.openHistory();
-$('#open-form').onsubmit=e=>{{e.preventDefault();let s=$('#open-src').value.trim(),hash='';if(!s)return;const m=s.match(new RegExp('^((?:file://|/|~).*[.](?:html?|md|markdown|txt|pdf))(#[^/]*)$','i'));if(m){{s=m[1];hash=m[2]}}const vk=vaultOf(s),f=$('#open-folder').value.trim();home.hidden=true;reader.src=(vk?viewHref(s,vk):'/view?src='+encodeURIComponent(s)+(f?'&folder='+encodeURIComponent(f):''))+hash;$('#open-src').value=''}};
+$('#open-form').onsubmit=e=>{{e.preventDefault();let s=$('#open-src').value.trim(),hash='';if(!s)return;const m=s.match(new RegExp('^((?:file://|/|~).*[.](?:html?|md|markdown|txt|pdf))(#[^/]*)$','i'));if(m){{s=m[1];hash=m[2]}}const vk=vaultOf(s),f=$('#open-folder').value.trim();navigate((vk?viewHref(s,vk):'/view?src='+encodeURIComponent(s)+(f?'&folder='+encodeURIComponent(f):''))+hash);$('#open-src').value=''}};
 $('#open-folder').oninput=e=>{{$('#open-folder-label').textContent=shortPath(e.target.value.trim())||'the default folder'}};
 home.querySelectorAll('[data-pick]').forEach(b=>b.onclick=async()=>{{const el=$('#'+b.dataset.target);try{{const p=await window.webkit.messageHandlers.askwPick.postMessage({{kind:b.dataset.pick,initial:el.value}});if(p){{el.value=p;el.dispatchEvent(new Event('input'))}}}}catch(e){{OnyxMenu.toast(e.message,'bad')}}}});
 // Library shown again while already there goes home: the reader empties and the home page comes back.
-function goHome(){{if(readerPage())reader.src='about:blank';highlight('');empty.hidden=true;home.hidden=false;loadHome();history.replaceState(null,'','/');document.title=VAULT.name}}
+function goHome(){{highlight('');history.replaceState(null,'','/');document.title=VAULT.name;if(readerPage())navigate('about:blank');else{{empty.hidden=true;showHome(true)}}}}
 $('#open-settings').onclick=()=>PANELS.openSettings(); $('#open-history').onclick=()=>PANELS.openHistory();
 tree.addEventListener('click',e=>{{const a=e.target.closest('[data-settings]');if(a){{e.preventDefault();PANELS.openSettings(a.dataset.settings)}}}});
 // MARK: switch — Library ⇄ Notes ⇄ Artifacts in place. The pill slides and the width glides (CSS, off the body's kind
 // class), the list swaps from TREES with a quick fade and is fetched again behind it, and the reader brings back that
 // vault's last page, or, for Library, the home page. `follow` means the reader has already moved (history, or a saved
 // conversation opening): then only the sidebar does. A modified click, or a page without script, still loads the link.
-const switchLinks=[...document.querySelectorAll('.vault-switch a')],treeScroll={{}},stillMotion=matchMedia('(prefers-reduced-motion:reduce)');
-function switchVault(k,follow){{if(!VAULTS[k])return;if(k===KIND){{if(k==='library'&&!follow)goHome();return}}
+const switchLinks=[...document.querySelectorAll('.vault-switch a')],treeScroll={{}},ORDER={{library:0,notes:1,html:2}};
+function switchVault(k,follow){{if(!VAULTS[k])return;if(k===KIND){{if(k==='library'&&!follow)goHome();return}}const from=ORDER[KIND];
 if(window.OnyxMenu)OnyxMenu.close();menuSeq++;hidePeek();clearTimeout(filterTimer);filter.value='';treeScroll[KIND]=tree.scrollTop;
 setKind(k);document.body.classList.remove('kind-library','kind-notes','kind-html');document.body.classList.add('kind-'+k);
 for(const a of switchLinks){{const on=a.dataset.kind===k;a.classList.toggle('active',on);if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')}}
 $('.brand-name').textContent=VAULT.name;filter.placeholder='Filter '+VAULT.units+'… (press /)';filter.setAttribute('aria-label','Filter '+VAULT.units);tree.setAttribute('aria-label',VAULT.tree);$('#empty-hint').textContent=VAULT.empty;
 $('#add-panel').hidden=true;$('#add-toggle').setAttribute('aria-expanded','false');
 const cached=(k==='library'?BOTH:[k]).every(x=>TREES[x]);if(cached){{showTree();tree.scrollTop=treeScroll[k]||0;highlight(currentSrc())}}else tree.innerHTML='<div class=none>Loading…</div>';
-if(!stillMotion.matches)tree.animate([{{opacity:.4}},{{opacity:1}}],{{duration:120,easing:'ease-out'}});
+// The list comes in from the side the pill went to, as a segmented control's pages do; Reduce Motion fades it in.
+{{const dx=Math.sign(ORDER[k]-from)*10;tree.animate(stillMotion.matches?[{{opacity:0}},{{opacity:1}}]:[{{opacity:0,transform:`translateX(${{dx}}px)`}},{{opacity:1,transform:'none'}}],{{duration:stillMotion.matches?120:MOTION.arrive.duration,easing:MOTION.arrive.easing}})}}
 const fresh=loadTree();if(follow){{syncOverlays();return}}if(k==='library'){{goHome();return}}
 home.hidden=true;history.replaceState(null,'',shellUrl(k,''));document.title=VAULT.name;
-(cached?Promise.resolve():fresh).then(()=>{{if(k!==KIND)return;const last=rootOf(k)?recall(KEY+'last'):null;empty.hidden=!!last;if(last)reader.src=viewHref(last,k);else if(readerPage())reader.src='about:blank'}})}}
+(cached?Promise.resolve():fresh).then(()=>{{if(k!==KIND)return;const last=rootOf(k)?recall(KEY+'last'):null;if(last)navigate(viewHref(last,k));else if(readerPage())navigate('about:blank');else empty.hidden=false}})}}
 for(const a of switchLinks)a.addEventListener('click',e=>{{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();switchVault(a.dataset.kind)}});
 // The app menu comes through these: File ▸ Library / Vault / Artifacts switch in place (and load the page when it isn't
 // this one), and Settings… (⌘,) and Recent Conversations (⌘Y) open their dialogs.
@@ -608,8 +652,10 @@ if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList
 // The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.
 document.body.classList.add('outline-still');applyOutlinePin();requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('outline-still')));
 // Both trees load up front: Library draws them together, and the first switch is as instant as the rest.
+// The page the shell opens on arrives too: held invisible from the first frame, shown by its `load`.
+if(reader.getAttribute('src')!=='about:blank'){{armed=true;navPending=true;reader.animate([{{opacity:0}},{{opacity:0}}],{{duration:1,fill:'forwards'}});navTimer=setTimeout(()=>{{if(armed){{armed=false;navPending=false;settle(reader)}}}},8000)}}
 const FIRST=KIND; if(FIRST==='library'&&!INITIAL_SRC)loadHome();
-(FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)reader.src=viewHref(last,FIRST)}});
+(FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);{{const s=currentSrc();if(s){{rememberLast(s);highlight(s)}}}}if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)navigate(viewHref(last,FIRST))}});
 syncAppearance();
 // A fragment names a dialog to open: #settings, #diagnostics, #history — which is where the old launcher's links land.
 {{const h=location.hash.slice(1);if(/^(settings|diagnostics|history)$/.test(h)){{history.replaceState(null,'',location.pathname+location.search);if(h==='history')PANELS.openHistory();else PANELS.openSettings(h==='diagnostics'?'diagnostics':'')}}}}
