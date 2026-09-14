@@ -21,13 +21,12 @@ from .claude_runner import (
 from .providers import find_codex, subscription_environment
 
 
-def build_cmd(folder: Path, model: str, effort: str) -> list[str]:
+def build_cmd(folder: Path, model: str, effort: str, web: bool = True) -> list[str]:
     codex = find_codex() or "codex"
     return [
         codex,
         "-a",
         "never",
-        "--search",
         "exec",
         "--json",
         "--ephemeral",
@@ -52,6 +51,9 @@ def build_cmd(folder: Path, model: str, effort: str) -> list[str]:
         model,
         "-c",
         f'model_reasoning_effort="{effort}"',
+        # Left unset, Codex still searches a cached index, so off is spelled out.
+        "-c",
+        f'web_search="{"live" if web else "disabled"}"',
         "-C",
         str(folder),
         "-",
@@ -72,11 +74,12 @@ async def stream_answer(
     append_system: str,
     *,
     effort: str = "medium",
+    web: bool = True,
     document_source: str | None = None,
     first_activity_timeout: float = FIRST_ACTIVITY_TIMEOUT,
     stream_timeout: float = STREAM_TIMEOUT,
 ) -> AsyncIterator[str]:
-    cmd = build_cmd(folder, model, effort)
+    cmd = build_cmd(folder, model, effort, web)
     started = time.monotonic()
     try:
         proc = await asyncio.create_subprocess_exec(

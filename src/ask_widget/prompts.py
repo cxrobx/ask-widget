@@ -15,39 +15,50 @@ SHARED_PREAMBLE = (
     "highlighted in a document they are reading. A context folder's CLAUDE.md and "
     "files are available to you through the Read, Grep, and Glob tools. Be concise "
     "and answer in plain Markdown (no raw HTML)."
+)
+
+# Settings → Answers → "Check outside facts on the web" picks one of these two.
+CHECK_ON_THE_WEB = (
     " Where you have them, you can also search the web, fetch a web page, or load "
     "a relevant skill. The folder is the source for anything about the document "
     "itself. Before you state a fact from outside it that could be wrong or out of "
     "date (how an API, library, or product behaves; versions, prices, dates, "
     "recent events), check it with one of those tools and cite the URL or skill "
-    "you used. Settled general knowledge needs no check. Never say you are "
-    "answering from memory, and never tell the reader to check something "
-    "themselves: do the check. Don't announce the checks either; the citations "
-    "show them. If a check comes up empty, say which specific point you could "
-    "not confirm."
+    "you used. Settled general knowledge needs no check."
+)
+
+CHECK_OFFLINE = (
+    " Web lookups are off for speed, so don't try to reach the web, directly or "
+    "through a subagent. The folder is the source for anything about the document "
+    "itself; when a relevant skill covers a fact from outside it, check it there "
+    "and cite the skill."
+)
+
+NO_HEDGING = (
+    " Never say you are answering from memory, and never tell the reader to check "
+    "something themselves: do the check. Don't announce the checks either; the "
+    "citations show them. If a check comes up empty, say which specific point you "
+    "could not confirm."
 )
 
 ELI5_APPEND = (
-    SHARED_PREAMBLE
-    + " Explain the highlighted passage in the simplest possible terms. A short, "
+    " Explain the highlighted passage in the simplest possible terms. A short, "
     "concrete analogy is welcome. Under 120 words, no preamble — start with the "
     "explanation."
 )
 
 PROVE_APPEND = (
-    SHARED_PREAMBLE
-    + " You MUST use Grep/Glob/Read to look for evidence in the context folder "
+    " You MUST use Grep/Glob/Read to look for evidence in the context folder "
     "before answering — rely on the files, not your memory. If the files cannot "
-    "settle a claim about the outside world, check it on the web as well. Start "
-    "with a one-line verdict (one of: Supported / Partially supported / Not "
-    "supported / No evidence found), then give bullet points, each citing an exact "
-    "path/to/file (with line numbers where useful) or the URL the evidence came "
-    "from. Under 200 words."
+    "settle a claim about the outside world, check it with the other tools you "
+    "have. Start with a one-line verdict (one of: Supported / Partially supported "
+    "/ Not supported / No evidence found), then give bullet points, each citing an "
+    "exact path/to/file (with line numbers where useful), URL, or skill. Under 200 "
+    "words."
 )
 
 ASK_APPEND = (
-    SHARED_PREAMBLE
-    + " Answer the user's question directly and concretely. Cite folder file paths "
+    " Answer the user's question directly and concretely. Cite folder file paths "
     "when you rely on them."
 )
 
@@ -60,8 +71,14 @@ _STYLE_APPEND = {
 }
 
 
-def append_system_for(action: str, response_style: str = "concise") -> str:
-    return _APPENDS.get(action, SHARED_PREAMBLE) + _STYLE_APPEND.get(response_style, "")
+def append_system_for(action: str, response_style: str = "concise", web: bool = True) -> str:
+    return (
+        SHARED_PREAMBLE
+        + (CHECK_ON_THE_WEB if web else CHECK_OFFLINE)
+        + NO_HEDGING
+        + _APPENDS.get(action, "")
+        + _STYLE_APPEND.get(response_style, "")
+    )
 
 
 _HANDOFF_LABELS = {
@@ -165,8 +182,8 @@ def build_user_prompt(
     elif action == "prove":
         blocks.append(
             "Task: Fact-check the claim(s) in the highlighted passage against the "
-            "context folder. Find supporting or contradicting evidence in the files, "
-            "and on the web for anything the files cannot settle."
+            "context folder. Find supporting or contradicting evidence in the files "
+            "first, then check anything they cannot settle."
         )
     elif action == "ask":
         q = (question or "").strip()

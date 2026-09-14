@@ -50,12 +50,16 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+_WEB_TOOLS = ("WebSearch", "WebFetch")
+
+
 def build_cmd(
     prompt: str,
     folder: Path,
     model: str,
     append_system: str,
     effort: str = "medium",
+    web: bool = True,
 ) -> list[str]:
     return [
         find_claude() or "claude",
@@ -67,18 +71,22 @@ def build_cmd(
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        # No MCP servers. The user's own settings pre-allow many MCP tools (a live
+        # browser, mail, a web fetch) that would otherwise reach an answer the
+        # allowlist below never names, and web lookups off would not be off.
+        "--strict-mcp-config",
         "--allowedTools",
         "Read",
         "Grep",
         "Glob",
-        "WebSearch",
-        "WebFetch",
         "Skill",
+        *(_WEB_TOOLS if web else ()),
         "--disallowedTools",
         "Bash",
         "Edit",
         "Write",
         "NotebookEdit",
+        *(() if web else _WEB_TOOLS),
         "--model",
         model,
         "--effort",
@@ -114,6 +122,7 @@ async def stream_answer(
     append_system: str,
     *,
     effort: str = "medium",
+    web: bool = True,
     document_source: str | None = None,
     first_activity_timeout: float = FIRST_ACTIVITY_TIMEOUT,
     stream_timeout: float = STREAM_TIMEOUT,
@@ -123,7 +132,7 @@ async def stream_answer(
     Always terminates with exactly one of ``done`` or ``error`` so the widget's
     reader never hangs in "Thinking…".
     """
-    cmd = build_cmd(prompt, folder, model, append_system, effort)
+    cmd = build_cmd(prompt, folder, model, append_system, effort, web)
     started = time.monotonic()
     try:
         proc = await asyncio.create_subprocess_exec(

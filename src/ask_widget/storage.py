@@ -28,6 +28,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "claude_effort": "medium",
     "codex_effort": "low",
     "response_style": "concise",
+    # Answers may search and read the web to check an outside fact; off is faster.
+    "web_lookups": True,
     "cache_ttl_hours": 168,
     "cache_max_entries": 100,
     "history_enabled": True,
@@ -285,7 +287,13 @@ class Storage:
                 if value < lower or value > upper:
                     raise ValueError(f"{key} must be between {lower} and {upper}.")
                 clean[key] = value
-        for key in ("history_enabled", "allow_private_remote", "markdown_follow_obsidian", "sidebar_follow_obsidian"):
+        for key in (
+            "history_enabled",
+            "allow_private_remote",
+            "markdown_follow_obsidian",
+            "sidebar_follow_obsidian",
+            "web_lookups",
+        ):
             if key in patch:
                 clean[key] = bool(patch[key])
         if "allowed_origins" in patch:

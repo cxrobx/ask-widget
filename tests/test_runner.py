@@ -53,17 +53,27 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command[command.index("--model") + 1], "sonnet")
         self.assertEqual(command[command.index("--effort") + 1], "xhigh")
 
-    async def test_claude_command_allows_web_checks_but_no_writes(self) -> None:
-        command = build_claude_cmd("prompt", Path("/tmp/context"), "sonnet", "system")
-        allowed = command[command.index("--allowedTools") + 1 : command.index("--disallowedTools")]
-        denied = command[command.index("--disallowedTools") + 1 : command.index("--model")]
-        self.assertEqual(set(allowed), {"Read", "Grep", "Glob", "WebSearch", "WebFetch", "Skill"})
-        self.assertLessEqual({"Bash", "Edit", "Write", "NotebookEdit"}, set(denied))
+    async def test_claude_command_gates_web_tools_and_never_allows_writes(self) -> None:
+        web_tools = {"WebSearch", "WebFetch"}
+        for web in (True, False):
+            with self.subTest(web=web):
+                command = build_claude_cmd("prompt", Path("/tmp/context"), "sonnet", "system", web=web)
+                allowed = set(command[command.index("--allowedTools") + 1 : command.index("--disallowedTools")])
+                denied = set(command[command.index("--disallowedTools") + 1 : command.index("--model")])
+                self.assertLessEqual({"Read", "Grep", "Glob", "Skill"}, allowed)
+                self.assertLessEqual({"Bash", "Edit", "Write", "NotebookEdit"}, denied)
+                self.assertEqual(web_tools <= allowed, web)
+                self.assertEqual(web_tools <= denied, not web)
+                # Without it, MCP tools the user's settings pre-allow reach the answer.
+                self.assertIn("--strict-mcp-config", command)
 
-    async def test_codex_command_enables_live_web_search(self) -> None:
-        command = build_codex_cmd(Path("/tmp/context"), "gpt-5.6-sol", "low")
-        # --search belongs to the top-level codex command, as -a does.
-        self.assertLess(command.index("--search"), command.index("exec"))
+    async def test_codex_command_sets_web_search_both_ways(self) -> None:
+        # Unset, Codex still searches a cached index, so off has to be explicit.
+        for web, mode in ((True, "live"), (False, "disabled")):
+            with self.subTest(web=web):
+                command = build_codex_cmd(Path("/tmp/context"), "gpt-5.6-sol", "low", web=web)
+                self.assertIn(f'web_search="{mode}"', command)
+                self.assertNotIn("--search", command)
 
     async def test_stream_parses_tokens_tool_traces_citations_and_done(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

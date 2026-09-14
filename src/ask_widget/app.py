@@ -1542,7 +1542,8 @@ def create_app(config: AppConfig) -> FastAPI:
             document_source=document_source,
             document_page=document_page,
         )
-        append_system = append_system_for(action, settings["response_style"])
+        web = bool(settings["web_lookups"])
+        append_system = append_system_for(action, settings["response_style"], web)
         sem: asyncio.Semaphore = app.state.sem
         request_id = uuid.uuid4().hex
         started = time.monotonic()
@@ -1614,6 +1615,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     model,
                     append_system,
                     effort=effort,
+                    web=web,
                     document_source=document_source,
                     first_activity_timeout=float(settings["first_activity_timeout"]),
                     stream_timeout=float(settings["request_timeout"]),

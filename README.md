@@ -421,11 +421,15 @@ deliberately narrow:
    root unless the explicit `--allow-any` escape hatch is used.
 6. Claude is restricted to Read, Grep, and Glob on the folder, plus WebSearch,
    WebFetch, and skills so an answer can check an outside fact before stating
-   it; Bash, Edit, and Write stay denied. Codex runs headlessly with a read-only
-   sandbox, live web search, no approvals, no user rules, and optional
-   tool/plugin features disabled. Web access has one cost: a document's own
-   text could try to steer a fetch, and whatever goes into its URL, to an
-   outside site. Nothing on disk can be changed.
+   it; Bash, Edit, and Write stay denied. No MCP servers load
+   (`--strict-mcp-config`), so MCP tools your own Claude settings pre-allow
+   never reach an answer. Codex runs headlessly with a read-only sandbox, live
+   web search, no approvals, no user rules, and optional tool/plugin features
+   disabled. Web access has one cost: a document's own text could try to steer
+   a fetch, and whatever goes into its URL, to an outside site. Settings →
+   Answers → *Check outside facts on the web* turns it off for both providers,
+   Codex's cached search included, for faster answers from the folder and
+   skills only.
 7. Remote fetches reject credentials, non-HTML content, responses over 12 MB,
    and private, loopback, link-local, reserved, or multicast addresses unless
    private URLs are explicitly enabled.

@@ -19,6 +19,7 @@ async def stream_answer(
     append_system: str,
     *,
     effort: str = "medium",
+    web: bool = True,
     document_source: str | None = None,
     first_activity_timeout: float,
     stream_timeout: float,
@@ -47,6 +48,7 @@ async def stream_answer(
         "stream_timeout": stream_timeout,
     }
     kwargs["effort"] = effort
+    kwargs["web"] = web
     async for chunk in implementation(prompt, folder, model, append_system, **kwargs):
         yield chunk
 

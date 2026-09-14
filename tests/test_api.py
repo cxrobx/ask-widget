@@ -184,6 +184,33 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["id"] for item in response.json()["providers"]], ["claude", "codex"])
 
+    def test_web_lookups_setting_reaches_the_provider_run(self) -> None:
+        seen: dict = {}
+
+        async def fake_stream(*args, **kwargs):
+            seen["append_system"] = args[4]
+            seen["web"] = kwargs.get("web")
+            yield _sse("token", {"text": "Fine."})
+            yield _sse("done", {"elapsed_ms": 1})
+
+        body = {
+            "token": self.config.token,
+            "action": "eli5",
+            "selection": "The server is local.",
+            "folder": str(self.root),
+        }
+        self.assertIs(self.client.get("/api/settings").json()["settings"]["web_lookups"], True)
+        for enabled in (False, True):
+            with self.subTest(web_lookups=enabled):
+                saved = self.client.post(
+                    "/api/settings", json={"token": self.config.token, "settings": {"web_lookups": enabled}}
+                )
+                self.assertIs(saved.json()["settings"]["web_lookups"], enabled)
+                with patch("ask_widget.app.stream_answer", fake_stream):
+                    self.client.post("/ask", json=body)
+                self.assertIs(seen["web"], enabled)
+                self.assertEqual("search the web" in seen["append_system"], enabled)
+
     def test_stream_is_traced_and_saved(self) -> None:
         async def fake_stream(*args, **kwargs):
             yield _sse("tool_trace", {"tool": "Read", "input": {"file_path": "src/app.py"}})
