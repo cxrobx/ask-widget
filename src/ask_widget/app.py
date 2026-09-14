@@ -38,7 +38,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .runner import _sse, stream_answer
-from .citations import open_source
+from .citations import open_source, reader_target
 from .config import AppConfig
 from .diagnostics import build_diagnostics
 from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
@@ -1385,6 +1385,19 @@ def create_app(config: AppConfig) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{filename}-notes.md"'},
         )
 
+    def _reader_href(path: Path, context: Path | None) -> str:
+        """The reader URL a cited file opens at: its row when a vault lists it, so the sidebar highlights it and it
+        reads with that vault's context (as a Finder open does); otherwise the file itself, in the answer's context."""
+        params = {"src": str(path), **({"folder": str(context)} if context is not None else {})}
+        for kind in ("notes", "html"):
+            root = _vault_root(app, kind)
+            row = app.state.vault.get(root, kind).by_real(path) if root is not None else None
+            if row is not None:
+                # As the shell's viewHref reads a row: a note with its vault as the folder, a page with its own.
+                params = {"src": str(row.path), **({"folder": str(root)} if kind == "notes" else {})}
+                break
+        return "/view?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote, safe="/")
+
     @app.post("/api/open-source")
     async def open_source_api(request: Request):
         if denied := api_forbidden(request):
@@ -1402,12 +1415,20 @@ def create_app(config: AppConfig) -> FastAPI:
         if not inside_folder and not known_document:
             return JSONResponse({"ok": False, "error": "source is outside the active context"}, status_code=403)
         try:
-            await asyncio.to_thread(
-                open_source,
-                path,
-                line=int(body["line"]) if body.get("line") else None,
-                page=int(body["page"]) if body.get("page") else None,
-            )
+            line = int(body["line"]) if body.get("line") else None
+            page = int(body["page"]) if body.get("page") else None
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "invalid line or page"}, status_code=400)
+        if body.get("reader") and path.suffix.lower() in viewer.LOCAL_DOCUMENT_EXTENSIONS:
+            # A page or note is read in Onyx, at the cited passage: say where, and the widget goes there. Code, which
+            # the reader doesn't show, still opens in the editor below.
+            if not path.is_file():
+                return JSONResponse({"ok": False, "error": f"Source no longer exists: {path}"}, status_code=400)
+            href = await asyncio.to_thread(_reader_href, path, folder)
+            target = await asyncio.to_thread(reader_target, path, line=line, page=page)
+            return JSONResponse({"ok": True, "view": href, **target}, headers=cors(request.headers.get("origin")))
+        try:
+            await asyncio.to_thread(open_source, path, line=line, page=page)
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         return JSONResponse({"ok": True}, headers=cors(request.headers.get("origin")))

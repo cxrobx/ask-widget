@@ -23,6 +23,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from ask_widget import search
 from ask_widget.app import create_app
+from ask_widget.citations import extract_citations
 from ask_widget.config import AppConfig
 from ask_widget.launcher_ui import glass_alphas
 from ask_widget.runner import _sse
@@ -859,6 +860,103 @@ class BrowserSmokeTests(unittest.TestCase):
             expect(panel.locator(".askw-a")).to_have_count(2)
             self.assertTrue(pill.evaluate(under_newest))
             expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_evidence_opens_in_the_reader_at_its_passage(self) -> None:
+        # Evidence opened VS Code on a page's raw HTML. A cited page now reads in Onyx at the cited passage: on this
+        # page in place (the answer stays open, a folded claim table opens), another page by navigating the reader.
+        # Both engines; the app is WebKit.
+        for engine in ("chromium", "webkit"):
+            with self.subTest(engine=engine):
+                self._evidence_lands_on_its_passage(engine)
+
+    def _evidence_lands_on_its_passage(self, engine: str) -> None:
+        learnings = self.root / f"learnings-{engine}"
+        (learnings / "guides").mkdir(parents=True)
+        filler = "\n".join(f"<p>{index}. Filler prose standing in for the guide around its claims.</p>" for index in range(60))
+        guide = learnings / "guides" / "trace.html"
+        guide.write_text(
+            "<!doctype html><html><head><title>Reading the trace</title></head><body><main>\n"
+            "<p>Select this opening passage to ask about it.</p>\n"
+            f"{filler}\n"
+            '<section id="sources"><details><summary>Show the claim table</summary><table>\n'
+            "<tr><td>rtt-05</td><td>Streaming uses block deltas, then message_stop.</td></tr>\n"
+            "</table></details></section>\n"
+            f"{filler}\n</main></body></html>\n",
+            encoding="utf-8",
+        )
+        other = learnings / "guides" / "harness.html"
+        other.write_text(
+            "<!doctype html><html><head><title>Who holds the plan</title></head><body><main>\n"
+            f"{filler}\n"
+            '<p id="plan">The harness keeps the plan between turns, not the model.</p>\n'
+            f"{filler}\n</main></body></html>\n",
+            encoding="utf-8",
+        )
+        vault = self.root / f"Artifacts-{engine}"
+        vault.mkdir()
+        (vault / "Architect").symlink_to(learnings, target_is_directory=True)
+        self.app.state.storage.update_settings({"html_vault_root": str(vault)}, model_default="sonnet")
+
+        def line_of(path: Path, text: str) -> int:
+            return next(number for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if text in line)
+
+        claim, plan = line_of(guide, "rtt-05"), line_of(other, 'id="plan"')
+        answer = f"Claim rtt-05 in `guides/trace.html` (line {claim}); the plan is in `guides/harness.html` (line {plan})."
+        items = extract_citations(answer, learnings)
+        # Both pages move on after the answer, as the real guide did: lines shift above the cited passages, which the
+        # evidence must still find by their words.
+        for moved in (guide, other):
+            moved.write_text(moved.read_text(encoding="utf-8").replace("<main>\n", "<main>\n" + "<p>Added after the answer.</p>\n" * 40, 1), encoding="utf-8")
+
+        async def cited_stream(*args, **kwargs):
+            yield _sse("token", {"text": answer})
+            yield _sse("citations", {"items": items})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        # A real box on screen: an element inside a closed <details> measures 0×0 at the top, which is not "in view".
+        in_view = "el => { const r = el.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight; }"
+        page_errors: list[str] = []
+        with patch("ask_widget.app.stream_answer", cited_stream), sync_playwright() as playwright:
+            browser = getattr(playwright, engine).launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 760})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            link = vault / "Architect" / "guides" / "trace.html"
+            page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(link))}", wait_until="networkidle")
+            reader = page.frame_locator("iframe[name=reader]")
+            opening = reader.locator("main p").first
+            opening.select_text()
+            opening.dispatch_event("mouseup", {"button": 0})
+            reader.get_by_role("button", name="Ask about the selected text").click()
+            reader.get_by_role("button", name="Ask a question…").click()
+            reader.get_by_label("Question about the highlighted text").fill("Where is the claim?")
+            reader.get_by_role("button", name="Go", exact=True).click()
+
+            panel = reader.get_by_role("dialog", name="Onyx answer")
+            cards = panel.locator(".askw-citation")
+            expect(cards).to_have_count(2, timeout=15000)
+            # The preview is the passage's words, not the page's markup.
+            cards.first.click()
+            expect(cards.first.locator("pre")).to_have_text("rtt-05 Streaming uses block deltas, then message_stop.")
+
+            # Evidence on this page lands in place: the folded table opens, and the answer stays open beside it.
+            cards.first.click()
+            row = reader.locator("tr", has_text="rtt-05")
+            expect(row).to_have_class(re.compile("askw-evidence-hit"))
+            self.assertTrue(reader.locator("details").evaluate("d => d.open"))
+            self.assertTrue(row.evaluate(in_view))
+            expect(panel).to_be_visible()
+
+            # Evidence on another page navigates the reader there, lights its row in the sidebar, and lands on it.
+            cards.nth(1).click()
+            cards.nth(1).click()
+            page.wait_for_function("() => location.href.includes('harness.html')")
+            page.locator("#tree a.active[data-path$='harness.html']").wait_for()
+            passage = reader.locator("#plan")
+            expect(passage).to_have_class(re.compile("askw-evidence-hit"))
+            self.assertTrue(passage.evaluate(in_view))
             browser.close()
 
         self.assertEqual(page_errors, [])

@@ -552,6 +552,47 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertIn(f'src="/view?{expected.replace("&", "&amp;")}"', page.text)
         self.assertIn("<section id=home aria-label=\"Library\">", self.client.get("/").text)  # nothing open: home
 
+    def test_evidence_opens_in_the_reader_as_its_row_at_the_cited_passage(self) -> None:
+        # An answer cites the real file; the reader opens it as its row in Artifacts, at the words on the cited line.
+        real = self.guide / "index.html"
+        real.write_text(
+            "<html><head><title>Who holds the plan</title></head><body>\n"
+            '<section id="predict">\n'
+            "<p>Before you read.</p>\n"
+            "</section>\n"
+            '<details id="sources"><summary>Claims</summary><table>\n'
+            "<tr><td>wh-01</td><td>The harness holds the plan &amp; the model reads it.</td></tr>\n"
+            "</table></details></body></html>\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self.client.get("/view", params={"src": str(self.page)}).status_code, 200)  # a known document
+        note = self.context / "notes.md"
+        note.write_text("# Notes\n\n- The **plan** lives with the [harness](https://example.com), not the model.\n", encoding="utf-8")
+        code = self.context / "harness.py"
+        code.write_text("plan = []\n", encoding="utf-8")
+        with patch("ask_widget.app.open_source") as opened:
+            reply = self.post("/api/open-source", {"path": str(real), "line": 6, "reader": True}).json()
+            expected = urllib.parse.urlencode({"src": str(self.page)}, quote_via=urllib.parse.quote, safe="/")
+            self.assertEqual(reply["view"], f"/view?{expected}")  # the link's own context, as the sidebar opens it
+            self.assertEqual((reply["text"], reply["anchor"]), ("wh-01 The harness holds the plan & the model reads it.", "sources"))
+
+            # A note in neither vault reads in the answer's context.
+            reply = self.post("/api/open-source", {"path": str(note), "line": 3, "folder": str(self.context), "reader": True}).json()
+            expected = urllib.parse.urlencode({"src": str(note), "folder": str(self.context)}, quote_via=urllib.parse.quote, safe="/")
+            self.assertEqual(reply["view"], f"/view?{expected}")
+            self.assertEqual((reply["text"], reply["anchor"]), ("The plan lives with the harness, not the model.", None))
+            opened.assert_not_called()
+
+            # Code has no reader page: it still opens in the editor, and the reply sends the widget nowhere.
+            reply = self.post("/api/open-source", {"path": str(code), "line": 1, "folder": str(self.context), "reader": True}).json()
+            self.assertEqual(reply, {"ok": True})
+            opened.assert_called_once_with(code, line=1, page=None)
+
+            # Without the reader flag (the Obsidian plugin), a page still goes to the editor as before.
+            opened.reset_mock()
+            self.assertEqual(self.post("/api/open-source", {"path": str(real), "line": 6}).json(), {"ok": True})
+            opened.assert_called_once_with(real, line=6, page=None)
+
     def test_reader_uses_the_real_folder_behind_the_link_when_it_is_allowed(self) -> None:
         # Not yet an allowed root: the reader falls back to the default folder.
         before = self.client.get("/view", params={"src": str(self.page)})

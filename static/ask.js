@@ -116,6 +116,9 @@
     '.askw-citations-title{margin:0 0 7px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#78716c;}',
     '.askw-citation{display:block;width:100%;margin:5px 0;padding:7px 9px;border:1px solid var(--askw-line);border-radius:7px;background:rgba(255,255,255,.62);color:#2c67c5;text-align:left;font:inherit;font-size:11.5px;cursor:pointer;}',
     '.askw-citation:hover{background:#fff}.askw-citation pre{display:none;margin:7px 0 0;white-space:pre-wrap;color:#5d5d5d;background:#f7f7f7;padding:7px;font-size:10px}.askw-citation.expanded pre{display:block}',
+    // The passage a piece of evidence lands on, lit for a moment. It is the page's own element, not one of Onyx's.
+    '@keyframes askw-evidence{0%,45%{background-color:rgba(250,204,21,.34)}100%{background-color:rgba(250,204,21,0)}}',
+    '.askw-evidence-hit{animation:askw-evidence 1.8s ease-out;}',
     '.askw-foot{display:flex;justify-content:flex-end;gap:8px;padding:8px 13px;border-top:1px solid var(--askw-soft);background:rgba(255,255,255,.22);flex:0 0 auto;}',
     '.askw-foot button{background:rgba(255,255,255,.78);border:1px solid var(--askw-line);border-radius:7px;padding:5px 11px;font:inherit;font-size:12px;color:#5d5d5d;cursor:pointer;}',
     '.askw-foot button:hover{background:#fff;color:#0d0d0d;}',
@@ -1285,14 +1288,107 @@
       button.innerHTML = '<strong>' + esc(item.label || item.path) + '</strong>' + (item.snippet ? '<pre>' + esc(item.snippet) + '</pre>' : '');
       button.addEventListener('click', function () {
         if (item.snippet && !button.classList.contains('expanded')) { button.classList.add('expanded'); return; }
-        fetch(SERVER + '/api/open-source', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: TOKEN, path: item.path, line: item.line, page: item.page, folder: folder })
-        }).then(function (r) { return r.json(); }).then(function (d) { if (!d.ok) toast(d.error || 'Could not open source'); }).catch(function () { toast('Could not open source'); });
+        openEvidence(item);
       });
       box.appendChild(button);
     });
     panelBody.appendChild(box);
+  }
+
+  // ============================================================ evidence
+  // A cited page or note opens in Onyx's reader at the cited passage, not as source in an editor (code still does).
+  // The service says where: the row a vault lists the file as, and the words at the cited line. Evidence on this page
+  // lands in place, the answer still open beside it; another page is navigated to and lands as it loads, the target
+  // riding along in sessionStorage, so the URL carries no hash for the page's own scripts to trip on.
+  var LAND_KEY = 'askw:land';
+  var pendingLanding = null;
+  var flashTimer = 0, flashEl = null;
+  function openEvidence(item) {
+    fetch(SERVER + '/api/open-source', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, path: item.path, line: item.line, page: item.page, folder: folder, reader: true })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { toast(d.error || 'Could not open source'); return; }
+      if (!d.view) return;  // code: the editor has it
+      // The words kept with the answer come first: a page edited since has moved its lines, not its words. The
+      // service's reading of the line as it stands now is for answers saved before evidence kept them.
+      var target = { view: d.view, text: item.text || d.text || '', anchor: item.anchor || d.anchor || '', page: d.page || null, at: Date.now() };
+      if (item.path === documentSource()) {
+        if (!target.text && !target.anchor && !target.page) toast('This is the page you are reading.');
+        else if (!landOn(target)) toast('Could not find that passage on this page.');
+        return;
+      }
+      if (location.origin !== SERVER) {
+        window.open(SERVER + d.view + (target.anchor ? '#' + encodeURIComponent(target.anchor) : ''), '_blank', 'noopener');
+        return;
+      }
+      try { sessionStorage.setItem(LAND_KEY, JSON.stringify(target)); } catch (e) {}
+      location.href = SERVER + d.view;
+    }).catch(function () { toast('Could not open source'); });
+  }
+  function letters(s) { return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''); }
+  var UNREAD = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, NOSCRIPT: 1 };
+  // The innermost element holding the cited words, compared on letters and digits alone, so the spaces a tag leaves,
+  // curly quotes and a note's **marks** can't split them. Onyx's own panels, which may quote the passage, don't count.
+  function findPassage(text) {
+    var needle = letters(text).slice(0, 48), el = document.body, found = null;
+    if (needle.length < 8) return null;
+    for (;;) {
+      var next = null;
+      for (var c = el.firstElementChild; c && !next; c = c.nextElementSibling) {
+        if (!UNREAD[c.tagName] && !c.classList.contains('askw-root') && letters(c.textContent).indexOf(needle) >= 0) next = c;
+      }
+      if (!next) return found;
+      found = el = next;
+    }
+  }
+  // Brought a third of the way down the window, out of any closed <details> (the HTML kit folds its claim table away),
+  // and lit for a moment to find it by. A PDF page is its own target; the id above the cited line is the fallback when
+  // the words aren't found or are out of sight (a quiz mode hides its sources).
+  function landOn(target, quiet) {
+    var candidates = [
+      target.page ? document.querySelector('.askw-pdf-page[data-askw-page="' + Number(target.page) + '"]') : null,
+      findPassage(target.text),
+      target.anchor ? document.getElementById(target.anchor) : null
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (!el) continue;
+      for (var d = el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+      if (!el.getClientRects().length) continue;
+      jumpTo(Math.max(0, el.getBoundingClientRect().top + window.scrollY - window.innerHeight / 3));
+      var box = el.getBoundingClientRect();
+      if (box.bottom < 0 || box.top > window.innerHeight) el.scrollIntoView({ block: 'center' });  // a page that scrolls inside
+      if (!quiet) flashEvidence(el);
+      return true;
+    }
+    return false;
+  }
+  function flashEvidence(el) {
+    clearTimeout(flashTimer);
+    if (flashEl) flashEl.classList.remove('askw-evidence-hit');
+    void el.offsetWidth;  // restarts the highlight when the same passage is landed on again
+    el.classList.add('askw-evidence-hit');
+    flashEl = el;
+    flashTimer = setTimeout(function () { el.classList.remove('askw-evidence-hit'); flashEl = null; }, 1900);
+  }
+  // A landing the page before this one asked for: taken once, and only by the page it was for while it is fresh, so a
+  // reload or a page opened later never jumps.
+  function takeLanding() {
+    var raw = null, target = null;
+    try { raw = sessionStorage.getItem(LAND_KEY); if (raw) sessionStorage.removeItem(LAND_KEY); } catch (e) {}
+    try { target = raw ? JSON.parse(raw) : null; } catch (e) {}
+    if (!target || !(Date.now() - (target.at || 0) < 15000)) return null;
+    var want = new URLSearchParams(String(target.view || '').split('?')[1] || '').get('src');
+    return want && want === new URLSearchParams(location.search).get('src') ? target : null;
+  }
+  // Late images and fonts can move the passage: it is landed on again at load, unless the reader has scrolled since.
+  function initLanding() {
+    var target = pendingLanding;
+    if (!target) return;
+    landOn(target);
+    var landed = window.scrollY;
+    window.addEventListener('load', function () { if (Math.abs(window.scrollY - landed) < 2) landOn(target, true); });
   }
 
   function loadSelectionHistory() {
@@ -1663,7 +1759,7 @@
     // so it is taken before the first frame rather than jumped to after a fetch.
     var reloading = false;
     try { reloading = !!sessionStorage.getItem('askw:reload'); } catch (e) {}
-    if (!location.hash && !reloading) {
+    if (!location.hash && !reloading && !pendingLanding) {
       var seeded = metaValue('askw-scroll');
       if (seeded !== '') restorePosition(Number(seeded));
       else fetch(SERVER + '/api/document?source=' + encodeURIComponent(source)).then(function (r) { return r.json(); }).then(function (d) {
@@ -1898,7 +1994,9 @@
     initLiveReload();
     initMarkdownTheme();
     initVaultLook();
+    pendingLanding = takeLanding();
     initPosition();
+    initLanding();
     loadChats();
     initAutoSelection();
   }

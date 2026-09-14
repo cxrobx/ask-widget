@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from reportlab.pdfgen import canvas
 
-from ask_widget.citations import extract_citations
+from ask_widget.citations import extract_citations, reader_target
 from ask_widget.vault import VaultIndex
 from ask_widget.launcher_ui import (
     BASE_RGB,
@@ -267,6 +267,71 @@ class ViewerAndCitationTests(unittest.TestCase):
             self.assertEqual(len(citations), 1)
             self.assertEqual(citations[0]["label"], "src/app.py:3")
             self.assertIn("important evidence", citations[0]["snippet"])
+
+    def test_a_line_written_in_words_is_still_the_cited_line(self) -> None:
+        # "`index.html` (line 1084)" fell back to line 1, and the preview showed <!DOCTYPE html>.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "guides").mkdir()
+            (root / "guides" / "trace.md").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+            (root / "guides" / "page.html").write_text("<p>one</p>\n<p>two</p>\n<p>three</p>\n", encoding="utf-8")
+            for answer in ("claim row in `guides/trace.md` (line 3).", "see `guides/trace.md`, lines 3-4", "(guides/trace.md line 3)"):
+                with self.subTest(answer=answer):
+                    self.assertEqual(extract_citations(answer, root)[0]["line"], 3)
+            # Words that only look like a line are not one (a page with no line cited has none).
+            self.assertIsNone(extract_citations("`guides/page.html` lines up with it", root)[0]["line"])
+
+    def test_page_evidence_previews_its_words_and_says_where_the_reader_lands(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            page = root / "guide.html"
+            page.write_text(
+                "<!DOCTYPE html>\n"
+                '<html lang="en">\n'
+                '<head><style>[id="x"]{color:red}</style></head>\n'
+                '<body><section id="sources">\n'
+                "<details><summary>Claims</summary><table>\n"
+                "<tr><td>rtt-05</td><td>Streaming uses block deltas &amp; block-stop events (then message_stop).</td></tr>\n"
+                "<tr>\n"
+                "<td>\n"
+                "</td>\n"
+                "</tr>\n"
+                "<tr><td>rtt-06</td><td>Match one result per call.</td></tr>\n"
+                "</table></details></section></body></html>\n",
+                encoding="utf-8",
+            )
+            words = "rtt-05 Streaming uses block deltas & block-stop events (then message_stop)."
+            cited = extract_citations("claim rtt-05 in `guide.html` (line 6)", root)[0]
+            self.assertEqual((cited["label"], cited["snippet"]), ("guide.html:6", words))
+            # With no line to point at, a page has no preview: its first lines are only <!DOCTYPE html> and <head>.
+            bare = extract_citations("see `guide.html`", root)[0]
+            self.assertEqual((bare["label"], bare["snippet"], bare["line"]), ("guide.html", "", None))
+
+            self.assertEqual(reader_target(page, line=6), {"text": words, "anchor": "sources", "page": None})
+            # A line of bare markup reads on until there are words to find it by.
+            self.assertEqual(reader_target(page, line=7)["text"], "rtt-06 Match one result per call.")
+            # A stylesheet's [id="x"] is not an anchor, and no line means nowhere in particular.
+            self.assertIsNone(reader_target(page, line=3)["anchor"])
+            self.assertEqual(reader_target(page), {"text": "", "anchor": None, "page": None})
+
+            note = root / "note.md"
+            note.write_text("# Title\n\n- The **plan** lives in [[Harness|the harness]], see [docs](https://x.y).\n", encoding="utf-8")
+            self.assertEqual(reader_target(note, line=3)["text"], "The plan lives in the harness, see docs.")
+            self.assertEqual(reader_target(root / "slides.pdf", page=2), {"text": "", "anchor": None, "page": 2})
+
+    def test_evidence_keeps_the_words_it_cited_when_the_page_moves_on(self) -> None:
+        # A guide gained 46 lines between an answer and its evidence being opened: line 1084 no longer held rtt-05,
+        # and re-reading the line at open time landed somewhere else on the page.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            page = root / "guide.html"
+            page.write_text('<section id="sources">\n<p>Intro.</p>\n<p>rtt-05 Streaming uses block deltas.</p>\n</section>\n', encoding="utf-8")
+            cited = extract_citations("`guide.html` (line 3)", root)[0]
+            self.assertEqual((cited["text"], cited["anchor"]), ("rtt-05 Streaming uses block deltas.", "sources"))
+            page.write_text("<p>A lead added later.</p>\n<p>And another.</p>\n" + page.read_text(encoding="utf-8"), encoding="utf-8")
+            self.assertNotEqual(reader_target(page, line=3)["text"], cited["text"])  # the line moved on; the kept words didn't
+            # No line cited, nothing to land on: a page opens where the reader left it.
+            self.assertNotIn("text", extract_citations("see `guide.html`", root)[0])
 
 
 class RangeAndGlassTests(unittest.TestCase):
