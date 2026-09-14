@@ -22,8 +22,9 @@ SHARED_PREAMBLE = (
     "recent events), check it with one of those tools and cite the URL or skill "
     "you used. Settled general knowledge needs no check. Never say you are "
     "answering from memory, and never tell the reader to check something "
-    "themselves: do the check. If a check comes up empty, say which specific "
-    "point you could not confirm."
+    "themselves: do the check. Don't announce the checks either; the citations "
+    "show them. If a check comes up empty, say which specific point you could "
+    "not confirm."
 )
 
 ELI5_APPEND = (

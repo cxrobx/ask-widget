@@ -13,6 +13,7 @@ class PromptTests(unittest.TestCase):
                 self.assertIn("search the web", instruction)
                 self.assertIn("Never say you are answering from memory", instruction)
                 self.assertIn("never tell the reader to check something themselves", instruction)
+                self.assertIn("Don't announce the checks", instruction)
 
     def test_prove_it_reaches_the_web_only_after_the_folder(self) -> None:
         instruction = append_system_for("prove")
