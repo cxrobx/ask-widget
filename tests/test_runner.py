@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ask_widget.claude_runner import build_cmd as build_claude_cmd, stream_answer
-from ask_widget.codex_runner import stream_answer as stream_codex_answer
+from ask_widget.codex_runner import build_cmd as build_codex_cmd, stream_answer as stream_codex_answer
 
 
 def json_line(payload: dict) -> bytes:
@@ -52,6 +52,18 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         command = build_claude_cmd("prompt", Path("/tmp/context"), "sonnet", "system", "xhigh")
         self.assertEqual(command[command.index("--model") + 1], "sonnet")
         self.assertEqual(command[command.index("--effort") + 1], "xhigh")
+
+    async def test_claude_command_allows_web_checks_but_no_writes(self) -> None:
+        command = build_claude_cmd("prompt", Path("/tmp/context"), "sonnet", "system")
+        allowed = command[command.index("--allowedTools") + 1 : command.index("--disallowedTools")]
+        denied = command[command.index("--disallowedTools") + 1 : command.index("--model")]
+        self.assertEqual(set(allowed), {"Read", "Grep", "Glob", "WebSearch", "WebFetch", "Skill"})
+        self.assertLessEqual({"Bash", "Edit", "Write", "NotebookEdit"}, set(denied))
+
+    async def test_codex_command_enables_live_web_search(self) -> None:
+        command = build_codex_cmd(Path("/tmp/context"), "gpt-5.6-sol", "low")
+        # --search belongs to the top-level codex command, as -a does.
+        self.assertLess(command.index("--search"), command.index("exec"))
 
     async def test_stream_parses_tokens_tool_traces_citations_and_done(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -231,6 +243,73 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event: citations", stream)
         self.assertIn("event: done", stream)
         self.assertIn(b"Reader request", process.stdin.data)
+
+    async def test_tool_search_is_hidden_and_web_fetch_keeps_its_url(self) -> None:
+        stream = await self._claude_stream(
+            [
+                {
+                    "type": "stream_event",
+                    "event": {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "tool_use", "name": "ToolSearch", "input": {}},
+                    },
+                },
+                {"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}},
+                {
+                    "type": "stream_event",
+                    "event": {
+                        "type": "content_block_start",
+                        "index": 1,
+                        "content_block": {"type": "tool_use", "name": "WebFetch", "input": {}},
+                    },
+                },
+                {
+                    "type": "stream_event",
+                    "event": {
+                        "type": "content_block_delta",
+                        "index": 1,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": json.dumps(
+                                {"url": "https://pypi.org/project/httpx/", "prompt": "latest?"}
+                            ),
+                        },
+                    },
+                },
+                {"type": "stream_event", "event": {"type": "content_block_stop", "index": 1}},
+                {"type": "result", "is_error": False, "result": "0.28.1"},
+            ]
+        )
+        self.assertNotIn("ToolSearch", stream)
+        self.assertIn('"tool": "WebFetch"', stream)
+        self.assertIn("https://pypi.org/project/httpx/", stream)
+        self.assertIn("event: done", stream)
+
+    async def test_codex_web_search_gets_a_pill_and_a_trace(self) -> None:
+        stdout = asyncio.StreamReader()
+        for payload in (
+            {"type": "turn.started"},
+            {"type": "item.started", "item": {"id": "ws", "type": "web_search", "query": ""}},
+            {
+                "type": "item.completed",
+                "item": {"id": "ws", "type": "web_search", "query": "httpx latest version"},
+            },
+            {"type": "item.completed", "item": {"id": "answer", "type": "agent_message", "text": "0.28.1"}},
+            {"type": "turn.completed", "usage": {}},
+        ):
+            stdout.feed_data(json_line(payload))
+        stdout.feed_eof()
+        with tempfile.TemporaryDirectory() as raw:
+            with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(stdout)):
+                chunks = [
+                    chunk
+                    async for chunk in stream_codex_answer("prompt", Path(raw), "gpt-5.6-sol", "system")
+                ]
+        stream = "".join(chunks)
+        self.assertIn('{"tool": "WebSearch", "status": "calling"}', stream)
+        self.assertIn('"query": "httpx latest version"', stream)
+        self.assertIn("event: done", stream)
 
 
 if __name__ == "__main__":

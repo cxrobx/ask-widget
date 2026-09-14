@@ -71,6 +71,9 @@ def build_cmd(
         "Read",
         "Grep",
         "Glob",
+        "WebSearch",
+        "WebFetch",
+        "Skill",
         "--disallowedTools",
         "Bash",
         "Edit",
@@ -264,6 +267,10 @@ async def stream_answer(
                     if block.get("type") == "tool_use":
                         name = block.get("name") or "tool"
                         saw_activity = True
+                        if name == "ToolSearch":
+                            # Plumbing: it loads WebSearch/WebFetch before their
+                            # first use. It finds nothing, so no pill or trace.
+                            continue
                         open_tools[event.get("index")] = {
                             "name": name,
                             "partial": "",

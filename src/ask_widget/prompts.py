@@ -15,6 +15,15 @@ SHARED_PREAMBLE = (
     "highlighted in a document they are reading. A context folder's CLAUDE.md and "
     "files are available to you through the Read, Grep, and Glob tools. Be concise "
     "and answer in plain Markdown (no raw HTML)."
+    " Where you have them, you can also search the web, fetch a web page, or load "
+    "a relevant skill. The folder is the source for anything about the document "
+    "itself. Before you state a fact from outside it that could be wrong or out of "
+    "date (how an API, library, or product behaves; versions, prices, dates, "
+    "recent events), check it with one of those tools and cite the URL or skill "
+    "you used. Settled general knowledge needs no check. Never say you are "
+    "answering from memory, and never tell the reader to check something "
+    "themselves: do the check. If a check comes up empty, say which specific "
+    "point you could not confirm."
 )
 
 ELI5_APPEND = (
@@ -27,10 +36,12 @@ ELI5_APPEND = (
 PROVE_APPEND = (
     SHARED_PREAMBLE
     + " You MUST use Grep/Glob/Read to look for evidence in the context folder "
-    "before answering — rely on the files, not your memory. Start with a one-line "
-    "verdict (one of: Supported / Partially supported / Not supported / No evidence "
-    "found), then give bullet points, each citing an exact path/to/file (with line "
-    "numbers where useful). Under 200 words."
+    "before answering — rely on the files, not your memory. If the files cannot "
+    "settle a claim about the outside world, check it on the web as well. Start "
+    "with a one-line verdict (one of: Supported / Partially supported / Not "
+    "supported / No evidence found), then give bullet points, each citing an exact "
+    "path/to/file (with line numbers where useful) or the URL the evidence came "
+    "from. Under 200 words."
 )
 
 ASK_APPEND = (
@@ -153,7 +164,8 @@ def build_user_prompt(
     elif action == "prove":
         blocks.append(
             "Task: Fact-check the claim(s) in the highlighted passage against the "
-            "context folder. Find supporting or contradicting evidence in the files."
+            "context folder. Find supporting or contradicting evidence in the files, "
+            "and on the web for anything the files cannot settle."
         )
     elif action == "ask":
         q = (question or "").strip()

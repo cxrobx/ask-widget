@@ -142,6 +142,6 @@ def open_source(path: Path, *, line: int | None = None, page: int | None = None)
 
 def safe_tool_trace(tool: str, payload: object) -> dict[str, Any]:
     data = payload if isinstance(payload, dict) else {}
-    allowed_keys = ("file_path", "path", "pattern", "glob", "query", "command")
+    allowed_keys = ("file_path", "path", "pattern", "glob", "query", "command", "url", "skill")
     clean = {key: str(data[key])[:1000] for key in allowed_keys if data.get(key) is not None}
     return {"tool": tool, "input": clean}

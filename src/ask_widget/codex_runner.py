@@ -27,6 +27,7 @@ def build_cmd(folder: Path, model: str, effort: str) -> list[str]:
         codex,
         "-a",
         "never",
+        "--search",
         "exec",
         "--json",
         "--ephemeral",
@@ -183,6 +184,9 @@ async def stream_answer(
                     open_tools[item_id] = command
                     saw_activity = True
                     yield _sse("tool_status", {"tool": "Shell", "status": "calling"})
+                elif item.get("type") == "web_search":
+                    saw_activity = True
+                    yield _sse("tool_status", {"tool": "WebSearch", "status": "calling"})
                 continue
             if kind == "item.completed":
                 item = obj.get("item") or {}
@@ -200,6 +204,12 @@ async def stream_answer(
                     trace.append(trace_item)
                     yield _sse("tool_trace", trace_item)
                     yield _sse("tool_status", {"tool": "Shell", "status": "complete"})
+                elif item_type == "web_search":
+                    # The query is only filled in once the search completes.
+                    trace_item = safe_tool_trace("WebSearch", {"query": item.get("query")})
+                    trace.append(trace_item)
+                    yield _sse("tool_trace", trace_item)
+                    yield _sse("tool_status", {"tool": "WebSearch", "status": "complete"})
                 elif item_type == "error":
                     nonfatal_errors.append(str(item.get("message") or "Codex item error."))
                 continue

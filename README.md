@@ -39,7 +39,7 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
   its buttons and scripts; PDF selections retain their page number for prompts
   and evidence.
 - Streaming answers with first-activity and total timeouts, heartbeats, Stop,
-  Retry, follow-up questions, and visible Read/Grep/Glob traces.
+  Retry, follow-up questions, and visible traces of each file read, search, and web lookup.
 - A native provider selector and CLI-discovered model selectors. Claude models
   come from the aliases advertised by the installed Claude CLI; Codex models
   and supported reasoning efforts come from its live account model catalog.
@@ -419,9 +419,13 @@ deliberately narrow:
    mutations and provider actions.
 5. Context folders are resolved through symlinks and must remain under a trusted
    root unless the explicit `--allow-any` escape hatch is used.
-6. Claude is restricted to Read, Grep, and Glob. Codex runs headlessly with a
-   read-only sandbox, no approvals, no user rules, and optional tool/plugin
-   features disabled.
+6. Claude is restricted to Read, Grep, and Glob on the folder, plus WebSearch,
+   WebFetch, and skills so an answer can check an outside fact before stating
+   it; Bash, Edit, and Write stay denied. Codex runs headlessly with a read-only
+   sandbox, live web search, no approvals, no user rules, and optional
+   tool/plugin features disabled. Web access has one cost: a document's own
+   text could try to steer a fetch, and whatever goes into its URL, to an
+   outside site. Nothing on disk can be changed.
 7. Remote fetches reject credentials, non-HTML content, responses over 12 MB,
    and private, loopback, link-local, reserved, or multicast addresses unless
    private URLs are explicitly enabled.
