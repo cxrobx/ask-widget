@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import io
 import json
 import os
@@ -20,6 +21,7 @@ import uvicorn
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 
+from ask_widget import search
 from ask_widget.app import create_app
 from ask_widget.config import AppConfig
 from ask_widget.launcher_ui import glass_alphas
@@ -35,6 +37,14 @@ def stock_menu_guard() -> str:
     """The app's WebKit-menu guard, read out of the Swift source so the test runs what ships."""
     source = LAUNCHER_SWIFT.read_text(encoding="utf-8")
     return re.search(r'private let stockMenuGuard = """\n(.*?)\n"""', source, re.DOTALL).group(1)
+
+
+def search_fixture():
+    """tests/test_search.py, for its stand-in vault-mcp index and embedder; loaded by path, as the suite runs both ways."""
+    spec = importlib.util.spec_from_file_location("onyx_search_fixture", Path(__file__).with_name("test_search.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # The WCAG contrast of an element's ink (text, or an icon's currentColor) against what is drawn under it: its own
@@ -2131,6 +2141,113 @@ class BrowserSmokeTests(unittest.TestCase):
                     # The launcher's old links name a dialog, and land on it.
                     page.goto(self.base_url + "/#diagnostics", wait_until="networkidle")
                     expect(page.locator("#settings-modal")).to_be_visible()
+                    self.assertNotIn("#", page.url)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_command_p_finds_titles_and_passages_and_opens_one_at_its_section(self) -> None:
+        # ⌘P, as in Obsidian: one box over the window. Titles match as the query is typed; passages inside pages match
+        # by their words or their meaning (a stand-in for Ollama here), and ↩ opens one in the reader at its section,
+        # the reader held back until it is there. It opens with focus inside the reader too. Both engines: the app is
+        # WebKit.
+        fixture = search_fixture()
+        notes = self.root / "vault"
+        notes.mkdir()
+        filler = "\n\n".join(f"Paragraph {i} of the page, here to push its sections apart." for i in range(50))
+        alpha = notes / "Alpha.md"
+        alpha.write_text(
+            f"# Alpha\n\n{filler}\n\n## Deployment\n\nThe nas-tunnel carries every service to the web.\n\n{filler}\n",
+            encoding="utf-8",
+        )
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Pages").mkdir(parents=True)
+        one = artifacts / "Pages" / "one.html"
+        paras = "".join(f"<p>Paragraph {i}.</p>" for i in range(60))
+        one.write_text(
+            f"<title>Page one</title><h1>Page one</h1>{paras}<h2>Launch plan</h2>"
+            f"<p id=launch>Friday it opens to everyone.</p>{paras}",
+            encoding="utf-8",
+        )
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(notes), "html_vault_root": str(artifacts)}, model_default="sonnet")
+        storage.add_root(notes)
+        index = self.root / "index.db"
+        fixture.make_index(
+            index,
+            [
+                ("Alpha.md", "Alpha > Deployment", "The nas-tunnel carries every service to the web.", fixture.DEPLOY),
+                ("Artifacts/Pages/one.html", "Page one > Launch plan", "Friday it opens to everyone.", fixture.LAUNCH),
+            ],
+        )
+        self.app.state.passages = search.PassageIndex(index, embed=fixture.stand_in({"going live": fixture.LAUNCH}))
+        # The reader is back in view, showing the page named.
+        shown = """name => {
+          const f = document.getElementById('reader');
+          return f.style.visibility === '' && (new URLSearchParams(f.contentWindow.location.search).get('src') || '').endsWith(name);
+        }"""
+
+        def top_of(reader, heading: str) -> float:
+            return reader.locator("h2", has_text=heading).evaluate("h => h.getBoundingClientRect().top")
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(self.base_url, wait_until="networkidle")
+                    expect(page.locator("#tree a.file[data-vault=html]")).to_have_count(1)
+                    dialog, field = page.locator("#search-modal"), page.locator("#search-input")
+                    reader = page.frame_locator("iframe[name=reader]")
+
+                    # Titles as the query is typed.
+                    page.keyboard.press("Meta+p")
+                    expect(dialog).to_be_visible()
+                    expect(field).to_be_focused()
+                    field.fill("alp")
+                    expect(dialog.locator(".sr-row[aria-selected=true]")).to_contain_text("Alpha")
+
+                    # A passage by its words, the last word as typed so far: ↩ opens the note at that section.
+                    field.fill("tunn")
+                    passage = dialog.locator(".sr-row", has_text="Deployment")
+                    expect(passage.locator(".sr-snip mark")).to_have_text("tunn")
+                    expect(passage.locator(".sr-how")).to_have_text("words")
+                    expect(dialog.locator(".sr-row[aria-selected=true]")).to_contain_text("Deployment")
+                    field.press("Enter")
+                    expect(dialog).to_be_hidden()
+                    page.wait_for_function(shown, arg="Alpha.md")
+                    self.assertLess(abs(top_of(reader, "Deployment")), 40)
+
+                    # ⌘P with focus inside the reader; a passage found by meaning alone opens the artifact at its section.
+                    reader.locator("h1").click()
+                    page.keyboard.press("Meta+p")
+                    expect(dialog).to_be_visible()
+                    expect(field).to_be_focused()
+                    field.fill("going live")
+                    passage = dialog.locator(".sr-row", has_text="Launch plan")
+                    expect(passage.locator(".sr-how")).to_have_text("meaning")
+                    expect(passage.locator("mark")).to_have_count(0)  # found by meaning alone: nothing it holds was typed
+                    expect(page.locator("#search-state")).to_have_text("Titles, words and meaning")
+                    passage.click()
+                    expect(dialog).to_be_hidden()
+                    page.wait_for_function(shown, arg="one.html")
+                    expect(reader.locator("#launch")).to_be_visible()
+                    self.assertLess(abs(top_of(reader, "Launch plan")), 40)
+                    expect(page.locator("#tree a.active")).to_have_attribute("data-path", str(one))
+
+                    # Empty, it lists what was opened lately; Escape puts it away.
+                    page.keyboard.press("Meta+p")
+                    field.fill("")
+                    expect(dialog.locator(".sr-group").first).to_have_text("Recently opened")
+                    expect(dialog.locator(".sr-row").first).to_contain_text("Page one")
+                    page.keyboard.press("Escape")
+                    expect(dialog).to_be_hidden()
+
+                    # File ▸ Search… from a page that isn't the shell loads it with the box open.
+                    page.goto(self.base_url + "/#search", wait_until="networkidle")
+                    expect(dialog).to_be_visible()
                     self.assertNotIn("#", page.url)
                     browser.close()
 

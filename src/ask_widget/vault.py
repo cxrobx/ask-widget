@@ -879,6 +879,10 @@ class VaultIndex:
     def contains(self, path: Path | str) -> bool:
         return is_inside(path, self.root)
 
+    def at(self, rel: str) -> VaultFile | None:
+        """The row at ``rel``, a path below the root in any case, or None."""
+        return self._by_rel.get(rel.casefold())
+
     def tree_json(self) -> dict[str, Any]:
         return self._tree
 

@@ -45,7 +45,7 @@ from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
 from .providers import find_claude, find_codex, provider_catalogs, provider_status
 from .storage import Storage
 from .vault_ui import vault_page
-from . import handoff, markdown_theme, sidebar_theme, vault, vault_look, viewer
+from . import handoff, markdown_theme, search, sidebar_theme, vault, vault_look, viewer
 from . import __version__
 
 logger = logging.getLogger("ask_widget.app")
@@ -194,6 +194,12 @@ def _vault_missing_error(app: FastAPI, kind: str) -> str:
     return f"The Artifacts folder does not exist yet: {raw}"
 
 
+def _search_places(app: FastAPI):
+    """``search.place`` over the two trees as they stand: vault-mcp's path → the row the sidebar lists it as."""
+    trees = {kind: app.state.vault.get(root, kind) for kind in ("notes", "html") if (root := _vault_root(app, kind))}
+    return lambda path: search.place(path, trees.get("notes"), trees.get("html"))
+
+
 def _register_context_root(app: FastAPI, folder: Path) -> Path | None:
     """Allow ``folder`` as a context root — unless it is the whole disk or home.
 
@@ -275,6 +281,8 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.storage = storage
     app.state.storage.sync_builtin_roots(config.allowed_roots)
     app.state.vault = vault.VaultCache(ttl=5.0)
+    # ⌘P's passages: vault-mcp's index, read where it lies (search.py).
+    app.state.passages = search.PassageIndex(search.index_path(), ollama=search.ollama_url())
     _register_vault_root(app)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENT)
     app.state.recent_folders = [str(config.default_folder)]
@@ -845,6 +853,27 @@ def create_app(config: AppConfig) -> FastAPI:
             },
             headers=headers,
         )
+
+    # ⌘P's passages (search.py, palette_ui.py): the pages whose words or meaning match, one row each, as the trees list
+    # them. The index is vault-mcp's, read-only. The palette asks for the status as it opens, which also warms the
+    # index and the embedding model, so the first query typed waits on neither.
+    @app.get("/api/search")
+    async def search_api(request: Request, q: str = "", limit: int = 12):
+        if denied := api_forbidden(request):
+            return denied
+        headers = cors(request.headers.get("origin"))
+        q = q[:200]
+        limit = max(1, min(limit, 40))
+        places = await asyncio.to_thread(_search_places, app)
+        found = await asyncio.to_thread(app.state.passages.search, q, place=places, limit=limit)
+        return JSONResponse({"ok": True, "q": q, **found}, headers=headers)
+
+    @app.get("/api/search/status")
+    async def search_status_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        status = await asyncio.to_thread(app.state.passages.status, warm=True)
+        return JSONResponse({"ok": True, **status}, headers=cors(request.headers.get("origin")))
 
     # The sidebar's right-click menu: one row's paths to show it by, then a
     # reveal. The client only ever names a row; the server works out what that

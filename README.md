@@ -52,6 +52,14 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
 - A bounded, expiring local answer cache keyed by document version, model,
   context folder, selection, and page.
 - Persistent SQLite history in WAL mode with schema versioning.
+- **Search** (⌘P, or File ▸ Search…), a box over the window as in Obsidian.
+  Titles match as you type; passages inside notes and artifacts follow, ranked
+  by their words and their meaning together, each with its section and a
+  snippet, and ↩ opens one in the reader at that section. Passages come from
+  the index [vault-mcp](https://github.com/cxrobx/vault-mcp) keeps, read in
+  place (`ONYX_VAULT_INDEX` names another), and meaning from its embedding
+  model in a local Ollama. Without Ollama it searches words; without the
+  index, titles.
 - **Recent conversations**, a searchable dialog (the clock at the sidebar's
   foot, or ⌘Y) with question-type, provider, model, document, and date filters.
   Saved entries can be asked again with the current model, edited before asking,

@@ -8,7 +8,8 @@ vault — see ``vault.writable_folder`` and ``vault.owned_entry``. **Library**, 
 each vault's tree under its own heading, and, while no page is open, the home
 page in the reader's place — open a file or URL, what you had open lately, and
 your latest asks. Settings and Recent conversations are the two modals at the
-sidebar's foot (``panels_ui.py``).
+sidebar's foot (``panels_ui.py``); ⌘P opens a third over everything, the search
+palette (``palette_ui.py``).
 
 The page is deliberately thin. Files are plain ``<a target=reader>`` links, so
 the named iframe handles navigation and history without any click JS; the
@@ -34,6 +35,7 @@ from typing import Any
 from . import __version__
 from .config import AppConfig
 from .launcher_ui import glass_script, theme_settings, theme_style
+from .palette_ui import palette_markup, palette_script, palette_style
 from .panels_ui import ICONS, panels_markup, panels_script, panels_style
 
 # The sidebar's pin: filled while the sidebar is pinned, outlined while it floats and comes out from the left edge.
@@ -138,6 +140,7 @@ def vault_page(
     short_folder = html.escape(str(config.default_folder).replace(str(Path.home()), "~", 1))
     history_icon, settings_icon = ICONS["history"], ICONS["settings"]
     panels_css, panels_html, panels_js = panels_style(), panels_markup(settings), panels_script()
+    search_css, search_html, search_js = palette_style(), palette_markup(), palette_script()
     # The + and its panel ship with every view (CSS shows them only in Artifacts), so a switch needs no reload.
     add_toggle = (
         '<button id=add-toggle class=add-toggle type=button title="Add pages or a folder" '
@@ -283,6 +286,7 @@ body.outline-out:not(.outline-docked) #outline-side{{visibility:visible;transfor
 body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.outline-out:not(.outline-docked) #outline-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.outline-still #outline-side{{transition:none!important}}
 @media(prefers-reduced-motion:reduce){{body:not(.outline-docked) #outline-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.outline-out:not(.outline-docked) #outline-side{{opacity:1;transition:opacity .15s linear,visibility 0s}} #outline .tw svg{{transition:none}}}}
 {panels_css}
+{search_css}
 </style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Library and vaults"><a href="/"{library_active} data-kind=library>Library</a><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
 {add_panel}
@@ -301,6 +305,7 @@ body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(
 <input id=outline-filter type=search placeholder="Filter headings…" autocomplete=off spellcheck=false aria-label="Filter headings">
 <nav id=outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 {panels_html}
+{search_html}
 <script src=/app-menu.js></script>
 <script>
 let KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
@@ -574,6 +579,7 @@ tree.addEventListener('mouseout',e=>{{const row=e.target.closest('#tree .file');
 tree.addEventListener('focusin',e=>{{const row=e.target.closest('#tree .file');if(row&&row.matches(':focus-visible'))wantPeek(row,200)}});
 for(const ev of ['focusout','scroll','click','contextmenu'])tree.addEventListener(ev,hidePeek,{{passive:true}}); document.addEventListener('keydown',e=>{{if(e.key==='Escape')hidePeek()}}); window.addEventListener('blur',hidePeek);
 {panels_js}
+{search_js}
 // MARK: home — Library's page while nothing is open: open a file or URL, what you had open lately (whatever it was), and
 // your latest asks. Fetched fresh each time it shows; a card is a plain link into the reader, an ask opens its conversation.
 function docTag(d){{return d.vault==='notes'?'Note':d.vault==='html'?'Artifact':({{pdf:'PDF',markdown:'Markdown',text:'Text',html:'HTML','remote-html':'Web'}})[d.kind]||'File'}}
@@ -613,9 +619,9 @@ home.hidden=true;history.replaceState(null,'',shellUrl(k,''));document.title=VAU
 (cached?Promise.resolve():fresh).then(()=>{{if(k!==KIND)return;const last=rootOf(k)?recall(KEY+'last'):null;empty.hidden=!!last;if(last)navigate(viewHref(last,k));else if(readerPage())reader.src='about:blank'}})}}
 for(const a of switchLinks)a.addEventListener('click',e=>{{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();switchVault(a.dataset.kind)}});
 // The app menu comes through these: File ▸ Library / Vault / Artifacts switch in place (and load the page when it isn't
-// this one), and Settings… (⌘,) and Recent Conversations (⌘Y) open their dialogs.
+// this one), Settings… (⌘,) and Recent Conversations (⌘Y) open their dialogs, and Search… (⌘P) the palette.
 window.onyxVault={{switchTo:k=>{{if(!VAULTS[k])return false;switchVault(k);return true}}}};
-window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory()}};
+window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory(),openSearch:()=>SEARCH.open()}};
 // Put back as it was left without a slide: the page opens with the sidebar already away.
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
 // The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.

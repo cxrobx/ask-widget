@@ -1056,6 +1056,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func openRecentConversations() {
         shellCall("onyxShell.openHistory()", fallback: "/#history")
     }
+    @objc private func openSearch() {
+        shellCall("onyxShell.openSearch()", fallback: "/#search")
+    }
     /// On the shell (Library, Notes, Artifacts) a view comes in place, so the sidebar never reloads
     /// (a load blanks the glass window for a frame); from any other page, or if the shell can't, it loads.
     private func switchVault(_ kind: String, path: String) {
@@ -1214,6 +1217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         let fileMenu = NSMenu(title: "File")
         fileItem.submenu = fileMenu
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
+        fileMenu.addItem(menuItem("Search…", #selector(openSearch), "p"))
         fileMenu.addItem(.separator())
         fileMenu.addItem(menuItem("Library", #selector(goLibrary), "n"))
         fileMenu.addItem(menuItem("Vault", #selector(goVault), "V"))
