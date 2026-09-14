@@ -204,12 +204,11 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
 .foot-btn{{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms}} .foot-btn:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .foot-btn svg{{width:14px;height:14px}}
 main,body.native main{{position:relative;padding:0;overflow:hidden}}
 #reader{{display:block;width:100%;height:100%;border:0;background:transparent}}
-/* Motion between pages (the `motion` block in the script): what leaves fades away, what arrives fades in and rises 6 px,
-   as a macOS view swap does. The reader and the home page are driven by script (the reader must be held invisible until
-   its page has loaded); the empty hint and the outline's corner button follow the same curve in CSS. */
-@keyframes arrive{{from{{opacity:0;transform:translateY(6px)}}}}
-#reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none;animation:arrive .22s cubic-bezier(.2,.8,.2,1)}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
-@media(prefers-reduced-motion:reduce){{@keyframes arrive{{from{{opacity:0}}}} #reader-empty{{animation-duration:.12s}}}}
+/* Motion between pages (the `motion` block in the script) is a quick fade in and nothing else. The reader and the home page
+   are driven by script (the reader must be held invisible until its page has loaded); the empty hint and the outline's
+   corner button take the same fade here. */
+@keyframes arrive{{from{{opacity:0}}}}
+#reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none;animation:arrive .12s ease-out}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
 /* Library's home, in the reader's place while no page is open: open something, what you had open, what you asked. */
 #home{{position:absolute;inset:0;z-index:1;overflow:auto;padding:40px 44px 56px}} body.native #home{{padding-top:52px}} #home[hidden]{{display:none}}
 .home-inner{{max-width:900px;margin:0 auto}} #home h2{{margin:0;color:rgb(var(--faint));font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}}
@@ -279,7 +278,7 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 .outline-toggle:hover,.outline-toggle[aria-expanded=true]{{background:rgb(var(--bg-elevated)/.97);color:rgb(var(--ink))}} .outline-toggle svg{{width:15px;height:15px}} .outline-toggle:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:2px}}
 body.outline-docked .outline-toggle{{display:none}} body.outline-out .outline-toggle{{visibility:hidden}}
 /* With no page it fades away, and comes back with the page it belongs to (the `arrive` curve above). */
-.outline-toggle{{animation:arrive .22s cubic-bezier(.2,.8,.2,1)}} body.reader-blank .outline-toggle{{opacity:0;visibility:hidden;pointer-events:none;animation:none}}
+.outline-toggle{{animation:arrive .12s ease-out}} body.reader-blank .outline-toggle{{opacity:0;visibility:hidden;pointer-events:none;animation:none}}
 body:not(.outline-docked) #outline-side{{position:fixed;top:8px;right:8px;bottom:8px;z-index:40;width:min(250px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(100% + 16px))}} body.native:not(.outline-docked) #outline-side{{padding-top:40px}}
 body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar)/.96);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
 @media(prefers-reduced-transparency:reduce){{body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
@@ -316,19 +315,18 @@ const VAULTS={vaults_json},GROUPS={groups_json},BOTH=['notes','html']; let HTML,
 function keyOf(k){{return 'askw:vault:'+(k==='notes'?'':k+':')}}
 function setKind(k){{KIND=k;HTML=k==='html';KEY=keyOf(k);VAULT=VAULTS[k];UNIT=VAULT.unit}} setKind(KIND);
 const tree=$('#tree'),reader=$('#reader'),filter=$('#vault-filter'),empty=$('#reader-empty'),home=$('#home'); const TREES={{}};
-// MARK: motion — between pages, and between a page and the home page, as a macOS view swap: what leaves fades away
-// (90 ms, easing in), what arrives fades in and rises 6 px (220 ms, easing out). Reduce Motion fades only, quicker.
-// The reader is an iframe, so nothing can cross-fade its two pages: instead every navigation the shell can see coming
-// (a sidebar row, a home card, a link inside the page, the switch, Open) goes through `navigate`, which fades the reader
-// out FIRST, holds it invisible (fill:forwards) while the page loads, and lets `load` fade the new page in. A navigation
-// it can't see coming — back/forward, a live reload — is left as it is: a fade that starts after the page has painted
-// is a flash, not a transition. `window.onyxMotion.log` says what happened, in order, for the tests.
-const MOTION={{leave:{{duration:90,easing:'cubic-bezier(.4,0,1,1)'}},arrive:{{duration:220,easing:'cubic-bezier(.2,.8,.2,1)'}}}},stillMotion=matchMedia('(prefers-reduced-motion:reduce)');
-window.onyxMotion={{log:[]}}; function noteMotion(what,detail){{const l=window.onyxMotion.log;l.push([what,detail||'']);if(l.length>60)l.shift()}}
+// MARK: motion — between pages, and between a page and the home page. The point is that a page change never looks
+// broken (a half-drawn page, a page that jumps), not a show: the old page goes at once and the load starts at once, and
+// the new page fades in over 120 ms once it has loaded. No slide, no rise, no wait before loading. The reader is an iframe,
+// so its two pages can't cross-fade: every navigation the shell can see coming (a sidebar row, a home card, a link inside
+// the page, the switch, Open) goes through `navigate`, which hides the reader (fill:forwards) while the page loads, and
+// `load` fades it in. A navigation it can't see coming (back/forward, a live reload) shows at once, since a fade begun
+// after the page has painted is a flash. `window.onyxMotion.log` says what happened and when, in order, for the tests.
+const MOTION={{arrive:{{duration:120,easing:'ease-out'}}}},stillMotion=matchMedia('(prefers-reduced-motion:reduce)');
+window.onyxMotion={{log:[]}}; function noteMotion(what,detail){{const l=window.onyxMotion.log;l.push([what,detail||'',performance.now()]);if(l.length>60)l.shift()}}
 function settle(el){{for(const a of el.getAnimations())a.cancel()}}
-function leave(el){{if(el._leaving)return el._leaving;noteMotion('leave',el.id);settle(el);const still=stillMotion.matches;const a=el.animate([{{opacity:1}},{{opacity:0}}],{{duration:still?60:MOTION.leave.duration,easing:MOTION.leave.easing,fill:'forwards'}});
-return el._leaving=a.finished.catch(()=>{{}}).then(()=>{{el._leaving=null}})}}
-function arrive(el){{noteMotion('arrive',el.id);el._leaving=null;settle(el);const still=stillMotion.matches;el.animate(still?[{{opacity:0}},{{opacity:1}}]:[{{opacity:0,transform:'translateY(6px)'}},{{opacity:1,transform:'none'}}],{{duration:still?120:MOTION.arrive.duration,easing:MOTION.arrive.easing}})}}
+function leave(el){{noteMotion('leave',el.id);settle(el);el.animate([{{opacity:0}},{{opacity:0}}],{{duration:0,fill:'forwards'}});return Promise.resolve()}}
+function arrive(el){{noteMotion('arrive',el.id);settle(el);el.animate([{{opacity:0}},{{opacity:1}}],MOTION.arrive)}}
 // The home page comes and goes the same way; `showHome(false)` resolves once it is hidden, so a navigation can wait on it.
 let homeSeq=0;
 function showHome(show){{if(show===!home.hidden)return Promise.resolve();const seq=++homeSeq;if(show){{loadHome();home.hidden=false;arrive(home);return Promise.resolve()}}
@@ -629,16 +627,15 @@ tree.addEventListener('click',e=>{{const a=e.target.closest('[data-settings]');i
 // class), the list swaps from TREES with a quick fade and is fetched again behind it, and the reader brings back that
 // vault's last page, or, for Library, the home page. `follow` means the reader has already moved (history, or a saved
 // conversation opening): then only the sidebar does. A modified click, or a page without script, still loads the link.
-const switchLinks=[...document.querySelectorAll('.vault-switch a')],treeScroll={{}},ORDER={{library:0,notes:1,html:2}};
-function switchVault(k,follow){{if(!VAULTS[k])return;if(k===KIND){{if(k==='library'&&!follow)goHome();return}}const from=ORDER[KIND];
+const switchLinks=[...document.querySelectorAll('.vault-switch a')],treeScroll={{}};
+function switchVault(k,follow){{if(!VAULTS[k])return;if(k===KIND){{if(k==='library'&&!follow)goHome();return}}
 if(window.OnyxMenu)OnyxMenu.close();menuSeq++;hidePeek();clearTimeout(filterTimer);filter.value='';treeScroll[KIND]=tree.scrollTop;
 setKind(k);document.body.classList.remove('kind-library','kind-notes','kind-html');document.body.classList.add('kind-'+k);
 for(const a of switchLinks){{const on=a.dataset.kind===k;a.classList.toggle('active',on);if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')}}
 $('.brand-name').textContent=VAULT.name;filter.placeholder='Filter '+VAULT.units+'… (press /)';filter.setAttribute('aria-label','Filter '+VAULT.units);tree.setAttribute('aria-label',VAULT.tree);$('#empty-hint').textContent=VAULT.empty;
 $('#add-panel').hidden=true;$('#add-toggle').setAttribute('aria-expanded','false');
 const cached=(k==='library'?BOTH:[k]).every(x=>TREES[x]);if(cached){{showTree();tree.scrollTop=treeScroll[k]||0;highlight(currentSrc())}}else tree.innerHTML='<div class=none>Loading…</div>';
-// The list comes in from the side the pill went to, as a segmented control's pages do; Reduce Motion fades it in.
-{{const dx=Math.sign(ORDER[k]-from)*10;tree.animate(stillMotion.matches?[{{opacity:0}},{{opacity:1}}]:[{{opacity:0,transform:`translateX(${{dx}}px)`}},{{opacity:1,transform:'none'}}],{{duration:stillMotion.matches?120:MOTION.arrive.duration,easing:MOTION.arrive.easing}})}}
+if(!stillMotion.matches)tree.animate([{{opacity:.4}},{{opacity:1}}],{{duration:120,easing:'ease-out'}});
 const fresh=loadTree();if(follow){{syncOverlays();return}}if(k==='library'){{goHome();return}}
 home.hidden=true;history.replaceState(null,'',shellUrl(k,''));document.title=VAULT.name;
 (cached?Promise.resolve():fresh).then(()=>{{if(k!==KIND)return;const last=rootOf(k)?recall(KEY+'last'):null;if(last)navigate(viewHref(last,k));else if(readerPage())navigate('about:blank');else empty.hidden=false}})}}

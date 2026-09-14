@@ -1705,11 +1705,10 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
 
     def test_pages_arrive_with_a_fade_and_never_flash(self) -> None:
-        # Between pages, and between a page and home, Onyx fades: the reader is faded out BEFORE it navigates, held
-        # invisible while the page loads, and the page fades in and rises once loaded — from a sidebar row, a home card,
+        # Between pages, and between a page and home, Onyx fades, and quickly: the reader hides and the load starts at once
+        # (no wait), it is held invisible while the page loads, and the page fades in (no rise, 150 ms at most) once loaded — from a sidebar row, a home card,
         # a wikilink inside the page, the switch, or the URL the shell opened on. A navigation the shell can't see coming
-        # (back/forward) is shown at once, since a fade begun after the paint would flash. Reduce Motion fades without the
-        # rise. Both engines: the app is WebKit.
+        # (back/forward) is shown at once, since a fade begun after the paint would flash. Both engines: the app is WebKit.
         notes = self.root / "vault"
         notes.mkdir()
         alpha = notes / "Alpha.md"
@@ -1723,7 +1722,8 @@ class BrowserSmokeTests(unittest.TestCase):
         WATCH = (
             "() => { window.__loads = []; const r = document.getElementById('reader'); r.addEventListener('load', () => {"
             " __loads.push({ src: r.contentWindow.location.href, opacity: getComputedStyle(r).opacity,"
-            " frames: r.getAnimations().map(a => a.effect.getKeyframes()) }) }) }"
+            " frames: r.getAnimations().map(a => a.effect.getKeyframes()),"
+            " duration: Math.max(0, ...r.getAnimations().map(a => a.effect.getTiming().duration)) }) }) }"
         )
         page_errors: list[str] = []
         with sync_playwright() as playwright:
@@ -1759,7 +1759,12 @@ class BrowserSmokeTests(unittest.TestCase):
                     self.assertEqual(len(loads), 1)
                     self.assertEqual(loads[0]["opacity"], "0", "the new page was visible before its fade began")
                     self.assertIn("Beta.md", loads[0]["src"])
-                    self.assertTrue(any("transform" in f for frames in loads[0]["frames"] for f in frames), "no rise")
+                    self.assertTrue(loads[0]["frames"], "no fade")
+                    self.assertFalse(any("transform" in f for frames in loads[0]["frames"] for f in frames), "the page moved")
+                    self.assertLessEqual(loads[0]["duration"], 150, "the fade is slow")
+                    # The load started at once: no fade-out held it back.
+                    gap = page.evaluate("(() => { const l = onyxMotion.log, i = l.findIndex(e => e[0] === 'navigate'); return l[i][2] - l[i - 1][2] })()")
+                    self.assertLess(gap, 20, "the load waited on the old page")
 
                     # A #fragment of the page it is on is not a navigation: no fade, and the page stays.
                     n = len(log())
@@ -1813,7 +1818,7 @@ class BrowserSmokeTests(unittest.TestCase):
                     expect(reader.locator("h1")).to_have_text("Alpha")
                     browser.close()
 
-            # Reduce Motion: the page still fades in, without the rise.
+            # Reduce Motion: the page still fades in, and nothing moves.
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1100, "height": 700}, reduced_motion="reduce")
             page = context.new_page()
