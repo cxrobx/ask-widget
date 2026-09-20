@@ -504,7 +504,7 @@ python3 -m venv .venv
 PYTHONPATH=src .venv/bin/python -W error -m unittest discover -s tests -v
 
 .venv/bin/python -m pip install -r requirements-browser.lock
-.venv/bin/python -m playwright install chromium
+.venv/bin/python -m playwright install chromium webkit
 PYTHONPATH=src .venv/bin/python -m unittest tests.browser_smoke -v
 
 swiftc -typecheck -framework Cocoa -framework WebKit \

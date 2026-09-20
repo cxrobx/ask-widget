@@ -113,6 +113,17 @@ class BrowserSmokeTests(unittest.TestCase):
             data_dir=self.root / "data",
         )
         self.app = create_app(config)
+        # Both vaults are this suite's own. The settings default to ~/Documents/CX and
+        # ~/Documents/Artifacts, so a test that doesn't name a vault reads the developer's
+        # real one where it exists and gets a 400 where it doesn't — which is how three
+        # tests passed here and failed on CI (2026-09-20).
+        defaults = self.root / ".defaults"
+        (defaults / "notes").mkdir(parents=True)
+        (defaults / "artifacts").mkdir()
+        self.app.state.storage.update_settings(
+            {"vault_root": str(defaults / "notes"), "html_vault_root": str(defaults / "artifacts")},
+            model_default="sonnet",
+        )
         catalogs = [
             {
                 "id": "claude",
