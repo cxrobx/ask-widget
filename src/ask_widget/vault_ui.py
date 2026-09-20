@@ -291,22 +291,21 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 #outline .h:focus-visible,#outline .tw:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} #outline .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px}}
 /* Related: the pages nearest this one by meaning. The map above the list places each at its distance from the centre —
    the score, on a scale fixed across pages, so a tight neighbourhood looks tight; the angle is rank, and means nothing.
-   The list carries the numbers, and its divider marks where this page's neighbourhood ends. */
+   The ring is the floor, so the disc is the neighbourhood and everything drawn inside it is related. */
 #related{{display:none;flex:1;flex-direction:column;min-height:0}} #related:not([hidden]){{display:flex}}
 #rel-map{{display:block;flex:none;width:100%;max-width:210px;height:auto;margin:2px auto 12px;aspect-ratio:1;overflow:visible}} #related.no-map #rel-map{{display:none}}
 #rel-map circle{{transition:r .12s,fill-opacity .12s}} .rel-here{{fill:rgb(var(--accent)/.5);stroke:rgb(var(--accent));stroke-width:1.4}}
 .rel-edge{{fill:none;stroke:rgb(var(--ink)/.2);stroke-width:.6;stroke-dasharray:2 2.6}}
-.rel-dot{{fill:rgb(var(--bg-elevated));stroke:rgb(var(--secondary));stroke-width:1.1;cursor:default}} .rel-dot.dim{{opacity:.5}}
-.rel-dot.on{{r:4.4;fill:rgb(var(--accent)/.28);stroke:rgb(var(--accent));opacity:1}} .rel-dot.dupe{{stroke-dasharray:2.2 1.6}}
+.rel-dot{{fill:rgb(var(--bg-elevated));stroke:rgb(var(--secondary));stroke-width:1.1;cursor:default}}
+.rel-dot.on{{r:4.4;fill:rgb(var(--accent)/.28);stroke:rgb(var(--accent))}} .rel-dot.dupe{{stroke-dasharray:2.2 1.6}}
 #rel-list{{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:0 6px 2px;display:flex;flex-direction:column;gap:1px}}
-.rel-row{{display:flex;flex-direction:column;gap:1px;width:100%;padding:5px 8px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default;transition:background-color .1s,opacity .12s}}
-.rel-row:hover,.rel-row.on{{background:rgb(var(--ink)/.06)}} .rel-row.dim{{opacity:.5}} .rel-row.dim:hover,.rel-row.dim.on{{opacity:1}}
+.rel-row{{display:flex;flex-direction:column;gap:1px;width:100%;padding:5px 8px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default;transition:background-color .1s}}
+.rel-row:hover,.rel-row.on{{background:rgb(var(--ink)/.06)}}
 .rel-row:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}}
 .rel-t{{display:flex;align-items:baseline;gap:6px;min-width:0}} .rel-score{{flex:none;color:rgb(var(--faint));font-size:10px;font-variant-numeric:tabular-nums}}
 .rel-name{{flex:1;min-width:0;overflow:hidden;color:rgb(var(--ink)/.88);font-size:12.5px;white-space:nowrap;text-overflow:ellipsis}}
 .rel-dupe{{flex:none;padding:0 4px;border-radius:4px;background:rgb(var(--accent)/.16);color:rgb(var(--secondary));font-size:9.5px;letter-spacing:.02em}}
 .rel-where{{overflow:hidden;padding-left:24px;color:rgb(var(--muted));font-size:10.5px;white-space:nowrap;text-overflow:ellipsis}}
-.rel-split{{flex:none;margin:6px 8px 5px;border-top:1px dashed var(--line);color:rgb(var(--faint));font-size:9.5px;letter-spacing:.05em;text-transform:uppercase}} .rel-split span{{display:block;padding-top:4px}}
 #related .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px;line-height:1.5}}
 .outline-toggle{{position:absolute;top:12px;right:12px;z-index:2;display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:999px;background:rgb(var(--bg-elevated)/.82);color:rgb(var(--secondary));box-shadow:0 6px 18px rgb(0 0 0/.1);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);transition:background-color .15s,color .15s}}
 .outline-toggle:hover,.outline-toggle[aria-expanded=true]{{background:rgb(var(--bg-elevated)/.97);color:rgb(var(--ink))}} .outline-toggle svg{{width:15px;height:15px}} .outline-toggle:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:2px}}
@@ -490,10 +489,11 @@ function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('
 // page's own direction instead of from a query. Nothing is embedded for it, so it answers while Ollama is off. The map
 // puts each neighbour at its distance from the centre — the radius is its score on a scale fixed across pages, so a
 // tight neighbourhood looks tight and two pages' maps compare; the angle is only rank, spread so the dots don't land on
-// each other, and means nothing. The list carries the numbers, and a divider marks where the neighbourhood ends — most
-// pages have no such drop and get no divider, which is the pane saying this page sits among its vault evenly.
+// each other, and means nothing. Only pages past a floor are shown at all, so everything here is related by design and
+// nothing needs dimming or excusing: a page with no neighbour shows none rather than twenty of its own tail.
 const PANE_KEY='askw:vault:pane', relPane=$('#related'), relList=$('#rel-list'), relMap=$('#rel-map'), tabOut=$('#tab-outline'), tabRel=$('#tab-related');
 let relOn=recall(PANE_KEY)==='related', relFor=null, relSeq=0, relRows=[];
+let relFloor=0.45;  // until the first answer says; the server owns it
 function setPane(on){{relOn=on;store(PANE_KEY,on?'related':'');tabOut.setAttribute('aria-selected',String(!on));tabRel.setAttribute('aria-selected',String(on));
 outNav.hidden=on;outFilter.hidden=on;outFold.hidden=on;relPane.hidden=!on;if(on)loadRelated()}}
 tabOut.onclick=()=>setPane(false); tabRel.onclick=()=>setPane(true);
@@ -507,23 +507,22 @@ if(relFor===here.path)return;
 relPane.classList.add('no-map');relList.innerHTML='<div class=none>Looking…</div>';
 let d;try{{d=await api('/api/related?vault='+here.vault+'&path='+encodeURIComponent(here.path))}}catch(e){{d={{items:[],reason:e.message}}}}
 if(seq!==relSeq||d.superseded)return;relFor=here.path;drawRelated(d)}}
-// Fixed, not scaled to this page's own spread: 0.96 must sit near the centre whether or not anything else is close.
-function relRadius(score){{return Math.max(9,Math.min(46,9+(1-score)*84))}}
+// The floor is the map's outer edge and 1 is its centre, so the disc IS the neighbourhood: everything drawn is inside
+// it, and how far out a dot sits is how much of the page it shares. The same scale on every page, so two maps compare.
+function relRadius(score){{return Math.max(9,Math.min(46,9+(1-score)*(37/Math.max(.05,1-relFloor))))}}
 function relWhere(r){{return [GROUPS[r.vault]].concat(r.folder?r.folder.split('/'):[]).join(' › ')}}
-function relDots(items,cut){{const n=Math.min(items.length,12),out=[];
-// The neighbourhood's edge, where the list's divider falls: between the last row above it and the first below, so the
-// same split reads in both halves of the pane. Drawn first, and so behind the dots.
-if(cut&&cut<n)out.push(`<circle class=rel-edge cx=50 cy=50 r=${{((relRadius(items[cut-1].score)+relRadius(items[cut].score))/2).toFixed(1)}}></circle>`);
+function relScoreTitle(s){{return s.toFixed(2)+' — 0 would be no closer than any two pages in the vault, 1 the same text'}}
+function relDots(items){{const n=Math.min(items.length,12),out=['<circle class=rel-edge cx=50 cy=50 r=47></circle>'];
 out.push(`<circle class=rel-here cx=50 cy=50 r=4.5><title>${{esc(document.title.replace(/ — [^—]*$/,''))}}</title></circle>`);
-for(let i=0;i<n;i++){{const a=(-90+i*360/n)*Math.PI/180,r=relRadius(items[i].score),cls='rel-dot'+(cut&&i>=cut?' dim':'')+(items[i].dupe?' dupe':'');
-out.push(`<circle class="${{cls}}" data-i=${{i}} cx=${{(50+r*Math.cos(a)).toFixed(1)}} cy=${{(50+r*Math.sin(a)).toFixed(1)}} r=3><title>${{esc(items[i].title)}} — ${{items[i].score.toFixed(2)}}</title></circle>`)}}
+for(let i=0;i<n;i++){{const a=(-90+i*360/n)*Math.PI/180,r=relRadius(items[i].score);
+out.push(`<circle class="rel-dot${{items[i].dupe?' dupe':''}}" data-i=${{i}} cx=${{(50+r*Math.cos(a)).toFixed(1)}} cy=${{(50+r*Math.sin(a)).toFixed(1)}} r=3><title>${{esc(items[i].title)}} — ${{relScoreTitle(items[i].score)}}</title></circle>`)}}
 return out.join('')}}
-function drawRelated(d){{const items=d.items||[],cut=d.cut||0;relRows=items;relPane.classList.toggle('no-map',!items.length);
-if(!items.length){{relMap.innerHTML='';const why=d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1):'Nothing in the vault sits near this page.';relList.innerHTML='<div class=none>'+esc(why.endsWith('.')?why:why+'.')+'</div>';return}}
-relMap.innerHTML=relDots(items,cut);
-relList.innerHTML=items.map((r,i)=>(cut&&i===cut?'<div class=rel-split role=separator><span>Less alike</span></div>':'')
-+`<button class="rel-row${{cut&&i>=cut?' dim':''}}" type=button data-i=${{i}} title="${{esc(r.title)}}${{r.section?' — '+esc(r.section):''}}">`
-+`<span class=rel-t><span class=rel-score>${{r.score.toFixed(2)}}</span><span class=rel-name>${{esc(r.title)}}</span>${{r.dupe?'<span class=rel-dupe>same?</span>':''}}</span>`
+function drawRelated(d){{const items=d.items||[];relRows=items;relPane.classList.toggle('no-map',!items.length);
+if(typeof d.floor==='number')relFloor=d.floor;
+if(!items.length){{relMap.innerHTML='';const why=d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1):'Nothing in the vault is near this page — its subject appears nowhere else';relList.innerHTML='<div class=none>'+esc(why.replace(/\\.?$/,'.'))+'</div>';return}}
+relMap.innerHTML=relDots(items);
+relList.innerHTML=items.map((r,i)=>`<button class=rel-row type=button data-i=${{i}} title="${{esc(r.title)}}${{r.section?' — '+esc(r.section):''}}">`
++`<span class=rel-t><span class=rel-score title="${{esc(relScoreTitle(r.score))}}">${{r.score.toFixed(2)}}</span><span class=rel-name>${{esc(r.title)}}</span>${{r.dupe?'<span class=rel-dupe>same?</span>':''}}</span>`
 +`<span class=rel-where>${{esc(relWhere(r))}}</span></button>`).join('')}}
 function relMark(i){{for(const el of relPane.querySelectorAll('.on'))el.classList.remove('on');if(i<0)return;
 const row=relList.querySelector(`.rel-row[data-i="${{i}}"]`),dot=relMap.querySelector(`.rel-dot[data-i="${{i}}"]`);if(row)row.classList.add('on');if(dot)dot.classList.add('on')}}

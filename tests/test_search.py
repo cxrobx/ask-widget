@@ -52,6 +52,30 @@ PASSAGES = [
 ]
 
 
+# The API's own corpus. Related scores against the corpus baseline, so these vectors have to mean something: Deploy
+# and the Jev page share a subject, Page one is off on its own, and two pages sit elsewhere entirely to give the
+# baseline somewhere to be. Orthogonal stand-ins would every one fall below the floor — which is what the floor is for.
+# The fifth direction is nobody's, so a query about nothing in this corpus (API_NEUTRAL) stays under MEANING_FLOOR
+# against every one of them, as NEUTRAL does for the orthogonal set above.
+NEAR_A, NEAR_B = [1, 0, 0.6, 0, 0], [1, 0, 0.9, 0, 0]
+APART, OFF, OFF_TOO = [0, 1, 0.3, 0, 0], [0, 0, 0, 1, 0], [0.3, 0, 0, 1, 0]
+API_NEUTRAL = [0, 0, 0, 0, 1]
+
+# Pages on no subject under test, so a related corpus has a middle for its baseline to sit in.
+BULK = [
+    ("Bulk/One.md", "One", "Filler about other matters entirely.", [0, 0, 1, 0]),
+    ("Bulk/Two.md", "Two", "More filler, elsewhere again.", [0, 0, 0, 1]),
+    ("Bulk/Three.md", "Three", "Filler, a third time.", [0, 0, 0.8, 0.6]),
+]
+API_PASSAGES = [
+    ("Projects/Deploy.md", "Deploy > NAS", "The nas-tunnel carries every service out to the web.", NEAR_A),
+    ("Artifacts/Jev.html", "Jev > What it is", "A typed judgment primitive.", NEAR_B),
+    ("Artifacts/Pages/one.html", "Page one > Launch plan", "Friday it opens to everyone.", APART),
+    ("Areas/Music.md", "Music > Release", "Plan the release of the next single.", OFF),
+    ("Elsewhere.md", "", "The nas-tunnel, from a file no vault lists.", OFF_TOO),
+]
+
+
 def make_index(path: Path, passages, *, stamp: str = "2026-09-13T00:00:00+00:00") -> None:
     """A vault-mcp index at ``path`` holding ``passages``: (file_path, heading_path, text, vector) each."""
     with closing(sqlite3.connect(path)) as conn:
@@ -70,11 +94,14 @@ def make_index(path: Path, passages, *, stamp: str = "2026-09-13T00:00:00+00:00"
         conn.commit()
 
 
-def stand_in(meanings: dict[str, list[float]]):
-    """An embedder in Ollama's place: the vector of the first phrase the query holds, else NEUTRAL."""
+def stand_in(meanings: dict[str, list[float]], neutral: list[float] | None = None):
+    """An embedder in Ollama's place: the vector of the first phrase the query holds, else ``neutral``."""
 
     def embed(model: str, text: str) -> list[float]:
-        return next((vector for phrase, vector in meanings.items() if phrase in text.lower()), NEUTRAL)
+        return next(
+            (vector for phrase, vector in meanings.items() if phrase in text.lower()),
+            NEUTRAL if neutral is None else neutral,
+        )
 
     return embed
 
@@ -259,15 +286,17 @@ class RelatedTests(unittest.TestCase):
         self.temp.cleanup()
 
     def index(self, passages) -> search.PassageIndex:
-        make_index(self.db, passages)
+        # Filler, so the corpus baseline has somewhere to sit. Every score here is measured against it, so a corpus
+        # of nothing but the pages under test would have its own subject as the baseline and cancel them out.
+        make_index(self.db, passages + BULK)
         return search.PassageIndex(self.db, embed=stand_in({}))
 
     def test_the_nearest_pages_come_back_in_order_and_the_page_itself_never_does(self) -> None:
         passages = [
-            ("Projects/Here.md", "Here", "The page being read.", DEPLOY),
-            ("Projects/Here.md", "Here > More", "Still that page.", DEPLOY),
-            ("Areas/Close.md", "Close", "Nearly the same subject.", [1, 0.35, 0, 0]),
-            ("Areas/Far.md", "Far", "A different subject.", [1, 1.6, 0, 0]),
+            ("Projects/Here.md", "Here", "The page being read.", [1, 0, 0, 0]),
+            ("Projects/Here.md", "Here > More", "Still that page.", [1, 0.05, 0, 0]),
+            ("Areas/Close.md", "Close", "Nearly the same subject.", [1, 0.25, 0, 0]),
+            ("Areas/Far.md", "Far", "A related subject, further off.", [1, 0.6, 0, 0]),
         ]
         result = self.index(passages).related("Projects/Here.md", place=as_notes)
         self.assertEqual([item["title"] for item in result["items"]], ["Close", "Far"])
@@ -296,30 +325,110 @@ class RelatedTests(unittest.TestCase):
             ("Areas/Both.md", "Both > A", "Deploying things.", DEPLOY),
             ("Areas/Both.md", "Both > B", "Making music.", MUSIC),
             ("Areas/Mix.md", "Mix", "Deploying things while making music.", [1, 1, 0, 0]),
-            ("Areas/One.md", "One", "Only deploying.", DEPLOY),
+            ("Areas/One.md", "One", "Only deploying.", DEPLOY),  # half the subject, so further out
         ]
         rows = self.index(passages).related("Areas/Both.md", place=as_notes)["items"]
         self.assertEqual([row["title"] for row in rows], ["Mix", "One"])
 
+    def test_a_note_beside_its_own_rendering_is_marked_though_it_scores_under_the_bar(self) -> None:
+        """The commonest real duplicate, and the one the score alone misses: one document, two formats."""
+        passages = [
+            ("Resources/Jev.md", "Jev", "The source of truth for the Jev primitive.", [1, 0, 0, 0]),
+            ("Artifacts/Resources/Jev/Jev.html", "Jev", "The Jev primitive, rendered to read.", [1, 0.25, 0, 0]),
+            ("Resources/Jev in zen-mcp.md", "Jev in zen-mcp", "Where Jev is wired in.", [1, 0.6, 0, 0]),
+        ]
+        rows = self.index(passages).related("Resources/Jev.md", place=as_notes)["items"]
+        marked = {row["title"]: row["dupe"] for row in rows}
+        self.assertTrue(marked["Jev"])  # one name, two formats — and below DUPE_AT, so only the name says so
+        self.assertLess(dict((r["title"], r["score"]) for r in rows)["Jev"], search.DUPE_AT)
+        self.assertFalse(marked["Jev in zen-mcp"])  # its own document, however near it reads
+
+    def test_a_name_the_vault_reuses_is_a_filing_habit_and_never_marks_anything(self) -> None:
+        # Every client folder holds a proposal.typ. They are different proposals, and the name is no evidence at all.
+        passages = [
+            ("Clients/Alpha/proposal.typ", "Alpha", "Scope, price and terms for this engagement.", [1, 0, 0, 0]),
+            ("Clients/Beta/proposal.typ", "Beta", "Scope, price and terms for a different one.", [1, 0.4, 0, 0]),
+            ("Clients/Gamma/proposal.typ", "Gamma", "Scope, price and terms again.", [1, 0.6, 0, 0]),
+        ]
+        rows = self.index(passages).related("Clients/Alpha/proposal.typ", place=as_notes)["items"]
+        self.assertTrue(rows)
+        # Every one sits in the band where a name would mark it, and the name is the only thing saying so.
+        for row in rows:
+            self.assertTrue(search.DUPE_NAMED <= row["score"] < search.DUPE_AT, row)
+            self.assertFalse(row["dupe"], row)
+
+    def test_a_document_is_named_by_its_file_without_its_format_or_a_copys_tail(self) -> None:
+        for path, name in (
+            ("Resources/Jev.md", "jev"),
+            ("Artifacts/Resources/Jev/Jev.html", "jev"),
+            ("Meetings/AEG Sync 04.28.26 2.md", "aeg sync 04.28.26"),
+            ("Meetings/AEG Sync 04.28.26 copy.md", "aeg sync 04.28.26"),
+            ("Notes/report (1).md", "report"),
+            ("Notes/no-extension", "no-extension"),
+        ):
+            self.assertEqual(search.document_name(path), name, path)
+
     def test_a_near_enough_neighbour_is_marked_as_the_same_page_twice(self) -> None:
         passages = [
             ("Inbox/Capture.md", "Capture", "The raw capture of the note.", DEPLOY),
-            ("Projects/Filed.md", "Filed", "The filed version of the same thing.", [1, 0.05, 0, 0]),
-            ("Areas/Other.md", "Other", "Something else entirely.", [1, 1, 1, 0.2]),
+            ("Projects/Filed.md", "Filed", "The filed version of the same thing.", [1, 0.03, 0, 0]),
+            ("Areas/Other.md", "Other", "On its subject, but not it.", [1, 1, 0, 0]),
         ]
         rows = self.index(passages).related("Inbox/Capture.md", place=as_notes)["items"]
         self.assertEqual([(row["title"], row["dupe"]) for row in rows], [("Filed", True), ("Other", False)])
         self.assertGreaterEqual(rows[0]["score"], search.DUPE_AT)
+        self.assertLess(rows[1]["score"], search.DUPE_AT)
 
-    def test_the_divider_falls_at_the_largest_drop_and_nowhere_when_the_scores_are_flat(self) -> None:
-        # A real pane's scores: two neighbours, then the plateau every page in the vault shares with every other.
-        self.assertEqual(search.split_at([0.96, 0.84, 0.71, 0.69, 0.68, 0.67, 0.66]), 2)
-        self.assertEqual(search.split_at([0.96, 0.62, 0.62]), 1)
-        self.assertEqual(search.split_at([0.64, 0.63, 0.63, 0.62]), 0)  # no drop worth calling a split
-        self.assertEqual(search.split_at([0.9]), 0)
-        self.assertEqual(search.split_at([]), 0)
-        # A drop past the ranks a reader acts on divides nothing, however big it is.
-        self.assertEqual(search.split_at([0.7] * search.GAP_WITHIN + [0.2]), 0)
+    def test_a_page_near_everything_stops_crowding_out_the_pages_that_are_actually_near(self) -> None:
+        """The hub problem, which is why a bare cosine can't carry a floor.
+
+        ``Hub`` sits in the middle of the corpus and so scores well against anything; ``Kin`` is off to one side with
+        the page being read. Ranked by bare cosine the hub wins, which is what put meeting notes beside a tmux note.
+        """
+        passages = [
+            ("Areas/Here.md", "Here", "The page being read: its own subject, in general terms.", [1, 0.5, 0.5, 0.5]),
+            ("Areas/Hub.md", "Hub", "A long, diffuse playbook touching everything.", [1, 1, 1, 1]),
+            ("Areas/Kin.md", "Kin", "The same narrow subject, and only it.", [1, 0, 0, 0]),
+            ("Bulk/A.md", "A", "Filler that sets where the middle of this corpus is.", [1, 1, 1, 1]),
+            ("Bulk/B.md", "B", "More of the same filler.", [1, 1, 1, 0.95]),
+            ("Bulk/C.md", "C", "Still more filler.", [1, 0.95, 1, 1]),
+        ]
+        make_index(self.db, passages)
+        index = search.PassageIndex(self.db, embed=stand_in({}))
+        data = index._passages()
+        here = data.vecs[data.pages["Areas/Here.md"][0]]
+        bare = {p: search._dot(here, data.vecs[data.pages[p][0]]) for p in ("Areas/Hub.md", "Areas/Kin.md")}
+        self.assertGreater(bare["Areas/Hub.md"], bare["Areas/Kin.md"])  # the bare cosine prefers the hub
+        ranked = [item["title"] for item in index.related("Areas/Here.md", place=as_notes, limit=9)["items"]]
+        self.assertEqual(ranked[0], "Kin")  # with the baseline out, the page that shares the subject wins
+        self.assertNotIn("Hub", ranked)  # and the hub drops under the floor rather than merely down the list
+
+    def test_the_floor_leaves_out_the_tail_and_a_page_with_no_neighbour_comes_back_empty(self) -> None:
+        passages = [
+            ("Areas/Alone.md", "Alone", "A subject in this vault exactly once.", [1, 0, 0, 0]),
+            ("Areas/Bulk1.md", "Bulk", "Filler about other things.", [0, 1, 1, 1]),
+            ("Areas/Bulk2.md", "Bulk", "More filler about other things.", [0, 1, 1, 0.9]),
+            ("Areas/Bulk3.md", "Bulk", "Still more filler.", [0, 0.9, 1, 1]),
+        ]
+        result = self.index(passages).related("Areas/Alone.md", place=as_notes)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["reason"], "")  # indexed, and simply has nothing near it — not a failure
+        self.assertEqual(result["floor"], search.RELATED_FLOOR)
+
+    def test_the_corpus_baseline_is_the_same_whichever_way_the_index_is_read(self) -> None:
+        # A stride sample, so the same index always gives the same baseline, and so the same scores.
+        vecs = [array.array("f", v) for v in ([1, 0, 0, 0], [0.9, 0.3, 0, 0], [1, 0.1, 0, 0], [0.8, 0.5, 0, 0])]
+        mu = search.centroid(vecs)
+        self.assertAlmostEqual(math.sqrt(search._dot(mu, mu)), 1.0, places=5)
+        self.assertEqual(list(mu), list(search.centroid(vecs)))
+        self.assertEqual(len(search.centroid(vecs, cap=2)), 4)  # a smaller sample still spans the dimensions
+        self.assertEqual(len(search.centroid([])), 0)
+
+    def test_a_score_of_zero_means_no_closer_than_any_two_pages(self) -> None:
+        # Against the baseline, a page sitting exactly at it scores 0, and the same text scores 1.
+        self.assertAlmostEqual(search.against_baseline(raw=1.0, source_mu=0.5, page_mu=0.5), 1.0, places=6)
+        self.assertAlmostEqual(search.against_baseline(raw=0.0, source_mu=0.5, page_mu=0.5), 0.0, places=6)
+        self.assertEqual(search.against_baseline(raw=1.0, source_mu=1.0, page_mu=1.0), 0.0)  # no spread, no answer
 
     def test_a_page_the_index_doesnt_hold_says_so_rather_than_coming_back_empty(self) -> None:
         index = self.index(PASSAGES)
@@ -328,7 +437,7 @@ class RelatedTests(unittest.TestCase):
             self.assertEqual(result["items"], [], missing)
             self.assertIn("isn't in the vault index", result["reason"], missing)
         # Case is the one thing that may differ: the tree reads a name off the disk, and so does vault-mcp.
-        self.assertTrue(index.related("projects/deploy.MD", place=as_notes)["items"])
+        self.assertEqual(index.related("projects/deploy.MD", place=as_notes)["reason"], "")
 
     def test_without_an_index_it_says_where_it_looked(self) -> None:
         result = search.PassageIndex(self.db).related("Projects/Deploy.md", place=as_notes)
@@ -371,20 +480,13 @@ class SearchApiTests(unittest.TestCase):
         self.link.symlink_to(self.shared)
         db = base / "index.db"
         # Music.md is in the index but in neither vault, and so is a page no vault lists: neither comes back.
-        make_index(
-            db,
-            PASSAGES
-            + [
-                ("Elsewhere.md", "", "The nas-tunnel, from a file no vault lists.", DEPLOY),
-                ("Artifacts/Jev.html", "Jev > What it is", "A typed judgment primitive.", MUSIC),
-            ],
-        )
+        make_index(db, API_PASSAGES)
         config = AppConfig(default_folder=base, allowed_roots=(base,), port=8899, data_dir=base / "data")
         self.app = create_app(config)
         self.app.state.storage.update_settings(
             {"vault_root": str(self.notes), "html_vault_root": str(self.artifacts)}, model_default=config.model
         )
-        self.app.state.passages = search.PassageIndex(db, embed=stand_in({"going live": LAUNCH}))
+        self.app.state.passages = search.PassageIndex(db, embed=stand_in({"going live": APART}, API_NEUTRAL))
         self.client_context = TestClient(self.app, base_url="http://127.0.0.1:8899")
         self.client = self.client_context.__enter__()
 
@@ -426,21 +528,28 @@ class SearchApiTests(unittest.TestCase):
         result = self.client.get("/api/related", params={"vault": "notes", "path": str(self.deploy)}).json()
         self.assertTrue(result["ok"])
         self.assertEqual(result["note"], "Projects/Deploy.md")
-        # Every other page a tree lists, at its nearest passage; the page itself and the file no vault lists left out.
-        # The linked page comes back as the Artifacts row, which is the name it is indexed under.
+        # The pages a tree lists that are above the floor, at their nearest passage. The page itself, the file no
+        # vault lists, and the page that is merely in the same vault are all left out; the linked page comes back as
+        # the Artifacts row, which is the name it is indexed under.
         self.assertEqual(
             [(i["vault"], i["path"], i["title"], i["heading"]) for i in result["items"]],
-            [("html", str(self.link), "Jev", "What it is"), ("html", str(self.one), "Page one", "Launch plan")],
+            [("html", str(self.link), "Jev", "What it is")],
         )
         # An artifact is asked for the same way, and reaches vault-mcp under its mount.
-        artifact = self.client.get("/api/related", params={"vault": "html", "path": str(self.one)}).json()
-        self.assertEqual(artifact["note"], "Artifacts/Pages/one.html")
-        self.assertEqual(sorted(i["title"] for i in artifact["items"]), ["Deploy", "Jev"])
+        artifact = self.client.get("/api/related", params={"vault": "html", "path": str(self.link)}).json()
+        self.assertEqual(artifact["note"], "Artifacts/Jev.html")
+        self.assertEqual([i["title"] for i in artifact["items"]], ["Deploy"])
         # The vault named is only which tree to ask first: a page opened before the shell's trees arrive can be named
         # by the wrong one, and the page it is still decides the answer.
         for guess in ("notes", "html", "nonsense"):
             asked = self.client.get("/api/related", params={"vault": guess, "path": str(self.one)}).json()
             self.assertEqual(asked["note"], "Artifacts/Pages/one.html", guess)
+
+    def test_a_page_with_nothing_near_it_comes_back_empty_rather_than_padded(self) -> None:
+        # Page one is in the index and in a tree; it simply shares its subject with nothing else here.
+        result = self.client.get("/api/related", params={"vault": "html", "path": str(self.one)}).json()
+        self.assertEqual((result["ok"], result["items"], result["reason"]), (True, [], ""))
+        self.assertEqual(result["floor"], search.RELATED_FLOOR)
 
     def test_a_page_in_both_vaults_is_asked_for_by_the_name_the_index_holds(self) -> None:
         # Its Notes name ("Resources/Jev.html") is deliberately not indexed, so a guess that lands there finds nothing.

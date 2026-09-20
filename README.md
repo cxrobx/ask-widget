@@ -215,14 +215,23 @@ query, so it embeds nothing, asks nothing of Ollama, and answers in about the
 time a search takes. Notes and Artifacts are searched together, so a note can
 turn up an artifact and the other way round.
 
+A bare cosine won't do here, and the reason is worth knowing. This model puts a
+strong common direction into every vector: two unrelated passages still score
+0.635 against each other, and the pages lying nearest that direction — the long,
+diffuse ones, a playbook or a meeting transcript — come back as the neighbours
+of everything. So the baseline is measured once per index and taken back out of
+every score. What's left means *closer than any two pages in this vault are
+anyway*: 0 is a stranger, 1 is the same text. That number is comparable between
+pages, which is what lets the pane drop anything below a floor — so everything
+listed is related by design, and a page whose subject appears nowhere else says
+so instead of padding itself out with its own tail.
+
 The map above the list places each neighbour at its distance from the centre,
-which is the page you are on; the angle is only rank and means nothing. The
-list carries the scores, and a dashed ring — and a divider in the list — marks
-where the page's neighbourhood ends, when it has one. Most pages don't, and
-then nothing is dimmed: the scores simply run evenly down from the top. Click a
-dot or a row to open it. A neighbour close enough to be the same content twice
-is marked `same?` — usually a note beside its own HTML rendering, or an inbox
-capture beside the note it became.
+which is the page you are on; the ring is the floor, so the disc is the
+neighbourhood and the angle is only rank and means nothing. Click a dot or a row
+to open it. A neighbour near enough to be the same content twice is marked
+`same?` — usually a note beside its own HTML rendering, or an inbox capture
+beside the note it became.
 
 Right-click a note or folder for its menu: **Open**, **Reveal in Finder** (the
 real file), and — for anything reached through a symlink — **Reveal Link in

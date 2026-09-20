@@ -14,8 +14,17 @@ best passage. The frozen app carries no numpy, so the meaning leg is a plain-Pyt
 200 ms over 10k passages, in a worker thread), and a newer query stops an older one's scan partway.
 
 ``related`` is the same passages read the other way round: instead of a query's direction, the direction of the page
-being read, averaged over its own passages, with the nearest other pages around it. It is what vault-mcp's
-``related_notes`` does, and since the page's vectors are already in the index it embeds nothing and needs no Ollama.
+being read, averaged over its own passages, with the nearest other pages around it. Since the page's vectors are
+already in the index it embeds nothing and needs no Ollama.
+
+It differs from vault-mcp's ``related_notes`` in one way, and the difference is the whole feature. A bare cosine here
+is not a similarity: this model puts a strong common direction into every vector, so two unrelated passages of the
+author's vault score 0.635, and the pages lying nearest that direction — the long, topically diffuse ones — come back
+as neighbours of everything. Measured, "Tmux and Ghostty" returned meeting notes at 0.85. So the baseline is
+estimated once per index (``centroid``) and taken back out of every score (``against_baseline``), which leaves a
+number that means "closer than any two pages in this vault are anyway", is comparable between pages, and can
+therefore carry a floor. With the baseline out, that same page returns nothing above the floor — which is the truth,
+since its subject appears nowhere else in the vault.
 
 It degrades rather than breaks. No index: no passages, and titles still come from ``/api/vault/search``. No Ollama:
 words only, and related is unaffected. Every answer says which legs ran and why one didn't, for the palette's footer.
@@ -67,20 +76,31 @@ MEANING_FLOOR = 0.6
 RELOAD_EVERY = 5.0  # seconds between asking the index whether it has been rebuilt
 SCAN_BLOCK = 1024  # passages scored between looks for a newer query
 SNIPPET_LEN = 160
-# The related pane. Averaged over a page's chunks these cosines sit high and close together — measured over 120 pages
-# of the author's vault, a page's nearest neighbour ran 0.76 to 0.98, median 0.89 — so neither number below is a
-# similarity anyone should read as a percentage. What carries the meaning is the distance between them.
+# The related pane scores against the corpus baseline (``_Passages.mu``), not with a bare cosine, so these two are on
+# a scale where 0 means "no closer than any two pages in the vault are anyway" and 1 means the same text. Measured
+# over 150 pages of the author's vault, a page's nearest neighbour ran 0.29 to 0.94, median 0.61.
 #
-# At or above this, the pair was the same content twice every time it came up in that sample: a note beside its own
-# HTML rendering, a meeting note beside its "… 2" copy, an inbox capture beside the note it became. Worth saying so
-# about rather than opening again. Below it the band is mixed (0.93 was two genuinely different notes), and a label
-# that tells someone to merge two pages has to be right, so it stays where it is precise.
+# Below this a page is not worth putting in front of anyone: it is the tail every page has. It sits at the tenth
+# percentile of that sample's best-neighbour scores, which is the line that makes it mean something — a page whose
+# *best* neighbour is under it has no neighbour, and is one of the tenth of pages that don't. In the median case a
+# page shows 5 rows; a note whose subject appears nowhere else shows none, which is the honest answer and the reason
+# there is a floor at all: the pane says so rather than padding itself to twenty.
+RELATED_FLOOR = 0.45
+# Near enough to be the same content twice, and worth saying so about rather than opening again. A label that tells
+# someone two pages are the same has to be right whenever it appears, and over 1731 rows this marks 3.
+#
+# Measured, the score alone can't carry it: at 0.94 sat two different bass exercises, and the commonest real
+# duplicate in the vault — a note beside its own rendering, ``Jev.md`` and ``Jev.html`` — sits lower, at 0.87. So the
+# bar for score alone is set where the sample held nothing but true duplicates, and it is a backstop rather than the
+# main way in.
 DUPE_AT = 0.95
-# Where a page's neighbourhood ends: the largest drop in its scores, so long as the drop is a real one. Since the
-# scores are compressed, this is about the shape of the list and not its height — in that sample a third of pages had
-# a drop this size and the rest ran smoothly down from the top, which is a list with no neighbourhood to mark.
-GAP_MIN = 0.02
-GAP_WITHIN = 12  # ranks the split is looked for among: a gap at the twentieth row divides nothing
+# The main way in is the name, for a pair already reading as one subject. A name is only evidence when it is the
+# vault's name for one document rather than its word for a kind of file: ``proposal.typ`` sits in every client folder
+# and means nothing, and no blocklist of such words would stay complete, so the index counts them instead and a name
+# two pages share is evidence where a name five share is a filing convention.
+DUPE_NAMED = 0.60
+DUPE_NAME_SHARED_BY = 2
+CENTROID_SAMPLE = 2000  # passages the corpus baseline is estimated from; 2000 lands cos=0.9999 on the whole corpus
 
 # A C dot product from 3.12 (the app's Python is 3.14); 3.11, the oldest a checkout runs on, takes the slow road.
 _dot: Callable[[Sequence[float], Sequence[float]], float] = getattr(math, "sumprod", None) or (
@@ -220,18 +240,45 @@ def sections(heading_path: str, title: Any) -> tuple[str, str]:
     return (trail[-1] if trail else ""), " › ".join(rest)
 
 
-def split_at(scores: list[float]) -> int:
-    """How many of ``scores`` (descending) stand above the largest drop among them — 0 when none does.
+# A copy's tail: "AEG Sync 04.28.26 2.md" beside "AEG Sync 04.28.26.md", and what Finder and Obsidian add.
+_COPY_TAIL_RE = re.compile(r"[ _-](?:copy|copy \d{1,2}|\(\d{1,2}\)|\d{1,2})$")
 
-    The related pane's divider. Everything below it is the plateau every page shares with every other, so the answer
-    is a count of rows to act on, not a threshold: where the neighbourhood ends is a property of this page's scores,
-    and a vault of nothing but near-neighbours and a vault of strangers both read correctly.
+
+def document_name(path: str) -> str:
+    """What an index path calls its document: the filename, without its format and without a copy's tail.
+
+    ``Jev.md`` and ``Jev.html`` are one document under two formats, and ``AEG Sync 04.28.26 2.md`` is a copy of one,
+    so all three answer the same thing. What that is worth depends on how many pages answer it too (``_Passages``).
     """
-    gap, cut = GAP_MIN, 0
-    for i in range(1, min(len(scores), GAP_WITHIN)):
-        if scores[i - 1] - scores[i] > gap:
-            gap, cut = scores[i - 1] - scores[i], i
-    return cut
+    base = path.rpartition("/")[2]
+    base = base[: base.rfind(".")] if "." in base else base
+    return _COPY_TAIL_RE.sub("", base.casefold()).strip()
+
+
+def centroid(vecs: list[array.array], cap: int = CENTROID_SAMPLE) -> array.array:
+    """The corpus baseline: the average direction of ``vecs``, from a stride sample of at most ``cap`` of them.
+
+    A centroid's direction settles long before the whole corpus is in — 2000 of the author's 11k passages give a
+    direction 0.9999 of the way to the full one — and the sample is a stride rather than a draw so that an index
+    always yields the same baseline, and so the same scores.
+    """
+    if not vecs:
+        return array.array("f")
+    picked = vecs[:: max(1, len(vecs) // cap)]
+    total = list(map(sum, zip(*picked)))
+    norm = math.sqrt(_dot(total, total))
+    return array.array("f", (value / norm for value in total)) if norm else array.array("f")
+
+
+def against_baseline(raw: float, source_mu: float, page_mu: float) -> float:
+    """``raw`` with the corpus baseline taken out: the cosine between the two vectors once both are centred on it.
+
+    The identity, for unit ``q``, ``v`` and baseline ``m``: (q−m)·(v−m) = q·v − q·m − v·m + 1, and |q−m| = √(2−2q·m).
+    So one stored number per passage (its own ``q·m``, the ``hub``) is enough to centre the whole index at the moment
+    a page is scored, without a second copy of 11k vectors in memory.
+    """
+    spread = math.sqrt(max(0.0, 2 - 2 * source_mu)) * math.sqrt(max(0.0, 2 - 2 * page_mu))
+    return (raw - source_mu - page_mu + 1) / spread if spread > 1e-9 else 0.0
 
 
 # MARK: - The index
@@ -257,6 +304,9 @@ class _Passages:
     headings: list[str] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     vecs: list[array.array] = field(default_factory=list)
+    mu: array.array = field(default_factory=lambda: array.array("f"))  # the corpus baseline
+    hub: list[float] = field(default_factory=list)  # each passage's own cosine to it
+    names: dict[str, int] = field(default_factory=dict)  # document name -> how many pages answer to it
 
 
 def fuse(by_words: list[int], by_meaning: list[int], cosine: dict[int, float]) -> list[tuple[int, str]]:
@@ -332,6 +382,15 @@ class PassageIndex:
             data.headings.append(heading or "")
             data.texts.append(text or "")
             data.vecs.append(vec)
+        # These embeddings share a strong common direction — two unrelated passages of the author's vault still score
+        # 0.635 against each other — and the passages nearest that direction sit near everything, so a long, diffuse
+        # page (a playbook, a meeting transcript) turns up beside subjects it has nothing to do with. Holding each
+        # passage's cosine to the baseline is what lets the related pane take it back out.
+        data.mu = centroid(data.vecs)
+        data.hub = [_dot(data.mu, vec) for vec in data.vecs] if data.mu else [0.0] * len(data.vecs)
+        for page in data.pages:
+            name = document_name(page)
+            data.names[name] = data.names.get(name, 0) + 1
         return data
 
     def _passages(self) -> _Passages:
@@ -480,13 +539,15 @@ class PassageIndex:
         already has open. Nothing is embedded, since the page's own vectors are in the index, so this asks nothing of
         Ollama and works while it is off.
 
-        ``cut`` is how many rows stand above the largest drop in their scores (``split_at``), 0 when none does, and
-        ``dupe`` marks a neighbour close enough to be the same page twice. ``reason`` says why there are no rows: a
-        page too short to have been indexed, or one that hasn't been indexed yet, has no direction to search from.
+        Scores are taken against the corpus baseline (``against_baseline``), so 0 is "no closer than any two pages in
+        this vault" and everything returned is above ``RELATED_FLOOR`` — a page with nothing near it comes back empty
+        rather than padded out with its own tail. ``dupe`` marks a neighbour near enough to be the same content twice.
+        ``reason`` says why there are no rows: a page too short to have been indexed, or one not indexed yet, has no
+        direction to search from.
         """
         scan_id = next(self._relates)
         self._latest_related = scan_id
-        result: dict[str, Any] = {"note": path, "items": [], "cut": 0, "reason": ""}
+        result: dict[str, Any] = {"note": path, "items": [], "floor": RELATED_FLOOR, "reason": ""}
         try:
             data = self._passages()
         except Unavailable as exc:
@@ -505,6 +566,10 @@ class PassageIndex:
             result["reason"] = "this page's passages point nowhere"
             return result
         centre = array.array("f", (value / norm for value in mean))
+        source_mu = _dot(centre, data.mu) if data.mu else 0.0
+        own_name = document_name(path)
+        # A name is evidence of one document only where the vault uses it for one document (DUPE_NAME_SHARED_BY).
+        named = own_name if data.names.get(own_name, 0) <= DUPE_NAME_SHARED_BY else ""
         # Each page at its best passage, as the palette lists one: the whole scan, in blocks, so a page opened while
         # an older one is still being scored drops the older scan rather than queue behind it.
         skip, best = set(own), {}
@@ -515,11 +580,13 @@ class PassageIndex:
             for p in range(start, min(start + SCAN_BLOCK, len(data.vecs))):
                 if p in skip:
                     continue
-                score = _dot(centre, data.vecs[p])
+                score = against_baseline(_dot(centre, data.vecs[p]), source_mu, data.hub[p])
                 page = data.paths[p]
                 if score > best.get(page, (-2.0, 0))[0]:
                     best[page] = (score, p)
         for page in sorted(best, key=lambda page: (-best[page][0], page)):
+            if best[page][0] < RELATED_FLOOR:
+                break  # the tail every page has, and no reason to open anything
             row = place(page)
             if row is None:
                 continue  # indexed, but neither tree lists it: a note outside the vaults Onyx is showing
@@ -529,7 +596,7 @@ class PassageIndex:
                 {
                     **row,
                     "score": round(score, 3),
-                    "dupe": score >= DUPE_AT,
+                    "dupe": score >= DUPE_AT or (score >= DUPE_NAMED and bool(named) and document_name(page) == named),
                     "heading": heading,
                     "section": section,
                     "snippet": snippet(data.texts[p], ""),
@@ -537,7 +604,6 @@ class PassageIndex:
             )
             if len(result["items"]) >= limit:
                 break
-        result["cut"] = split_at([item["score"] for item in result["items"]])
         return result
 
     def knows(self, path: str) -> bool:
