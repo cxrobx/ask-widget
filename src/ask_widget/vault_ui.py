@@ -15,10 +15,12 @@ page it shows (``find_ui.py``).
 The page is deliberately thin. Files are plain ``<a target=reader>`` links, so
 the named iframe handles navigation and history without any click JS; the
 script only builds the tree, keeps the highlight in sync with whatever the
-reader currently shows, drives the filter box, the rows' right-click menu
-(``static/app-menu.js``: Reveal in Finder, and ⌥ Copy Path), and, in
-Artifacts, the add panel and reorganising: drag a row onto a folder, and the
-menu's New Folder, Rename, Pin to Top and Remove from Artifacts.
+reader currently shows, drives the filter box, the right-click menus
+(``static/app-menu.js``: a row's Reveal in Finder and ⌥ Copy Path; the empty
+space below the rows carries what the tree itself does — Reveal Current Note
+and Collapse All), and, in Artifacts, the add panel and reorganising: drag a
+row onto a folder, and the menu's New Folder, Rename, Pin to Top and Remove
+from Artifacts.
 
 Switching views happens in place, never by loading another page: a load blanks
 the glass window for a frame and leaves the tree reading "Loading…" until it is
@@ -358,7 +360,15 @@ function renderTree(){{hidePeek();NODES.clear();if(KIND==='library')tree.innerHT
 tree.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{{if(d.dataset.group)setOpen('library',d.dataset.group,d.open);else setOpen(d.dataset.vault,d.dataset.path,d.open)}}));highlight(currentSrc());applyTints();if(HTML)fillDestinations()}}
 function currentSrc(){{try{{const l=reader.contentWindow.location;if(!l||!l.href||l.href==='about:blank')return '';return new URLSearchParams(l.search).get('src')||''}}catch(e){{return ''}}}}
 function readerPage(){{try{{const h=reader.contentWindow.location.href;return h&&h!=='about:blank'?h:''}}catch(e){{return ''}}}}
-function highlight(src){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:'nearest'}})}}
+function highlight(src,block){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:block||'nearest'}})}}
+// The two commands on the tree's empty space (the menu is further down). Reveal is the same walk the reader's own page
+// changes take, asked for by hand and centred: after a Collapse All, or after the filter took the tree somewhere else.
+// It is offered only for a page this tree actually holds. Collapse All leaves Library's two headings open — shutting
+// those would hide both trees rather than fold them — and the rows' own `toggle` listener remembers the result.
+function revealTarget(){{const src=currentSrc();if(!src)return '';const k=vaultOf(src);return k&&(KIND==='library'||k===KIND)?src:''}}
+function revealCurrent(){{const src=revealTarget();if(!src)return;if(filter.value){{filter.value='';renderTree()}}highlight(src,'center')}}
+function collapsed(){{return !tree.querySelector('details:not([data-group])[open]')}}
+function collapseAll(){{tree.querySelectorAll('details:not([data-group])[open]').forEach(d=>{{d.open=false}})}}
 // Both vaults' trees are kept (TREES), so a switch shows the other at once; each is fetched again behind it, and the
 // list is redrawn only if that brought something new. Library shows the two together.
 async function fetchTree(k){{try{{TREES[k]=await api('/api/vault/tree?vault='+k)}}catch(e){{TREES[k]={{error:e.message}}}}return TREES[k]}}
@@ -474,8 +484,12 @@ document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$
 // the link on the way); ⌥ turns each Reveal into a Copy. A mousedown while the answer is in flight means it came too late.
 let menuSeq=0; document.addEventListener('mousedown',()=>{{menuSeq++}},true);
 tree.addEventListener('contextmenu',async e=>{{const row=e.target.closest('#tree .file, #tree summary');if(!window.OnyxMenu)return;
-// Artifacts' empty space: a new folder at the top level.
-if(!row){{if(HTML&&rootOf('html')&&!e.target.closest('#tree li')){{e.preventDefault();OnyxMenu.open({{items:[{{id:'new-folder',label:'New Folder'}}],x:e.clientX,y:e.clientY,label:'Artifacts actions',onSelect:()=>newFolder('')}})}}return}}
+// The tree's empty space: what the tree itself can do — reveal the page being read, fold every folder, and, in
+// Artifacts, a new folder at the top level. The word follows the page's own vault, so an artifact is a Page.
+if(!row){{if(e.target.closest('#tree li'))return;e.preventDefault();const tgt=revealTarget(),rk=tgt?vaultOf(tgt):(HTML?'html':'notes');
+const items=[{{id:'reveal-current',label:'Reveal Current '+(rk==='html'?'Page':'Note'),enabled:!!tgt}},{{id:'collapse-all',label:'Collapse All',enabled:!collapsed()}}];
+if(HTML&&rootOf('html'))items.push({{separator:true}},{{id:'new-folder',label:'New Folder'}});
+OnyxMenu.open({{items,x:e.clientX,y:e.clientY,label:VAULT.name+' actions',onSelect:id=>{{if(id==='reveal-current')revealCurrent();else if(id==='collapse-all')collapseAll();else if(id==='new-folder')newFolder('')}}}});return}}
 e.preventDefault();
 // WebKit on macOS selects the word under a right-click before this event fires (for Look Up); a row isn't text to select.
 const sel=getSelection();if(sel&&sel.anchorNode&&row.contains(sel.anchorNode))sel.removeAllRanges();const holder=row.closest('[data-vault]'),vk=holder&&holder.dataset.vault,path=row.dataset.path||row.parentElement.dataset.path;if(!path||!vk)return;

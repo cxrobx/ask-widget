@@ -1639,6 +1639,90 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_tree_empty_space_reveals_the_current_page_and_folds_the_tree(self) -> None:
+        # What the tree itself can do rides on the app's rendered menu, over the empty space below the rows,
+        # rather than on a row of buttons above it: Reveal Current Note / Page, and Collapse All.
+        vault = self.root / "vault"
+        inbox = vault / "Areas" / "Inbox"
+        inbox.mkdir(parents=True)
+        note = inbox / "Quick Note.md"
+        note.write_text("# Quick Note\n\nA passage.\n", encoding="utf-8")
+        (vault / "Top.md").write_text("# Top\n", encoding="utf-8")
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Mine").mkdir(parents=True)
+        (artifacts / "Mine" / "page.html").write_text("<title>A Page</title><p>Read me.</p>", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault), "html_vault_root": str(artifacts)}, model_default="sonnet")
+        storage.add_root(vault)
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 760})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(f"{self.base_url}/vault?src={urllib.parse.quote(str(note))}", wait_until="networkidle")
+            reader = page.frame_locator("iframe[name=reader]")
+            reader.locator("h1").wait_for()
+            row = page.locator("#tree a.active")
+            row.wait_for()
+            expect(row).to_be_visible()  # opening the note revealed it, as it always has
+
+            menu, items = page.get_by_role("menu"), page.get_by_role("menu").get_by_role("menuitem")
+
+            def empty_space() -> None:
+                box = page.locator("#tree").bounding_box()
+                page.mouse.click(box["x"] + 20, box["y"] + box["height"] - 12, button="right")
+
+            empty_space()
+            expect(menu).to_have_attribute("aria-label", "Vault actions")
+            expect(items).to_have_text(["Reveal Current Note", "Collapse All"])
+            menu.get_by_role("menuitem", name="Collapse All").click()
+            expect(menu).to_be_hidden()
+            expect(page.locator("#tree details[open]")).to_have_count(0)
+            expect(row).to_be_hidden()  # folded away, still the current note
+            # and remembered: `toggle` reaches the fold store a task later, as it does for a row's own click.
+            page.wait_for_function("() => localStorage.getItem('askw:vault:open') === '[]'")
+
+            empty_space()
+            expect(items.nth(1)).to_have_attribute("aria-disabled", "true")  # nothing left to fold
+            menu.get_by_role("menuitem", name="Reveal Current Note").click()
+            expect(row).to_be_visible()
+            self.assertTrue(row.get_attribute("data-path").endswith("Quick Note.md"))
+            self.assertEqual(page.locator("#tree details[open]").count(), 2)  # Areas, and Inbox inside it
+
+            # A reveal also comes back out of the filter, which had replaced the tree with its results.
+            page.locator("#vault-filter").fill("top")
+            page.locator("#tree .results a.file").wait_for()
+            empty_space()
+            menu.get_by_role("menuitem", name="Reveal Current Note").click()
+            expect(row).to_be_visible()
+            self.assertEqual(page.locator("#vault-filter").input_value(), "")
+
+            # Artifacts: the word follows the vault, and a note open elsewhere is not this tree's to reveal.
+            page.locator(".vault-switch a", has_text="Artifacts").click()
+            page.locator("#tree summary", has_text="Mine").wait_for()
+            empty_space()
+            expect(menu).to_have_attribute("aria-label", "Artifacts actions")
+            expect(items).to_have_text(["Reveal Current Page", "Collapse All", "New Folder"])
+            expect(items.nth(0)).to_have_attribute("aria-disabled", "true")
+            page.keyboard.press("Escape")
+            page.locator("#tree a.file", has_text="A Page").click()
+            page.wait_for_function("() => location.href.includes('page.html')")
+            empty_space()
+            expect(items.nth(0)).not_to_have_attribute("aria-disabled", "true")
+
+            # Library: Collapse All folds the folders, never its two headings — that would hide both trees.
+            page.keyboard.press("Escape")
+            page.locator(".vault-switch a", has_text="Library").click()
+            page.locator("#tree li.group summary", has_text="Mine").wait_for()
+            empty_space()
+            menu.get_by_role("menuitem", name="Collapse All").click()
+            expect(page.locator("#tree li.group > details[open]")).to_have_count(2)
+            expect(page.locator("#tree details[open]:not([data-group])")).to_have_count(0)
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_vault_sidebar_unpins_to_the_edge_and_pins_back(self) -> None:
         # Unpinned, the sidebar floats over the reader: out after a beat on the left edge, gone once the
         # pointer leaves, unless it is in use. Both engines: the app is WebKit.
