@@ -191,6 +191,28 @@ class PassageSearchTests(unittest.TestCase):
             self.assertIsNone(search.place(elsewhere, *trees), elsewhere)
         self.assertIsNone(search.place("Projects/Deploy.md", None, trees[1]))  # Notes not set up
 
+    def test_a_page_the_reader_is_showing_gets_vault_mcps_name_for_it(self) -> None:
+        base = Path(self.temp.name)
+        notes, artifacts = base / "notes", base / "Artifacts"
+        (notes / "Projects").mkdir(parents=True)
+        deploy = notes / "Projects" / "Deploy.md"
+        deploy.write_text("# Deploy\n", encoding="utf-8")
+        (artifacts / "Pages").mkdir(parents=True)
+        real = base / "elsewhere" / "built.html"
+        real.parent.mkdir(parents=True)
+        real.write_text("<title>Built page</title>", encoding="utf-8")
+        (artifacts / "Pages" / "one.html").symlink_to(real)  # Artifacts is a folder of links to HTML anywhere
+        notes_tree, html_tree = VaultIndex.build(notes, "notes"), VaultIndex.build(artifacts, "html")
+
+        self.assertEqual(search.locate(str(deploy), "notes", notes_tree), "Projects/Deploy.md")
+        self.assertEqual(search.place("Projects/Deploy.md", notes_tree, html_tree)["path"], str(deploy))
+        self.assertEqual(search.locate(str(artifacts / "Pages" / "one.html"), "html", html_tree), "Artifacts/Pages/one.html")
+        # The reading history keys a page by the file it really is; the tree still lists it under its link.
+        self.assertEqual(search.locate(str(real), "html", html_tree), "Artifacts/Pages/one.html")
+        for outside in (str(base / "other.md"), str(notes), "", "Projects/Deploy.md"):
+            self.assertIsNone(search.locate(outside, "notes", notes_tree), outside)
+        self.assertIsNone(search.locate(str(deploy), "notes", None))  # Notes not set up
+
     def test_without_an_index_there_are_no_passages_and_it_says_where_it_looked(self) -> None:
         index = search.PassageIndex(self.db, embed=stand_in({}))
         result = index.search("tunnel", place=as_notes)
@@ -226,6 +248,109 @@ class PassageSearchTests(unittest.TestCase):
             index._meaning(data, array.array("f", [1, 0, 0, 0]), 1)
 
 
+class RelatedTests(unittest.TestCase):
+    """The related pane (``PassageIndex.related``): the page being read, and the pages nearest it in meaning."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "index.db"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def index(self, passages) -> search.PassageIndex:
+        make_index(self.db, passages)
+        return search.PassageIndex(self.db, embed=stand_in({}))
+
+    def test_the_nearest_pages_come_back_in_order_and_the_page_itself_never_does(self) -> None:
+        passages = [
+            ("Projects/Here.md", "Here", "The page being read.", DEPLOY),
+            ("Projects/Here.md", "Here > More", "Still that page.", DEPLOY),
+            ("Areas/Close.md", "Close", "Nearly the same subject.", [1, 0.35, 0, 0]),
+            ("Areas/Far.md", "Far", "A different subject.", [1, 1.6, 0, 0]),
+        ]
+        result = self.index(passages).related("Projects/Here.md", place=as_notes)
+        self.assertEqual([item["title"] for item in result["items"]], ["Close", "Far"])
+        self.assertEqual(result["note"], "Projects/Here.md")
+        self.assertGreater(result["items"][0]["score"], result["items"][1]["score"])
+        # A related scan embeds nothing — the page's own vectors are in the index — so Ollama being off can't stop one.
+        def refuse(model: str, text: str):
+            raise search.Unavailable("Ollama isn't running")
+
+        off = search.PassageIndex(self.db, embed=refuse)
+        self.assertEqual([i["title"] for i in off.related("Projects/Here.md", place=as_notes)["items"]], ["Close", "Far"])
+
+    def test_a_page_is_one_row_at_its_nearest_passage(self) -> None:
+        passages = [
+            ("Areas/Here.md", "Here", "The page being read.", MUSIC),
+            ("Areas/There.md", "There > Far", "Nothing to do with it.", DEPLOY),
+            ("Areas/There.md", "There > Near", "All about the release.", [0.1, 1, 0, 0]),
+        ]
+        rows = self.index(passages).related("Areas/Here.md", place=as_notes)["items"]
+        self.assertEqual([(row["title"], row["heading"]) for row in rows], [("There", "Near")])
+        self.assertGreater(rows[0]["score"], 0.99)  # its nearest passage, not its average
+
+    def test_the_page_is_the_average_of_its_own_passages(self) -> None:
+        # Two passages pointing different ways average to a direction between them, which is nearest the page between.
+        passages = [
+            ("Areas/Both.md", "Both > A", "Deploying things.", DEPLOY),
+            ("Areas/Both.md", "Both > B", "Making music.", MUSIC),
+            ("Areas/Mix.md", "Mix", "Deploying things while making music.", [1, 1, 0, 0]),
+            ("Areas/One.md", "One", "Only deploying.", DEPLOY),
+        ]
+        rows = self.index(passages).related("Areas/Both.md", place=as_notes)["items"]
+        self.assertEqual([row["title"] for row in rows], ["Mix", "One"])
+
+    def test_a_near_enough_neighbour_is_marked_as_the_same_page_twice(self) -> None:
+        passages = [
+            ("Inbox/Capture.md", "Capture", "The raw capture of the note.", DEPLOY),
+            ("Projects/Filed.md", "Filed", "The filed version of the same thing.", [1, 0.05, 0, 0]),
+            ("Areas/Other.md", "Other", "Something else entirely.", [1, 1, 1, 0.2]),
+        ]
+        rows = self.index(passages).related("Inbox/Capture.md", place=as_notes)["items"]
+        self.assertEqual([(row["title"], row["dupe"]) for row in rows], [("Filed", True), ("Other", False)])
+        self.assertGreaterEqual(rows[0]["score"], search.DUPE_AT)
+
+    def test_the_divider_falls_at_the_largest_drop_and_nowhere_when_the_scores_are_flat(self) -> None:
+        # A real pane's scores: two neighbours, then the plateau every page in the vault shares with every other.
+        self.assertEqual(search.split_at([0.96, 0.84, 0.71, 0.69, 0.68, 0.67, 0.66]), 2)
+        self.assertEqual(search.split_at([0.96, 0.62, 0.62]), 1)
+        self.assertEqual(search.split_at([0.64, 0.63, 0.63, 0.62]), 0)  # no drop worth calling a split
+        self.assertEqual(search.split_at([0.9]), 0)
+        self.assertEqual(search.split_at([]), 0)
+        # A drop past the ranks a reader acts on divides nothing, however big it is.
+        self.assertEqual(search.split_at([0.7] * search.GAP_WITHIN + [0.2]), 0)
+
+    def test_a_page_the_index_doesnt_hold_says_so_rather_than_coming_back_empty(self) -> None:
+        index = self.index(PASSAGES)
+        for missing in ("Projects/Nothing.md", "", "Artifacts/Pages/gone.html"):
+            result = index.related(missing, place=as_notes)
+            self.assertEqual(result["items"], [], missing)
+            self.assertIn("isn't in the vault index", result["reason"], missing)
+        # Case is the one thing that may differ: the tree reads a name off the disk, and so does vault-mcp.
+        self.assertTrue(index.related("projects/deploy.MD", place=as_notes)["items"])
+
+    def test_without_an_index_it_says_where_it_looked(self) -> None:
+        result = search.PassageIndex(self.db).related("Projects/Deploy.md", place=as_notes)
+        self.assertEqual(result["items"], [])
+        self.assertIn("no vault index at", result["reason"])
+
+    def test_a_newer_page_stops_an_older_ones_scan_without_touching_the_palettes(self) -> None:
+        index = self.index(PASSAGES)
+        index._passages()
+        real = search._dot
+
+        def opened_another(a, b):  # a page opened in the reader while this scan was still running
+            index._latest_related += 1
+            return real(a, b)
+
+        with patch.object(search, "SCAN_BLOCK", 1), patch.object(search, "_dot", opened_another):
+            result = index.related("Projects/Deploy.md", place=as_notes)
+        self.assertTrue(result["superseded"])
+        self.assertEqual(result["items"], [])
+        self.assertEqual(index._latest, 0)  # the palette's own scans are counted apart, and were left alone
+
+
 class SearchApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -237,9 +362,23 @@ class SearchApiTests(unittest.TestCase):
         (self.artifacts / "Pages").mkdir(parents=True)
         self.one = self.artifacts / "Pages" / "one.html"
         self.one.write_text("<title>Page one</title><h2>Launch plan</h2><p>Friday it opens to everyone.</p>", encoding="utf-8")
+        # A vault HTML note linked into Artifacts: one file, and so a row in both trees. vault-mcp leaves out a vault
+        # HTML file that renders a same-name .md, so only its Artifacts name is in the index.
+        (self.notes / "Resources").mkdir(parents=True)
+        self.shared = self.notes / "Resources" / "Jev.html"
+        self.shared.write_text("<title>Jev</title><h2>What it is</h2><p>A typed judgment.</p>", encoding="utf-8")
+        self.link = self.artifacts / "Jev.html"
+        self.link.symlink_to(self.shared)
         db = base / "index.db"
         # Music.md is in the index but in neither vault, and so is a page no vault lists: neither comes back.
-        make_index(db, PASSAGES + [("Elsewhere.md", "", "The nas-tunnel, from a file no vault lists.", DEPLOY)])
+        make_index(
+            db,
+            PASSAGES
+            + [
+                ("Elsewhere.md", "", "The nas-tunnel, from a file no vault lists.", DEPLOY),
+                ("Artifacts/Jev.html", "Jev > What it is", "A typed judgment primitive.", MUSIC),
+            ],
+        )
         config = AppConfig(default_folder=base, allowed_roots=(base,), port=8899, data_dir=base / "data")
         self.app = create_app(config)
         self.app.state.storage.update_settings(
@@ -280,11 +419,45 @@ class SearchApiTests(unittest.TestCase):
     def test_status_says_what_a_search_would_use(self) -> None:
         status = self.client.get("/api/search/status").json()
         self.assertEqual(
-            (status["ok"], status["words"]["ok"], status["meaning"]["ok"], status["passages"]), (True, True, True, 4)
+            (status["ok"], status["words"]["ok"], status["meaning"]["ok"], status["passages"]), (True, True, True, 5)
         )
 
+    def test_related_places_the_neighbours_of_the_page_being_read(self) -> None:
+        result = self.client.get("/api/related", params={"vault": "notes", "path": str(self.deploy)}).json()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["note"], "Projects/Deploy.md")
+        # Every other page a tree lists, at its nearest passage; the page itself and the file no vault lists left out.
+        # The linked page comes back as the Artifacts row, which is the name it is indexed under.
+        self.assertEqual(
+            [(i["vault"], i["path"], i["title"], i["heading"]) for i in result["items"]],
+            [("html", str(self.link), "Jev", "What it is"), ("html", str(self.one), "Page one", "Launch plan")],
+        )
+        # An artifact is asked for the same way, and reaches vault-mcp under its mount.
+        artifact = self.client.get("/api/related", params={"vault": "html", "path": str(self.one)}).json()
+        self.assertEqual(artifact["note"], "Artifacts/Pages/one.html")
+        self.assertEqual(sorted(i["title"] for i in artifact["items"]), ["Deploy", "Jev"])
+        # The vault named is only which tree to ask first: a page opened before the shell's trees arrive can be named
+        # by the wrong one, and the page it is still decides the answer.
+        for guess in ("notes", "html", "nonsense"):
+            asked = self.client.get("/api/related", params={"vault": guess, "path": str(self.one)}).json()
+            self.assertEqual(asked["note"], "Artifacts/Pages/one.html", guess)
+
+    def test_a_page_in_both_vaults_is_asked_for_by_the_name_the_index_holds(self) -> None:
+        # Its Notes name ("Resources/Jev.html") is deliberately not indexed, so a guess that lands there finds nothing.
+        for named in (str(self.link), str(self.shared)):
+            for guess in ("notes", "html"):
+                result = self.client.get("/api/related", params={"vault": guess, "path": named}).json()
+                self.assertEqual(result["note"], "Artifacts/Jev.html", (named, guess))
+                self.assertTrue(result["items"], (named, guess))
+
+    def test_related_says_so_for_a_page_no_vault_lists(self) -> None:
+        for path in ("", str(Path(self.temp.name) / "loose.html"), "https://example.com/x"):
+            result = self.client.get("/api/related", params={"vault": "notes", "path": path}).json()
+            self.assertEqual((result["ok"], result["items"], result["cut"]), (True, [], 0), path)
+            self.assertIn("isn't in Notes or Artifacts", result["reason"], path)
+
     def test_both_routes_refuse_another_origin(self) -> None:
-        for route in ("/api/search?q=nas", "/api/search/status"):
+        for route in ("/api/search?q=nas", "/api/search/status", "/api/related?path=x"):
             response = self.client.get(route, headers={"origin": "https://attacker.example"})
             self.assertEqual(response.status_code, 403, route)
 
@@ -296,6 +469,11 @@ class SearchApiTests(unittest.TestCase):
         swift = LAUNCHER_SWIFT.read_text(encoding="utf-8")
         self.assertIn('menuItem("Search…", #selector(openSearch), "p")', swift)
         self.assertIn('shellCall("onyxShell.openSearch()", fallback: "/#search")', swift)
+
+    def test_the_shell_carries_the_panels_switch_and_the_related_pane(self) -> None:
+        page = self.client.get("/").text
+        for mark in ("<button id=tab-outline", "<button id=tab-related", "<div id=related", "<svg id=rel-map"):
+            self.assertIn(mark, page, mark)
 
 
 if __name__ == "__main__":

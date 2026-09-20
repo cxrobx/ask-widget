@@ -208,6 +208,22 @@ with their parents. The pin in its header (or ⌘⇧\, also from inside the page
 docks it as a third column beside the reader; that is remembered too. A window
 too narrow for three columns keeps it floating.
 
+The same panel's other half is **Related**: the pages nearest the one you are
+reading, by meaning rather than by any link you made. It reads the vault MCP's
+index — the one ⌘P searches — from the page's own direction instead of a typed
+query, so it embeds nothing, asks nothing of Ollama, and answers in about the
+time a search takes. Notes and Artifacts are searched together, so a note can
+turn up an artifact and the other way round.
+
+The map above the list places each neighbour at its distance from the centre,
+which is the page you are on; the angle is only rank and means nothing. The
+list carries the scores, and a dashed ring — and a divider in the list — marks
+where the page's neighbourhood ends, when it has one. Most pages don't, and
+then nothing is dimmed: the scores simply run evenly down from the top. Click a
+dot or a row to open it. A neighbour close enough to be the same content twice
+is marked `same?` — usually a note beside its own HTML rendering, or an inbox
+capture beside the note it became.
+
 Right-click a note or folder for its menu: **Open**, **Reveal in Finder** (the
 real file), and — for anything reached through a symlink — **Reveal Link in
 Finder**, which shows the link itself in the vault folder. Hold ⌥ and they read

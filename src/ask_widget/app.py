@@ -200,6 +200,24 @@ def _search_places(app: FastAPI):
     return lambda path: search.place(path, trees.get("notes"), trees.get("html"))
 
 
+def _search_locate(app: FastAPI, path: str, kind: str) -> str | None:
+    """``search.locate``: the page the reader is showing → vault-mcp's name for it, or None if no tree lists it.
+
+    Both trees are asked, because one file can be in both — an Artifacts page is usually a link, and a link into the
+    Notes vault makes the same bytes a note as well — and because a page opened from the Library before its trees
+    arrive is named by whichever vault the shell is showing. Which of its names the index holds is the index's to say
+    (``knows``): vault-mcp leaves out a vault HTML file that renders a same-name ``.md``, so the Notes name of such a
+    page finds nothing while its ``Artifacts/`` one finds everything. ``kind`` only breaks a tie.
+    """
+    names = []
+    for one in (kind, "html" if kind == "notes" else "notes"):
+        root = _vault_root(app, one)
+        found = search.locate(path, one, app.state.vault.get(root, one)) if root else None
+        if found is not None and found not in names:
+            names.append(found)
+    return next((name for name in names if app.state.passages.knows(name)), names[0] if names else None)
+
+
 def _register_context_root(app: FastAPI, folder: Path) -> Path | None:
     """Allow ``folder`` as a context root — unless it is the whole disk or home.
 
@@ -867,6 +885,31 @@ def create_app(config: AppConfig) -> FastAPI:
         places = await asyncio.to_thread(_search_places, app)
         found = await asyncio.to_thread(app.state.passages.search, q, place=places, limit=limit)
         return JSONResponse({"ok": True, "q": q, **found}, headers=headers)
+
+    # The related pane (vault_ui.py): the pages nearest the one being read, out of the same index. The client names
+    # the page as the reader has it, and the server works out vault-mcp's name for it, so this route can no more reach
+    # a page a tree doesn't list than the palette's can.
+    @app.get("/api/related")
+    async def related_api(
+        request: Request,
+        path: str = "",
+        vault_kind: str = Query("notes", alias="vault"),
+        limit: int = 20,
+    ):
+        if denied := api_forbidden(request):
+            return denied
+        headers = cors(request.headers.get("origin"))
+        kind = vault_kind if vault_kind in ("notes", "html") else "notes"
+        page = await asyncio.to_thread(_search_locate, app, path, kind)
+        if page is None:
+            return JSONResponse(
+                {"ok": True, "items": [], "cut": 0, "reason": "this page isn't in Notes or Artifacts"}, headers=headers
+            )
+        places = await asyncio.to_thread(_search_places, app)
+        found = await asyncio.to_thread(
+            app.state.passages.related, page, place=places, limit=max(1, min(limit, 40))
+        )
+        return JSONResponse({"ok": True, **found}, headers=headers)
 
     @app.get("/api/search/status")
     async def search_status_api(request: Request):

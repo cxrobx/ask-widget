@@ -1,4 +1,5 @@
-"""Search inside Notes and Artifacts by the words in a page and by what it means: the ⌘P palette's passages.
+"""Search inside Notes and Artifacts by the words in a page and by what it means: the ⌘P palette's passages, and the
+related pane's neighbours.
 
 Onyx keeps no index of its own. It reads the one the vault MCP maintains (vault-mcp's ``data/index.db``; see
 ``index_path``): every note and artifact cut into passages at its headings, each with an FTS5 row for its words and a
@@ -12,8 +13,12 @@ into: the last word matches as a prefix, meaning counts only above ``MEANING_FLO
 best passage. The frozen app carries no numpy, so the meaning leg is a plain-Python scan (``math.sumprod``: about
 200 ms over 10k passages, in a worker thread), and a newer query stops an older one's scan partway.
 
+``related`` is the same passages read the other way round: instead of a query's direction, the direction of the page
+being read, averaged over its own passages, with the nearest other pages around it. It is what vault-mcp's
+``related_notes`` does, and since the page's vectors are already in the index it embeds nothing and needs no Ollama.
+
 It degrades rather than breaks. No index: no passages, and titles still come from ``/api/vault/search``. No Ollama:
-words only. Every answer says which legs ran and why one didn't, for the palette's footer.
+words only, and related is unaffected. Every answer says which legs ran and why one didn't, for the palette's footer.
 """
 
 from __future__ import annotations
@@ -62,6 +67,20 @@ MEANING_FLOOR = 0.6
 RELOAD_EVERY = 5.0  # seconds between asking the index whether it has been rebuilt
 SCAN_BLOCK = 1024  # passages scored between looks for a newer query
 SNIPPET_LEN = 160
+# The related pane. Averaged over a page's chunks these cosines sit high and close together — measured over 120 pages
+# of the author's vault, a page's nearest neighbour ran 0.76 to 0.98, median 0.89 — so neither number below is a
+# similarity anyone should read as a percentage. What carries the meaning is the distance between them.
+#
+# At or above this, the pair was the same content twice every time it came up in that sample: a note beside its own
+# HTML rendering, a meeting note beside its "… 2" copy, an inbox capture beside the note it became. Worth saying so
+# about rather than opening again. Below it the band is mixed (0.93 was two genuinely different notes), and a label
+# that tells someone to merge two pages has to be right, so it stays where it is precise.
+DUPE_AT = 0.95
+# Where a page's neighbourhood ends: the largest drop in its scores, so long as the drop is a real one. Since the
+# scores are compressed, this is about the shape of the list and not its height — in that sample a third of pages had
+# a drop this size and the rest ran smoothly down from the top, which is a list with no neighbourhood to mark.
+GAP_MIN = 0.02
+GAP_WITHIN = 12  # ranks the split is looked for among: a gap at the twentieth row divides nothing
 
 # A C dot product from 3.12 (the app's Python is 3.14); 3.11, the oldest a checkout runs on, takes the slow road.
 _dot: Callable[[Sequence[float], Sequence[float]], float] = getattr(math, "sumprod", None) or (
@@ -172,6 +191,49 @@ def place(path: str, notes: Any, artifacts: Any) -> dict[str, Any] | None:
     return None
 
 
+def locate(path: str, kind: str, tree: Any) -> str | None:
+    """vault-mcp's name for a page Onyx is showing, or None when the tree doesn't list it: ``place`` the other way.
+
+    ``path`` is the page as Onyx names it — a row's ``path``, which is what the reader carries as its ``src``: the
+    lexical path inside the vault, links unresolved. A page reached by the file it really is instead (the reading
+    history keys a document by its realpath) comes back through the tree's ``by_real``.
+    """
+    if tree is None or not path:
+        return None
+    item = None
+    root = str(tree.root)
+    lexical = os.path.normpath(path)
+    if os.path.isabs(lexical) and lexical.startswith(root + os.sep):
+        item = tree.at(lexical[len(root) + 1 :].replace(os.sep, "/"))
+    if item is None:
+        item = tree.by_real(path)
+    if item is None or item.missing:
+        return None
+    return f"{ARTIFACTS_MOUNT}/{item.rel}" if kind == "html" else item.rel
+
+
+def sections(heading_path: str, title: Any) -> tuple[str, str]:
+    """A passage's own heading, and the trail of headings above it without the page's title repeated at its head."""
+    trail = [plain(part) for part in heading_path.split(" > ")]
+    trail = [part for part in trail if part]
+    rest = trail[1:] if trail and trail[0].casefold() == str(title or "").casefold() else trail
+    return (trail[-1] if trail else ""), " › ".join(rest)
+
+
+def split_at(scores: list[float]) -> int:
+    """How many of ``scores`` (descending) stand above the largest drop among them — 0 when none does.
+
+    The related pane's divider. Everything below it is the plateau every page shares with every other, so the answer
+    is a count of rows to act on, not a threshold: where the neighbourhood ends is a property of this page's scores,
+    and a vault of nothing but near-neighbours and a vault of strangers both read correctly.
+    """
+    gap, cut = GAP_MIN, 0
+    for i in range(1, min(len(scores), GAP_WITHIN)):
+        if scores[i - 1] - scores[i] > gap:
+            gap, cut = scores[i - 1] - scores[i], i
+    return cut
+
+
 # MARK: - The index
 
 
@@ -189,6 +251,8 @@ class _Passages:
     model: str
     dim: int = 0
     pos: dict[int, int] = field(default_factory=dict)  # chunk id -> position, the words leg's way in
+    pages: dict[str, list[int]] = field(default_factory=dict)  # file path -> its passages, the related pane's way in
+    folded: dict[str, str] = field(default_factory=dict)  # casefolded file path -> the path as the index spells it
     paths: list[str] = field(default_factory=list)
     headings: list[str] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
@@ -232,6 +296,10 @@ class PassageIndex:
         self._checked = 0.0
         self._queries = itertools.count(1)
         self._latest = 0
+        # The related pane counts its own scans: it and the palette scan the same passages, and neither is a newer
+        # version of the other, so a page opening behind the palette must not cancel the query being typed into it.
+        self._relates = itertools.count(1)
+        self._latest_related = 0
 
     def _connect(self) -> sqlite3.Connection:
         uri = "file:" + urllib.parse.quote(str(self.db_path)) + "?mode=ro"
@@ -258,6 +326,8 @@ class PassageIndex:
             if len(vec) != data.dim:
                 continue
             data.pos[chunk_id] = len(data.paths)
+            data.pages.setdefault(path, []).append(len(data.paths))
+            data.folded.setdefault(path.casefold(), path)
             data.paths.append(path)
             data.headings.append(heading or "")
             data.texts.append(text or "")
@@ -387,14 +457,12 @@ class PassageIndex:
             row = place(path)
             if row is None:
                 continue
-            trail = [plain(h) for h in data.headings[p].split(" > ")]
-            trail = [h for h in trail if h]
-            section = trail[1:] if trail and trail[0].casefold() == str(row.get("title", "")).casefold() else trail
+            heading, section = sections(data.headings[p], row.get("title", ""))
             result["items"].append(
                 {
                     **row,
-                    "heading": trail[-1] if trail else "",
-                    "section": " › ".join(section),
+                    "heading": heading,
+                    "section": section,
                     # Found by meaning alone, it holds no word typed worth quoting around: from its start.
                     "snippet": snippet(data.texts[p], "" if how == "meaning" else text),
                     "match": how,
@@ -403,6 +471,88 @@ class PassageIndex:
             if len(result["items"]) >= limit:
                 break
         return result
+
+    def related(self, path: str, *, place: Callable[[str], dict[str, Any] | None], limit: int = 20) -> dict[str, Any]:
+        """The pages nearest ``path`` in meaning, best first: the neighbours of the page being read.
+
+        ``path`` is vault-mcp's name for the page (``locate``). Its passages average into one direction, and every
+        other page is scored against it at its best passage — vault-mcp's ``related_notes``, over the index Onyx
+        already has open. Nothing is embedded, since the page's own vectors are in the index, so this asks nothing of
+        Ollama and works while it is off.
+
+        ``cut`` is how many rows stand above the largest drop in their scores (``split_at``), 0 when none does, and
+        ``dupe`` marks a neighbour close enough to be the same page twice. ``reason`` says why there are no rows: a
+        page too short to have been indexed, or one that hasn't been indexed yet, has no direction to search from.
+        """
+        scan_id = next(self._relates)
+        self._latest_related = scan_id
+        result: dict[str, Any] = {"note": path, "items": [], "cut": 0, "reason": ""}
+        try:
+            data = self._passages()
+        except Unavailable as exc:
+            result["reason"] = str(exc)
+            return result
+        own = data.pages.get(path) or data.pages.get(data.folded.get(path.casefold(), ""), [])
+        if not own or not data.dim:
+            result["reason"] = "this page isn't in the vault index yet"
+            return result
+        mean = [0.0] * data.dim
+        for p in own:
+            for i, value in enumerate(data.vecs[p]):
+                mean[i] += value
+        norm = math.sqrt(_dot(mean, mean))
+        if not norm:
+            result["reason"] = "this page's passages point nowhere"
+            return result
+        centre = array.array("f", (value / norm for value in mean))
+        # Each page at its best passage, as the palette lists one: the whole scan, in blocks, so a page opened while
+        # an older one is still being scored drops the older scan rather than queue behind it.
+        skip, best = set(own), {}
+        for start in range(0, len(data.vecs), SCAN_BLOCK):
+            if self._latest_related != scan_id:
+                result["superseded"] = True
+                return result
+            for p in range(start, min(start + SCAN_BLOCK, len(data.vecs))):
+                if p in skip:
+                    continue
+                score = _dot(centre, data.vecs[p])
+                page = data.paths[p]
+                if score > best.get(page, (-2.0, 0))[0]:
+                    best[page] = (score, p)
+        for page in sorted(best, key=lambda page: (-best[page][0], page)):
+            row = place(page)
+            if row is None:
+                continue  # indexed, but neither tree lists it: a note outside the vaults Onyx is showing
+            score, p = best[page]
+            heading, section = sections(data.headings[p], row.get("title", ""))
+            result["items"].append(
+                {
+                    **row,
+                    "score": round(score, 3),
+                    "dupe": score >= DUPE_AT,
+                    "heading": heading,
+                    "section": section,
+                    "snippet": snippet(data.texts[p], ""),
+                }
+            )
+            if len(result["items"]) >= limit:
+                break
+        result["cut"] = split_at([item["score"] for item in result["items"]])
+        return result
+
+    def knows(self, path: str) -> bool:
+        """Whether the index holds passages under this name.
+
+        One file can have more than one name here: an Artifacts page is usually a link, and when it points into the
+        Notes vault the same bytes are both ``Artifacts/…`` and a note. vault-mcp indexes one of them — it leaves out
+        a vault HTML file that is the rendering of a same-name ``.md`` — so which name to ask about is a question only
+        the index can answer, and guessing it from the vault the reader happens to be in gets it wrong.
+        """
+        try:
+            data = self._passages()
+        except Unavailable:
+            return False
+        return path in data.pages or path.casefold() in data.folded
 
     def status(self, *, warm: bool = False) -> dict[str, Any]:
         """Which legs a search would run, and why one wouldn't.

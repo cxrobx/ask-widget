@@ -10,7 +10,10 @@ page in the reader's place — open a file or URL, what you had open lately, and
 your latest asks. Settings and Recent conversations are the two modals at the
 sidebar's foot (``panels_ui.py``); ⌘P opens a third over everything, the search
 palette (``palette_ui.py``), and ⌘F a bar over the reader that finds words in the
-page it shows (``find_ui.py``).
+page it shows (``find_ui.py``). On the reader's right is a panel of two halves:
+the page's **Outline**, and the pages **Related** to it — its nearest neighbours
+in the same index ⌘P searches, read from the page's own direction instead of a
+query (``search.PassageIndex.related``).
 
 The page is deliberately thin. Files are plain ``<a target=reader>`` links, so
 the named iframe handles navigation and history without any click JS; the
@@ -271,7 +274,13 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 /* Outline: the page's headings on the reader's right, as Obsidian's outline pane. Docked (pinned), it is the grid's third
    column; floating (the default), it lies over the reader like the unpinned sidebar and comes out on the reader's right
    edge (watched in script, not an overlay: the page's scrollbar lives there) or from the round toggle in its corner. */
-#outline-side{{border-right:0;border-left:1px solid var(--line-soft)}} #outline-side .brand{{margin-bottom:10px}} .outline-title{{flex:1;min-width:0}} .outline-mark{{display:grid;flex:none;place-items:center;width:22px;height:22px;color:rgb(var(--secondary))}} .outline-mark svg{{width:18px;height:18px}}
+#outline-side{{border-right:0;border-left:1px solid var(--line-soft)}} #outline-side .brand{{gap:6px;margin-bottom:10px}}
+/* The pane's two panels share its header: a segmented switch where the title used to be. The fold button belongs to the
+   outline alone and goes while Related shows, which is also what leaves the switch its room. */
+.pane-tabs{{display:flex;flex:1;gap:2px;min-width:0;padding:2px;border-radius:8px;background:rgb(var(--ink)/.055)}}
+.pane-tab{{flex:1;min-width:0;padding:4px 6px;border:0;border-radius:6px;background:transparent;color:rgb(var(--secondary));font:inherit;font-size:11.5px;font-weight:500;letter-spacing:0;white-space:nowrap;transition:background-color .12s,color .12s}}
+.pane-tab:hover{{color:rgb(var(--ink))}} .pane-tab[aria-selected=true]{{background:rgb(var(--bg-elevated));color:rgb(var(--ink));font-weight:600;box-shadow:0 1px 2px rgb(0 0 0/.07)}}
+.pane-tab:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} .side-toggle[hidden]{{display:none}}
 #outline-filter{{width:100%;margin:0 0 8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:rgb(var(--bg-input)/.88);color:rgb(var(--ink));font-size:12.5px;box-shadow:inset 0 1px 0 rgb(255 255 255/.025)}} #outline-filter:focus{{outline:2px solid rgb(var(--accent)/.26);outline-offset:0;border-color:rgb(var(--accent))}}
 #outline-fold .up,#outline-fold.all-shut .down{{display:none}} #outline-fold.all-shut .up{{display:block}}
 #outline{{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:2px 6px;font-size:13px}} #outline ul{{list-style:none;margin:0;padding:0}} #outline ul ul{{margin-left:11px;padding-left:9px;border-left:1px solid var(--line-soft)}}
@@ -280,6 +289,25 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 #outline .tw{{display:grid;flex:none;place-items:center;width:16px;height:19px;padding:0;border:0;border-radius:4px;background:transparent;color:rgb(var(--faint));visibility:hidden;cursor:default}} #outline li.has-kids>.row .tw{{visibility:visible}} #outline .tw:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}}
 #outline .tw svg{{width:12px;height:12px;transform:rotate(90deg);transition:transform .12s}} #outline li.shut>.row .tw svg{{transform:none}} #outline li.shut>ul{{display:none}} #outline.filtering li.shut>ul{{display:block}} #outline li.miss{{display:none}}
 #outline .h:focus-visible,#outline .tw:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} #outline .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px}}
+/* Related: the pages nearest this one by meaning. The map above the list places each at its distance from the centre —
+   the score, on a scale fixed across pages, so a tight neighbourhood looks tight; the angle is rank, and means nothing.
+   The list carries the numbers, and its divider marks where this page's neighbourhood ends. */
+#related{{display:none;flex:1;flex-direction:column;min-height:0}} #related:not([hidden]){{display:flex}}
+#rel-map{{display:block;flex:none;width:100%;max-width:210px;height:auto;margin:2px auto 12px;aspect-ratio:1;overflow:visible}} #related.no-map #rel-map{{display:none}}
+#rel-map circle{{transition:r .12s,fill-opacity .12s}} .rel-here{{fill:rgb(var(--accent)/.5);stroke:rgb(var(--accent));stroke-width:1.4}}
+.rel-edge{{fill:none;stroke:rgb(var(--ink)/.2);stroke-width:.6;stroke-dasharray:2 2.6}}
+.rel-dot{{fill:rgb(var(--bg-elevated));stroke:rgb(var(--secondary));stroke-width:1.1;cursor:default}} .rel-dot.dim{{opacity:.5}}
+.rel-dot.on{{r:4.4;fill:rgb(var(--accent)/.28);stroke:rgb(var(--accent));opacity:1}} .rel-dot.dupe{{stroke-dasharray:2.2 1.6}}
+#rel-list{{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:0 6px 2px;display:flex;flex-direction:column;gap:1px}}
+.rel-row{{display:flex;flex-direction:column;gap:1px;width:100%;padding:5px 8px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default;transition:background-color .1s,opacity .12s}}
+.rel-row:hover,.rel-row.on{{background:rgb(var(--ink)/.06)}} .rel-row.dim{{opacity:.5}} .rel-row.dim:hover,.rel-row.dim.on{{opacity:1}}
+.rel-row:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}}
+.rel-t{{display:flex;align-items:baseline;gap:6px;min-width:0}} .rel-score{{flex:none;color:rgb(var(--faint));font-size:10px;font-variant-numeric:tabular-nums}}
+.rel-name{{flex:1;min-width:0;overflow:hidden;color:rgb(var(--ink)/.88);font-size:12.5px;white-space:nowrap;text-overflow:ellipsis}}
+.rel-dupe{{flex:none;padding:0 4px;border-radius:4px;background:rgb(var(--accent)/.16);color:rgb(var(--secondary));font-size:9.5px;letter-spacing:.02em}}
+.rel-where{{overflow:hidden;padding-left:24px;color:rgb(var(--muted));font-size:10.5px;white-space:nowrap;text-overflow:ellipsis}}
+.rel-split{{flex:none;margin:6px 8px 5px;border-top:1px dashed var(--line);color:rgb(var(--faint));font-size:9.5px;letter-spacing:.05em;text-transform:uppercase}} .rel-split span{{display:block;padding-top:4px}}
+#related .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px;line-height:1.5}}
 .outline-toggle{{position:absolute;top:12px;right:12px;z-index:2;display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:999px;background:rgb(var(--bg-elevated)/.82);color:rgb(var(--secondary));box-shadow:0 6px 18px rgb(0 0 0/.1);backdrop-filter:blur(14px) saturate(1.8);-webkit-backdrop-filter:blur(14px) saturate(1.8);transition:background-color .15s,color .15s}}
 .outline-toggle:hover,.outline-toggle[aria-expanded=true]{{background:rgb(var(--bg-elevated)/.97);color:rgb(var(--ink))}} .outline-toggle svg{{width:15px;height:15px}} .outline-toggle:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:2px}}
 body.outline-docked .outline-toggle{{display:none}} body.outline-out .outline-toggle{{visibility:hidden}}
@@ -306,10 +334,11 @@ body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(
 <div class=home-h><h2>Recently opened</h2></div><div id=home-docs class=home-grid></div>
 <div class=home-h><h2>Recent asks</h2><button type=button id=home-all class=link>See all</button></div><div id=home-asks class=home-list></div>
 </div></section>
-<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe><button id=outline-toggle class=outline-toggle type=button title="Outline (⌘⇧\\)" aria-label="Show outline" aria-controls=outline-side aria-expanded=false>{OUTLINE_ICON}</button>{find_html}</main>
-<aside id=outline-side aria-label="Outline"><div class=brand><span class=outline-mark>{OUTLINE_ICON}</span><span class=outline-title>Outline</span><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin outline (⌘⇧\\)" aria-label="Pin outline" aria-controls=outline-side>{PIN_ICON}</button></div>
+<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe><button id=outline-toggle class=outline-toggle type=button title="Outline and related (⌘⇧\\)" aria-label="Show outline and related pages" aria-controls=outline-side aria-expanded=false>{OUTLINE_ICON}</button>{find_html}</main>
+<aside id=outline-side aria-label="Outline and related pages"><div class=brand><div class=pane-tabs role=tablist aria-label="Panel"><button id=tab-outline class=pane-tab type=button role=tab aria-selected=true aria-controls=outline>Outline</button><button id=tab-related class=pane-tab type=button role=tab aria-selected=false aria-controls=related>Related</button></div><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin panel (⌘⇧\\)" aria-label="Pin panel" aria-controls=outline-side>{PIN_ICON}</button></div>
 <input id=outline-filter type=search placeholder="Filter headings…" autocomplete=off spellcheck=false aria-label="Filter headings">
-<nav id=outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
+<nav id=outline role=tabpanel aria-labelledby=tab-outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav>
+<div id=related role=tabpanel aria-labelledby=tab-related aria-label="Related pages" hidden><svg id=rel-map viewBox="0 0 100 100" aria-hidden=true></svg><div id=rel-list></div></div></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 {panels_html}
 {search_html}
 <script src=/app-menu.js></script>
@@ -420,7 +449,7 @@ function outLater(){{clearTimeout(outTimer);if(outDocked())return;outTimer=setTi
 // The context pill in the reader's corner moves left of the toggle while the toggle is there (ask.js reads the variable),
 // and left of the find bar (find_ui.py) while that is open.
 function pillRoom(){{try{{const st=reader.contentDocument.documentElement.style,bar=$('#find-bar'),right=(outDocked()?12:50)+(bar.hidden?0:bar.offsetWidth+8);if(right===12)st.removeProperty('--askw-pill-right');else st.setProperty('--askw-pill-right',right+'px')}}catch(e){{}}}}
-function applyOutlinePin(){{const dock=outPinned&&!narrow.matches;document.body.classList.toggle('outline-docked',dock);outPin.setAttribute('aria-pressed',String(outPinned));outPin.title=(outPinned?'Unpin':'Pin')+' outline (⌘⇧\\\\)';clearTimeout(outTimer);outOut(!dock&&(outOver||outInUse()));if(!dock&&!outOver)outLater();pillRoom()}}
+function applyOutlinePin(){{const dock=outPinned&&!narrow.matches;document.body.classList.toggle('outline-docked',dock);outPin.setAttribute('aria-pressed',String(outPinned));outPin.title=(outPinned?'Unpin':'Pin')+' panel (⌘⇧\\\\)';clearTimeout(outTimer);outOut(!dock&&(outOver||outInUse()));if(!dock&&!outOver)outLater();pillRoom()}}
 function setOutlinePinned(on){{outPinned=on;store(OUT_KEY,on?'pinned':'');applyOutlinePin()}}
 function outKey(e){{if((e.key==='\\\\'||e.key==='|')&&e.shiftKey&&(e.metaKey||e.ctrlKey)&&!e.altKey){{e.preventDefault();setOutlinePinned(!outPinned)}}}}
 outPin.onclick=()=>setOutlinePinned(!outPinned); document.addEventListener('keydown',outKey); narrow.addEventListener('change',applyOutlinePin);
@@ -456,7 +485,55 @@ function applyOutFilter(){{const q=outFilter.value.trim().toLowerCase();outNav.c
 for(const li of lis.reverse()){{const own=li.querySelector(':scope > .row .h').textContent.toLowerCase().includes(q),kid=li.querySelector(':scope > ul > li:not(.miss)');li.classList.toggle('miss',!own&&!kid)}}}}
 let outFilterTimer; outFilter.oninput=()=>{{clearTimeout(outFilterTimer);outFilterTimer=setTimeout(applyOutFilter,120)}};
 // A page just loaded: its folds start open, its headings are read once the widget has drawn, and followed from then on.
-function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('keydown',outKey);w.addEventListener('scroll',outScrolled,{{passive:true}});w.addEventListener('resize',outScrolled);w.addEventListener('mousemove',outEdgeMove,{{passive:true}})}}catch(e){{}}outAtEdge=false;outShut.clear();outSig='';outFilter.value='';watchReader();buildOutline();pillRoom()}}
+function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('keydown',outKey);w.addEventListener('scroll',outScrolled,{{passive:true}});w.addEventListener('resize',outScrolled);w.addEventListener('mousemove',outEdgeMove,{{passive:true}})}}catch(e){{}}outAtEdge=false;outShut.clear();outSig='';outFilter.value='';watchReader();buildOutline();relPageChanged();pillRoom()}}
+// MARK: related — the pages nearest the one being read (/api/related, search.py): the index ⌘P searches, read from a
+// page's own direction instead of from a query. Nothing is embedded for it, so it answers while Ollama is off. The map
+// puts each neighbour at its distance from the centre — the radius is its score on a scale fixed across pages, so a
+// tight neighbourhood looks tight and two pages' maps compare; the angle is only rank, spread so the dots don't land on
+// each other, and means nothing. The list carries the numbers, and a divider marks where the neighbourhood ends — most
+// pages have no such drop and get no divider, which is the pane saying this page sits among its vault evenly.
+const PANE_KEY='askw:vault:pane', relPane=$('#related'), relList=$('#rel-list'), relMap=$('#rel-map'), tabOut=$('#tab-outline'), tabRel=$('#tab-related');
+let relOn=recall(PANE_KEY)==='related', relFor=null, relSeq=0, relRows=[];
+function setPane(on){{relOn=on;store(PANE_KEY,on?'related':'');tabOut.setAttribute('aria-selected',String(!on));tabRel.setAttribute('aria-selected',String(on));
+outNav.hidden=on;outFilter.hidden=on;outFold.hidden=on;relPane.hidden=!on;if(on)loadRelated()}}
+tabOut.onclick=()=>setPane(false); tabRel.onclick=()=>setPane(true);
+// A new page in the reader: what was worked out for the last one no longer describes it, and the scan is worth its
+// 200 ms only while the pane is the one showing.
+function relPageChanged(){{relFor=null;relSeq++;if(relOn)loadRelated()}}
+function relHere(){{const src=currentSrc();return src?{{path:src,vault:vaultOf(src)||(KIND==='library'?'notes':KIND)}}:null}}
+async function loadRelated(){{const here=relHere(),seq=++relSeq;
+if(!here){{relFor=null;drawRelated({{items:[],reason:'Open a page to see what it sits near.'}});return}}
+if(relFor===here.path)return;
+relPane.classList.add('no-map');relList.innerHTML='<div class=none>Looking…</div>';
+let d;try{{d=await api('/api/related?vault='+here.vault+'&path='+encodeURIComponent(here.path))}}catch(e){{d={{items:[],reason:e.message}}}}
+if(seq!==relSeq||d.superseded)return;relFor=here.path;drawRelated(d)}}
+// Fixed, not scaled to this page's own spread: 0.96 must sit near the centre whether or not anything else is close.
+function relRadius(score){{return Math.max(9,Math.min(46,9+(1-score)*84))}}
+function relWhere(r){{return [GROUPS[r.vault]].concat(r.folder?r.folder.split('/'):[]).join(' › ')}}
+function relDots(items,cut){{const n=Math.min(items.length,12),out=[];
+// The neighbourhood's edge, where the list's divider falls: between the last row above it and the first below, so the
+// same split reads in both halves of the pane. Drawn first, and so behind the dots.
+if(cut&&cut<n)out.push(`<circle class=rel-edge cx=50 cy=50 r=${{((relRadius(items[cut-1].score)+relRadius(items[cut].score))/2).toFixed(1)}}></circle>`);
+out.push(`<circle class=rel-here cx=50 cy=50 r=4.5><title>${{esc(document.title.replace(/ — [^—]*$/,''))}}</title></circle>`);
+for(let i=0;i<n;i++){{const a=(-90+i*360/n)*Math.PI/180,r=relRadius(items[i].score),cls='rel-dot'+(cut&&i>=cut?' dim':'')+(items[i].dupe?' dupe':'');
+out.push(`<circle class="${{cls}}" data-i=${{i}} cx=${{(50+r*Math.cos(a)).toFixed(1)}} cy=${{(50+r*Math.sin(a)).toFixed(1)}} r=3><title>${{esc(items[i].title)}} — ${{items[i].score.toFixed(2)}}</title></circle>`)}}
+return out.join('')}}
+function drawRelated(d){{const items=d.items||[],cut=d.cut||0;relRows=items;relPane.classList.toggle('no-map',!items.length);
+if(!items.length){{relMap.innerHTML='';const why=d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1):'Nothing in the vault sits near this page.';relList.innerHTML='<div class=none>'+esc(why.endsWith('.')?why:why+'.')+'</div>';return}}
+relMap.innerHTML=relDots(items,cut);
+relList.innerHTML=items.map((r,i)=>(cut&&i===cut?'<div class=rel-split role=separator><span>Less alike</span></div>':'')
++`<button class="rel-row${{cut&&i>=cut?' dim':''}}" type=button data-i=${{i}} title="${{esc(r.title)}}${{r.section?' — '+esc(r.section):''}}">`
++`<span class=rel-t><span class=rel-score>${{r.score.toFixed(2)}}</span><span class=rel-name>${{esc(r.title)}}</span>${{r.dupe?'<span class=rel-dupe>same?</span>':''}}</span>`
++`<span class=rel-where>${{esc(relWhere(r))}}</span></button>`).join('')}}
+function relMark(i){{for(const el of relPane.querySelectorAll('.on'))el.classList.remove('on');if(i<0)return;
+const row=relList.querySelector(`.rel-row[data-i="${{i}}"]`),dot=relMap.querySelector(`.rel-dot[data-i="${{i}}"]`);if(row)row.classList.add('on');if(dot)dot.classList.add('on')}}
+function relOpen(r){{if(!r)return;if(KIND!=='library'&&r.vault!==KIND)switchVault(r.vault,true);if(currentSrc()!==r.path)navigate(viewHref(r.path,r.vault))}}
+relList.addEventListener('mousemove',e=>{{const b=e.target.closest('.rel-row');relMark(b?+b.dataset.i:-1)}});
+relMap.addEventListener('mousemove',e=>{{const c=e.target.closest('.rel-dot');relMark(c?+c.dataset.i:-1)}});
+relPane.addEventListener('mouseleave',()=>relMark(-1));
+relList.addEventListener('focusin',e=>{{const b=e.target.closest('.rel-row');if(b)relMark(+b.dataset.i)}});
+relList.addEventListener('click',e=>{{const b=e.target.closest('.rel-row');if(b)relOpen(relRows[+b.dataset.i])}});
+relMap.addEventListener('click',e=>{{const c=e.target.closest('.rel-dot');if(c)relOpen(relRows[+c.dataset.i])}});
 // MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads.
 // History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
 function traversed(){{try{{const n=reader.contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
@@ -646,7 +723,7 @@ window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistor
 // Put back as it was left without a slide: the page opens with the sidebar already away.
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
 // The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.
-document.body.classList.add('outline-still');applyOutlinePin();requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('outline-still')));
+document.body.classList.add('outline-still');setPane(relOn);applyOutlinePin();requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('outline-still')));
 // Both trees load up front: Library draws them together, and the first switch is as instant as the rest.
 const FIRST=KIND; if(FIRST==='library'&&!INITIAL_SRC)loadHome();
 (FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);{{const s=currentSrc();if(s){{rememberLast(s);highlight(s)}}}}if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)navigate(viewHref(last,FIRST))}});
