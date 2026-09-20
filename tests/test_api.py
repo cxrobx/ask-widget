@@ -543,14 +543,14 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertIn(f'<iframe id=reader name=reader src="/view?{expected}"', shell.text)
         self.assertIn('<body class="kind-library', shell.text)
         self.assertIn("<title>index.html — Library</title>", shell.text)
-        self.assertIn("<section id=home aria-label=\"Library\" hidden>", shell.text)  # a page is open: no home page
+        self.assertIn("<section id=home data-drag aria-label=\"Library\" hidden>", shell.text)  # a page is open: no home page
         # A document in neither vault keeps the folder it came with.
         loose = self.context / "loose.md"
         loose.write_text("# Loose\n", encoding="utf-8")
         page = self.client.get("/", params={"src": str(loose), "folder": str(self.context)})
         expected = urllib.parse.urlencode({"src": str(loose), "folder": str(self.context)}, quote_via=urllib.parse.quote, safe="/")
         self.assertIn(f'src="/view?{expected.replace("&", "&amp;")}"', page.text)
-        self.assertIn("<section id=home aria-label=\"Library\">", self.client.get("/").text)  # nothing open: home
+        self.assertIn("<section id=home data-drag aria-label=\"Library\">", self.client.get("/").text)  # nothing open: home
 
     def test_evidence_opens_in_the_reader_as_its_row_at_the_cited_passage(self) -> None:
         # An answer cites the real file; the reader opens it as its row in Artifacts, at the words on the cited line.

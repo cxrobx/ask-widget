@@ -320,30 +320,39 @@ body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(
 {panels_css}
 {search_css}
 {find_css}
-</style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
+</style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side data-drag><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Library and vaults"><a href="/"{library_active} data-kind=library>Library</a><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
-<nav id=tree aria-label="{tree_label}"><div class=none>Loading…</div></nav>
-<div class=aside-foot><span id=vault-count>v{version}</span><button id=open-history class=foot-btn type=button title="Recent conversations (⌘Y)" aria-label="Recent conversations">{history_icon}</button><button id=open-settings class=foot-btn type=button title="Settings (⌘,)" aria-label="Settings">{settings_icon}</button></div><div id=side-grip role=separator aria-orientation=vertical aria-label="Resize sidebar" title="Drag to resize · double-click to reset"></div></aside>
+<nav id=tree data-nodrag aria-label="{tree_label}"><div class=none>Loading…</div></nav>
+<div class=aside-foot><span id=vault-count>v{version}</span><button id=open-history class=foot-btn type=button title="Recent conversations (⌘Y)" aria-label="Recent conversations">{history_icon}</button><button id=open-settings class=foot-btn type=button title="Settings (⌘,)" aria-label="Settings">{settings_icon}</button></div><div id=side-grip data-nodrag role=separator aria-orientation=vertical aria-label="Resize sidebar" title="Drag to resize · double-click to reset"></div></aside>
 <main id=reader-pane><div id=reader-empty{empty_hidden}><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
-<section id=home aria-label="Library"{home_hidden}><div class=home-inner>
+<section id=home data-drag aria-label="Library"{home_hidden}><div class=home-inner>
 <form id=open-form class=open-row><input id=open-src placeholder="Open a file or URL — HTML, Markdown, text, PDF, or https://…" spellcheck=false autocomplete=off aria-label="Document URL or local file"><button type=button class="secondary pick" data-pick=file data-target=open-src>Choose…</button><button class=primary>Open</button></form>
-<details class=open-context><summary>Context folder: <span id=open-folder-label>{short_folder}</span></summary><div class=row><input id=open-folder value="{default_folder}" spellcheck=false autocomplete=off aria-label="Context folder"><button type=button class="secondary pick" data-pick=folder data-target=open-folder>Choose…</button></div><p class=field-help>Only files inside this folder are available to the provider as evidence. Notes and Artifacts bring their own.</p></details>
+<details class=open-context data-nodrag><summary>Context folder: <span id=open-folder-label>{short_folder}</span></summary><div class=row><input id=open-folder value="{default_folder}" spellcheck=false autocomplete=off aria-label="Context folder"><button type=button class="secondary pick" data-pick=folder data-target=open-folder>Choose…</button></div><p class=field-help>Only files inside this folder are available to the provider as evidence. Notes and Artifacts bring their own.</p></details>
 <div class=home-h><h2>Recently opened</h2></div><div id=home-docs class=home-grid></div>
 <div class=home-h><h2>Recent asks</h2><button type=button id=home-all class=link>See all</button></div><div id=home-asks class=home-list></div>
 </div></section>
 <iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe><button id=outline-toggle class=outline-toggle type=button title="Outline and related (⌘⇧\\)" aria-label="Show outline and related pages" aria-controls=outline-side aria-expanded=false>{OUTLINE_ICON}</button>{find_html}</main>
-<aside id=outline-side aria-label="Outline and related pages"><div class=brand><div class=pane-tabs role=tablist aria-label="Panel"><button id=tab-outline class=pane-tab type=button role=tab aria-selected=true aria-controls=outline>Outline</button><button id=tab-related class=pane-tab type=button role=tab aria-selected=false aria-controls=related>Related</button></div><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin panel (⌘⇧\\)" aria-label="Pin panel" aria-controls=outline-side>{PIN_ICON}</button></div>
+<aside id=outline-side data-drag aria-label="Outline and related pages"><div class=brand><div class=pane-tabs role=tablist aria-label="Panel"><button id=tab-outline class=pane-tab type=button role=tab aria-selected=true aria-controls=outline>Outline</button><button id=tab-related class=pane-tab type=button role=tab aria-selected=false aria-controls=related>Related</button></div><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin panel (⌘⇧\\)" aria-label="Pin panel" aria-controls=outline-side>{PIN_ICON}</button></div>
 <input id=outline-filter type=search placeholder="Filter headings…" autocomplete=off spellcheck=false aria-label="Filter headings">
-<nav id=outline role=tabpanel aria-labelledby=tab-outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav>
-<div id=related role=tabpanel aria-labelledby=tab-related aria-label="Related pages" hidden><svg id=rel-map viewBox="0 0 100 100" aria-hidden=true></svg><div id=rel-list></div></div></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
+<nav id=outline data-nodrag role=tabpanel aria-labelledby=tab-outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav>
+<div id=related data-nodrag role=tabpanel aria-labelledby=tab-related aria-label="Related pages" hidden><svg id=rel-map viewBox="0 0 100 100" aria-hidden=true></svg><div id=rel-list></div></div></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 {panels_html}
 {search_html}
 <script src=/app-menu.js></script>
 <script>
 let KIND={json.dumps(kind)}; const TOKEN={token}; const INITIAL_SRC={initial_src}; const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
 const native=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.askwPick); if(native)document.body.classList.add('native');
+// MARK: moving the window — a WebView swallows the mouse, so AppKit drags the window only by the thin band of title
+// bar over the page, and the chrome around the reader looks draggable but is not. Every mouse-down inside [data-drag]
+// is handed back to the app, which drags the window by it: the sidebar's top strip, the panel heads, the space around
+// the filters and the home page. The lists say [data-nodrag] and the controls keep their own click, as cxtasks and
+// cxmail scope `data-tauri-drag-region`.
+const DRAG_KEEP='a,button,input,textarea,select,summary,label,[contenteditable],[draggable=true],[data-nodrag]';
+if(native)document.addEventListener('mousedown',e=>{{const t=e.target;
+if(e.button!==0||e.detail>1||!(t instanceof Element)||!t.closest('[data-drag]')||t.closest(DRAG_KEEP))return;
+Promise.resolve(window.webkit.messageHandlers.askwDrag.postMessage({{}})).catch(()=>{{}});}});
 {glass_js}
 // What each view calls itself; a switch (switchVault, below) moves KIND and everything that hangs off it in place. Library
 // is both vaults at once, each tree under its own heading, so every row says which vault it belongs to (data-vault).

@@ -727,6 +727,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         configuration.userContentController.addScriptMessageHandler(
             self, contentWorld: .page, name: "askwGlass"
         )
+        configuration.userContentController.addScriptMessageHandler(
+            self, contentWorld: .page, name: "askwDrag"
+        )
         // WebKit does not consistently expose the Clipboard API to localhost
         // pages. Give interactive local HTML a browser-compatible writeText()
         // backed by the native pasteboard. The message handler replies with a
@@ -920,6 +923,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 forKey: appearanceDefaultsKey
             )
             replyHandler(true, nil)
+            return
+        }
+        if message.name == "askwDrag" {
+            // A WebView swallows the mouse, so the only thing AppKit will drag
+            // the window by is the thin band of title bar over the page. The
+            // shell hands the mouse-down straight back and the window drags by
+            // its own chrome instead — what `data-tauri-drag-region` does for
+            // cxtasks and cxmail. The event has to be the live one: NSApp holds
+            // the mouse-down that the page is reporting.
+            guard message.frameInfo.isMainFrame, let event = NSApp.currentEvent,
+                event.type == .leftMouseDown || event.type == .leftMouseDragged
+            else {
+                replyHandler(false, nil)
+                return
+            }
+            // Reply first: performDrag(with:) runs its own event loop and does
+            // not return until the mouse comes up.
+            replyHandler(true, nil)
+            window.performDrag(with: event)
             return
         }
         if message.name == "askwGlass" {
