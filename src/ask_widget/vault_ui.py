@@ -311,12 +311,20 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 .outline-toggle:hover,.outline-toggle[aria-expanded=true]{{background:rgb(var(--bg-elevated)/.97);color:rgb(var(--ink))}} .outline-toggle svg{{width:15px;height:15px}} .outline-toggle:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:2px}}
 body.outline-docked .outline-toggle{{display:none}} body.outline-out .outline-toggle{{visibility:hidden}}
 body.reader-blank .outline-toggle{{display:none}}
-body:not(.outline-docked) #outline-side{{position:fixed;top:8px;right:8px;bottom:8px;z-index:40;width:min(250px,86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(100% + 16px))}} body.native:not(.outline-docked) #outline-side{{padding-top:40px}}
+body:not(.outline-docked) #outline-side{{position:fixed;top:8px;right:8px;bottom:8px;z-index:40;width:min(var(--outline-w),86vw);height:auto;max-height:none;padding-top:12px;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgb(0 0 0/.24),0 2px 8px rgb(0 0 0/.08);visibility:hidden;transform:translateX(calc(100% + 16px))}} body.native:not(.outline-docked) #outline-side{{padding-top:40px}}
 body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar)/.96);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3)}}
 @media(prefers-reduced-transparency:reduce){{body:not(.outline-docked):not(.obsidian-tree) #outline-side{{background:rgb(var(--bg-sidebar));backdrop-filter:none;-webkit-backdrop-filter:none}}}}
 body.outline-out:not(.outline-docked) #outline-side{{visibility:visible;transform:none}}
 body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s}} body.outline-out:not(.outline-docked) #outline-side{{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s}} body.outline-still #outline-side{{transition:none!important}}
 @media(prefers-reduced-motion:reduce){{body:not(.outline-docked) #outline-side{{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s}} body.outline-out:not(.outline-docked) #outline-side{{opacity:1;transition:opacity .15s linear,visibility 0s}} #outline .tw svg{{transition:none}}}}
+/* The panel's width, like the sidebar's: drag its left edge, docked or floating (the grip lies inside the edge, since
+   the aside clips), double-click to put the default back. While dragging, nothing glides and the reader's iframe can't
+   swallow the pointer. Remembered across pages and views (askw:vault:outline-w, inline on .shell). */
+#outline-grip{{position:absolute;top:0;left:0;bottom:0;z-index:3;width:8px;cursor:col-resize;touch-action:none}}
+#outline-grip::after{{content:"";position:absolute;top:0;left:1px;bottom:0;width:2px;border-radius:2px;background:rgb(var(--accent));opacity:0;transition:opacity .1s}}
+body:not(.outline-docked) #outline-grip::after{{top:10px;bottom:10px;left:2px}}
+#outline-grip:hover::after,body.outline-resizing #outline-grip::after{{opacity:.7}}
+body.outline-resizing,body.outline-resizing *{{cursor:col-resize!important;user-select:none;-webkit-user-select:none}} body.outline-resizing .shell,body.outline-resizing #outline-side{{transition:none!important}} body.outline-resizing #reader{{pointer-events:none}}
 {panels_css}
 {search_css}
 {find_css}
@@ -337,7 +345,7 @@ body:not(.outline-docked) #outline-side{{transition:transform .13s cubic-bezier(
 <aside id=outline-side data-drag aria-label="Outline and related pages"><div class=brand><div class=pane-tabs role=tablist aria-label="Panel"><button id=tab-outline class=pane-tab type=button role=tab aria-selected=true aria-controls=outline>Outline</button><button id=tab-related class=pane-tab type=button role=tab aria-selected=false aria-controls=related>Related</button></div><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin panel (⌘⇧\\)" aria-label="Pin panel" aria-controls=outline-side>{PIN_ICON}</button></div>
 <input id=outline-filter type=search placeholder="Filter headings…" autocomplete=off spellcheck=false aria-label="Filter headings">
 <nav id=outline data-nodrag role=tabpanel aria-labelledby=tab-outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav>
-<div id=related data-nodrag role=tabpanel aria-labelledby=tab-related aria-label="Related pages" hidden><svg id=rel-map viewBox="0 0 100 100" aria-hidden=true></svg><div id=rel-list></div></div></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
+<div id=related data-nodrag role=tabpanel aria-labelledby=tab-related aria-label="Related pages" hidden><svg id=rel-map viewBox="0 0 100 100" aria-hidden=true></svg><div id=rel-list></div></div><div id=outline-grip data-nodrag role=separator aria-orientation=vertical aria-label="Resize panel" title="Drag to resize · double-click to reset"></div></aside></div><div id=side-edge aria-hidden=true></div><div id=peek role=tooltip hidden></div>
 {panels_html}
 {search_html}
 <script src=/app-menu.js></script>
@@ -449,10 +457,10 @@ sideGrip.addEventListener('dblclick',()=>sideWidth(null));
 // pointer moves (same origin), not an overlay as on the left, so the page's scrollbar under it stays clickable. ⌘⇧\\ pins and unpins, also from inside the reader; a narrow window never
 // docks it. The pin is remembered; a fold is kept while its page stays open.
 const OUT_KEY='askw:vault:outline', outSide=$('#outline-side'), outNav=$('#outline'), outPin=$('#outline-pin'), outToggle=$('#outline-toggle'), outFilter=$('#outline-filter'), outFold=$('#outline-fold'), narrow=matchMedia('(max-width:800px)');
-let outPinned=recall(OUT_KEY)==='pinned', outOver=false, outTimer=0, outBuildTimer=0, outRaf=0, outObserver=null, outActive=-1, outSig=''; let HEADS=[]; const outShut=new Set();
+let outPinned=recall(OUT_KEY)==='pinned', outOver=false, outTimer=0, outBuildTimer=0, outRaf=0, outObserver=null, outActive=-1, outSig='', outGripFrom=null; let HEADS=[]; const outShut=new Set();
 function outDocked(){{return document.body.classList.contains('outline-docked')}} function outShown(){{return outDocked()||document.body.classList.contains('outline-out')}}
 function outOut(out){{document.body.classList.toggle('outline-out',out);outSide.inert=!outDocked()&&!out;outToggle.setAttribute('aria-expanded',String(outShown()))}}
-function outInUse(){{const a=document.activeElement;return !!(a&&outSide.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))}}
+function outInUse(){{const a=document.activeElement;return !!(outGripFrom||(a&&outSide.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)))}}
 function outLater(){{clearTimeout(outTimer);if(outDocked())return;outTimer=setTimeout(function check(){{if(outDocked()||outOver)return;if(outInUse()){{outTimer=setTimeout(check,400);return}}outOut(false)}},400)}}
 // The context pill in the reader's corner moves left of the toggle while the toggle is there (ask.js reads the variable),
 // and left of the find bar (find_ui.py) while that is open.
@@ -466,6 +474,18 @@ outToggle.onclick=()=>{{clearTimeout(outTimer);outOut(true)}};
 let outAtEdge=false; function outEdgeMove(e){{const w=e.view||window,at=!outDocked()&&w.innerWidth-e.clientX<=24;if(at===outAtEdge)return;outAtEdge=at;clearTimeout(outTimer);if(at)outTimer=setTimeout(()=>outOut(true),40);else if(document.body.classList.contains('outline-out'))outLater()}}
 outSide.addEventListener('mouseenter',()=>{{outOver=true;clearTimeout(outTimer)}}); outSide.addEventListener('mouseleave',()=>{{outOver=false;outLater()}}); outSide.addEventListener('focusout',()=>{{if(!outOver)outLater()}});
 outSide.addEventListener('keydown',e=>{{if(e.key!=='Escape')return;if(document.activeElement===outFilter&&outFilter.value){{outFilter.value='';applyOutFilter()}}else{{document.activeElement.blur();if(!outDocked())outOut(false)}}}});
+// MARK: panel width — the grip on its left edge, dragged docked or floating, as the sidebar's is on the right;
+// double-click puts the default back. Pointer capture keeps the drag alive past the edge, and outInUse()
+// (above) keeps the floating panel out meanwhile. One width across Library, Notes and Artifacts, remembered.
+const OUT_WIDE_KEY='askw:vault:outline-w', outGrip=$('#outline-grip');
+function outWidth(w){{if(w==null){{shell.style.removeProperty('--outline-w');store(OUT_WIDE_KEY,'');return}}w=Math.round(Math.min(Math.max(w,200),Math.max(200,innerWidth*.5)));shell.style.setProperty('--outline-w',w+'px');store(OUT_WIDE_KEY,String(w))}}
+outGrip.addEventListener('pointerdown',e=>{{if(e.button!==0)return;e.preventDefault();outGripFrom={{x:e.clientX,w:outSide.getBoundingClientRect().width}};try{{outGrip.setPointerCapture(e.pointerId)}}catch(err){{}}document.body.classList.add('outline-resizing')}});
+outGrip.addEventListener('pointermove',e=>{{if(outGripFrom)outWidth(outGripFrom.w+outGripFrom.x-e.clientX)}});
+function outGripEnd(){{if(!outGripFrom)return;outGripFrom=null;document.body.classList.remove('outline-resizing');if(!outDocked()&&!outOver)outLater()}}
+outGrip.addEventListener('pointerup',outGripEnd); outGrip.addEventListener('pointercancel',outGripEnd); outGrip.addEventListener('lostpointercapture',outGripEnd);
+outGrip.addEventListener('dblclick',()=>outWidth(null));
+// Put back as it was left: set before the first paint (the page opens under outline-still), so nothing glides into place.
+{{const w=parseInt(recall(OUT_WIDE_KEY)||'',10);if(w>0)outWidth(w)}}
 // The reader's document, while it holds a page (about:blank and the home page have no outline).
 function readerDoc(){{try{{const d=reader.contentDocument;return d&&d.body&&readerPage()?d:null}}catch(e){{return null}}}}
 // Every heading in the page's own content: not the widget's (answers carry headings of their own), not a page's nav rail,

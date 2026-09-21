@@ -109,9 +109,9 @@ class WindowDragTests(unittest.TestCase):
         # The three panes of chrome: the sidebar (its top strip sits under the traffic lights), the
         # library's home page, and the outline panel.
         self.assertEqual(set(regions), {"vault-side", "home", "outline-side"})
-        # A list is not chrome, the context-folder disclosure is a form, and the grip resizes the
-        # sidebar with a drag of its own.
-        self.assertEqual(set(inert), {"tree", "outline", "related", "side-grip", "open-context"})
+        # A list is not chrome, the context-folder disclosure is a form, and each grip resizes its
+        # own pane with a drag of its own.
+        self.assertEqual(set(inert), {"tree", "outline", "related", "side-grip", "outline-grip", "open-context"})
         for name, chain in inert.items():
             self.assertFalse(self._drags(chain), f"#{name} would drag the window")
         for name, chain in regions.items():

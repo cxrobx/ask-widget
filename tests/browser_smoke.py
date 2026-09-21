@@ -1953,6 +1953,92 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_both_panes_resize_by_the_grip_on_the_edge_they_share_with_the_reader(self) -> None:
+        # Either pane's width is a drag of the grip on the edge it shares with the reader: the sidebar's on its right,
+        # the outline panel's on its left. The panel resizes docked and floating (where it stays out under the drag
+        # rather than sliding away), a double-click puts each default back, and both widths survive a reload.
+        vault = self.root / "vault"
+        vault.mkdir()
+        (vault / "Guide.md").write_text("# Guide\n\nOne paragraph.\n\n## One\n\nAnother.\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        storage.add_root(vault)
+
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 700})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    src = urllib.parse.quote(str(vault / "Guide.md"))
+                    page.goto(f"{self.base_url}/vault?src={src}", wait_until="networkidle")
+                    page.frame_locator("iframe[name=reader]").locator("h1").wait_for()
+                    side, outline = page.locator("#vault-side"), page.locator("#outline-side")
+
+                    def wide(pane, px: int) -> None:
+                        # A docked pane's column glides to its new width, so the width is what it settles at: a drag
+                        # holds it still (side-resizing / outline-resizing), a double-click lets it ease back.
+                        expect(pane).to_have_css("width", f"{px}px")
+
+                    def drag(grip, dx: float) -> None:
+                        box = grip.bounding_box()
+                        x, y = box["x"] + box["width"] / 2, box["y"] + 200
+                        page.mouse.move(x, y)
+                        page.mouse.down()
+                        page.mouse.move(x + dx, y, steps=6)
+                        page.mouse.up()
+
+                    # The sidebar: the grip pulls its right edge, and the reader gives up the width.
+                    wide(side, 260)
+                    drag(page.locator("#side-grip"), 60)
+                    wide(side, 320)
+
+                    # The panel, docked as the third column: the grip pulls its left edge out into the reader, and the
+                    # same drag back the other way narrows it again. (It is away by default; its toggle brings it out.)
+                    page.locator("#outline-toggle").hover()
+                    expect(outline).to_be_visible()
+                    page.locator("#outline-pin").click()
+                    expect(outline).to_be_visible()
+                    wide(outline, 250)
+                    box = page.locator("#outline-grip").bounding_box()
+                    x, y = box["x"] + box["width"] / 2, box["y"] + 200
+                    page.mouse.move(x, y)
+                    page.mouse.down()
+                    page.mouse.move(x - 40, y, steps=4)
+                    # Under the pointer, not easing after it: the column's glide is off for the length of the drag.
+                    self.assertEqual(outline.bounding_box()["width"], 290)
+                    page.mouse.move(x - 70, y, steps=4)
+                    page.mouse.up()
+                    wide(outline, 320)
+                    drag(page.locator("#outline-grip"), 40)
+                    wide(outline, 280)
+                    wide(page.locator("#reader"), 500)
+
+                    # Both are remembered, and are the widths the next page opens at.
+                    page.reload(wait_until="networkidle")
+                    page.frame_locator("iframe[name=reader]").locator("h1").wait_for()
+                    wide(side, 320)
+                    wide(outline, 280)
+
+                    # Floating, it resizes the same way — and stays out through the drag, where the beat that takes it
+                    # away would otherwise have run.
+                    page.locator("#outline-pin").click()
+                    expect(outline).to_be_visible()
+                    wide(outline, 280)
+                    drag(page.locator("#outline-grip"), -50)
+                    expect(outline).to_be_visible()
+                    wide(outline, 330)
+
+                    # A double-click on either grip puts that pane's default back.
+                    page.locator("#outline-grip").dblclick()
+                    wide(outline, 250)
+                    page.locator("#side-grip").dblclick()
+                    wide(side, 260)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_page_changes_are_instant_and_right_from_the_first_frame(self) -> None:
         # Moving between notes, and between Notes and Artifacts, is instant, as in Obsidian, and nothing about a page
         # changes after its first frame: the reader never fades or animates, the vault look is on the page when it first
