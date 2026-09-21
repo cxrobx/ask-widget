@@ -3336,6 +3336,90 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_tabs_come_back_as_stubs_hold_six_frames_and_follow_a_rename(self) -> None:
+        # The tabs outlive a reload and a relaunch. Only the tab showing gets a frame; the rest are stubs until shown,
+        # when their page comes back where it was read. No more than six frames stay alive, never dropping one whose
+        # answer panel is open. Renaming the folder a tab's page sits in keeps the tab, reading from the new path.
+        artifacts = self._tab_pages()
+        one, two, three = (artifacts / "Pages" / f"{n}.html" for n in ("one", "two", "three"))
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    frames, pills = page.locator("#stage > iframe"), page.locator("#tab-strip .tab")
+
+                    def titled(title: str) -> None:
+                        page.wait_for_function("t => document.querySelector('#reader').contentDocument?.title === t", arg=title)
+
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    titled("One")
+                    page.evaluate("href => openTab(href)", f"/view?src={urllib.parse.quote(str(two))}&history=abc&history_action=continue")
+                    titled("Two")
+                    page.evaluate("href => openTab(href)", f"/view?src={urllib.parse.quote(str(three))}")
+                    titled("Three")
+                    # Read part way down: ask.js tells the service, which hands the place back with the page.
+                    page.frame_locator("#reader").locator("body").evaluate("() => window.scrollTo(0, 900)")
+                    page.wait_for_timeout(1200)
+                    page.keyboard.press("Meta+1")
+                    titled("One")
+                    saved = json.loads(page.evaluate("localStorage.getItem('askw:vault:tabs')"))
+                    self.assertEqual([t["title"] for t in saved["tabs"]], ["One", "Two", "Three"])
+                    self.assertEqual(saved["active"], 0)
+                    self.assertNotIn("history", saved["tabs"][1]["href"])  # a replayed conversation isn't reopened
+
+                    # ⌘R: the URL is the tab showing, which keeps its frame; the others come back as stubs.
+                    page.reload(wait_until="networkidle")
+                    titled("One")
+                    expect(pills).to_have_count(3)
+                    expect(frames).to_have_count(1)
+                    self.assertEqual(pills.evaluate_all("ps => ps.map(p => p.textContent)"), ["One", "Two", "Three"])
+                    page.keyboard.press("Meta+3")
+                    titled("Three")
+                    expect(frames).to_have_count(2)
+                    page.wait_for_function("() => document.querySelector('#reader').contentWindow.scrollY > 850")
+
+                    # A relaunch opens on Library with nothing to read: the tab that showed comes back in its view.
+                    page.goto(f"{self.base_url}/", wait_until="networkidle")
+                    titled("Three")
+                    expect(pills).to_have_count(3)
+                    expect(frames).to_have_count(1)
+                    expect(page.locator(".vault-switch a.active")).to_have_text("Artifacts")
+                    expect(page.locator("#home")).to_be_hidden()
+
+                    # Six frames at most: the ones shown longest ago go first, but an open answer panel keeps its own.
+                    page.frame_locator("#reader").locator(".askw-panel").evaluate("p => p.classList.add('open')")
+                    for _ in range(6):
+                        page.evaluate("href => openTab(href)", f"/view?src={urllib.parse.quote(str(two))}")
+                        titled("Two")
+                    expect(pills).to_have_count(9)
+                    expect(frames).to_have_count(6)
+                    self.assertTrue(page.evaluate("!!TABS.list[2].frame"))  # Three, the busy one
+
+                    # Renaming the folder: the tabs behind now read from the new path, and one shown loads from it.
+                    page.evaluate(
+                        """async () => { const d = await postJSON('/api/vault/html/rename', {path: rootOf('html') + '/Pages', name: 'Docs'});
+                        remap(d.from, d.path); await loadTree() }"""
+                    )
+                    try:
+                        self.assertTrue((artifacts / "Docs" / "one.html").exists())
+                        # The tab showing reloads from the new path (remap); the rest are pointed there at once.
+                        titled("Two")
+                        page.wait_for_function("() => TABS.list.every(t => decodeURIComponent(t.href).includes('/Docs/'))")
+                        page.keyboard.press("Meta+1")
+                        titled("One")
+                        self.assertIn(
+                            "/Docs/one.html",
+                            page.evaluate("decodeURIComponent(document.querySelector('#reader').contentWindow.location.search)"),
+                        )
+                    finally:
+                        (artifacts / "Docs").rename(artifacts / "Pages")
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_tab_labels_read_under_both_vault_looks(self) -> None:
         # The pills wear the app's tokens, the vault's own colours while Match vault appearance is on: the tab showing
         # and the rest must read at 4.5:1 on the card, floating or pinned, under a dark vault and a light one.

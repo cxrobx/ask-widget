@@ -23,7 +23,8 @@ so a pill there takes its click, and the band's empty space drags the window.
 The script runs inside the shell's ``<script>`` and leans on it: ``$``, ``esc``, ``store``, ``recall``, ``reader``
 (reassigned here), ``stage``, ``KIND``, ``VAULTS``, ``switchVault``, ``showHome``, ``empty``, ``home``, ``goHome``,
 ``highlight``, ``traversed``, ``readerLoaded``, ``onReaderLoad``, ``api``, ``viewHref``, ``navigate`` and
-``readerPage``; the shell adds ``TAB_SHELL`` to ``window.onyxShell``.
+``readerPage``; the shell adds ``TAB_SHELL`` to ``window.onyxShell``, runs ``restoreTabs`` as it starts, and
+``remapTabs`` when Artifacts moves a page.
 """
 
 from __future__ import annotations
@@ -94,7 +95,7 @@ if(reader&&reader!==t.frame)reader.removeAttribute('id');for(const x of TABS.lis
 reader=t.frame;TABS.active=t;t.used=Date.now();
 if(t.kind&&t.kind!==KIND&&VAULTS[t.kind])switchVault(t.kind,true);
 if(t.loaded||!t.href)readerLoaded();else{showHome(false);empty.hidden=true;highlight(t.src)}
-tabsChanged()}
+evictTabs();tabsChanged()}
 // A new tab beside the one showing, reading `href` (a blank one is Library's home page), brought forward unless told not to.
 function openTab(href,o){o=o||{};const at=TABS.list.indexOf(TABS.active),t=makeTab({href:href||'',kind:o.kind||KIND});TABS.list.splice(at+1,0,t);
 tabFrame(t,href);if(o.background)tabsChanged();else activateTab(t);return t}
@@ -106,14 +107,14 @@ if(t===TABS.active)activateTab(TABS.list[i+1]||TABS.list[i-1]);TABS.list.splice(
 function closeOtherTabs(){for(const t of TABS.list.slice())if(t!==TABS.active)closeTab(t)}
 // A plain `target=reader` link goes to the tab showing: pointed there as it is clicked (Return on a focused link clicks it too).
 document.addEventListener('click',e=>{const a=e.target instanceof Element?e.target.closest('a[target]'):null;if(a&&reader&&/^reader(-|$)/.test(a.target))a.target=reader.name},true);
-{const t=makeTab({name:'reader'});TABS.list.push(t);TABS.active=t;wireFrame(t,reader)}
+{const t=makeTab({name:'reader',href:reader.getAttribute('src')==='about:blank'?'':reader.getAttribute('src')||''});TABS.list.push(t);TABS.active=t;wireFrame(t,reader)}
 // MARK: tab bar — the pills, one per tab, the tab showing marked; + for a new one and ⌄ for the whole list.
 const tabBar=$('#tab-bar'),tabGroup=tabBar.querySelector('.tab-group'),tabStrip=$('#tab-strip'),tabPin=$('#tab-pin'),tabList=$('#tab-list');
 function tabLabel(t){return t.title||(t.src?t.src.split('/').pop():t.href?'Loading…':'New Tab')}
 function drawTabs(){const had=tabStrip.contains(document.activeElement);tabStrip.innerHTML=TABS.list.map(t=>{const on=t===TABS.active,l=esc(tabLabel(t));
 return `<div class=tab role=tab id=tab-${t.id} data-id=${t.id} aria-selected=${on} tabindex=${on?0:-1} title="${l}"><span class=tab-title>${l}</span><button class=tab-x type=button tabindex=-1 title="Close tab (⌘W)" aria-label="Close ${l}">${TAB_X}</button></div>`}).join('');
 if(had){const p=TABS.active&&document.getElementById('tab-'+TABS.active.id);if(p)p.focus()}}
-function tabsChanged(){drawTabs()}
+function tabsChanged(){drawTabs();saveTabs()}
 tabStrip.addEventListener('click',e=>{const p=e.target.closest('.tab');if(!p)return;const t=tabById(+p.dataset.id);if(e.target.closest('.tab-x'))closeTab(t);else activateTab(t)});
 // The middle button closes a pill, as in every browser; its mousedown is kept from starting the page's autoscroll.
 tabStrip.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
@@ -178,6 +179,35 @@ const TAB_SHELL={newTab:()=>{openTab('',{kind:'library'});return true},closeTab:
 openInTab:path=>{openInTab(path);return true},openHref:href=>{openHref(href);return true},pinTabs:()=>{setTabsPinned(!tabsPinned());return true}};
 // Put back as it was left without a glide: pinned under tabs-still, lifted once the first frame has painted.
 if(recall(TABBAR_KEY)==='pinned'){document.body.classList.add('tabs-still');setTabsPinned(true);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('tabs-still')))}else tabsOut(false);
+// MARK: tabs kept — the open tabs outlive a reload and a relaunch (askw:vault:tabs): each by its page, without the
+// history=… of a conversation it was opened to replay, and a long /quick selection not at all. Only the tab showing
+// gets a frame; the rest come back as stubs and get theirs when first shown, their reading position put back by the
+// service (the page brings it, app.py first_paint), so nothing is lost. At most TAB_LIVE frames stay alive: past that,
+// the one shown longest ago gives its frame up — never one whose answer panel is open or still streaming.
+const TABS_KEY='askw:vault:tabs',TAB_LIVE=6;
+function savedHref(h){if(!h||!/[?&]history(_action)?=/.test(h))return h;const u=new URL(h,location.origin);u.searchParams.delete('history');u.searchParams.delete('history_action');return u.pathname+u.search+u.hash}
+function saveTabs(){const tabs=[];let active=0;for(const t of TABS.list){const href=savedHref(t.href);if(href.startsWith('/quick')&&href.length>2048)continue;if(t===TABS.active)active=tabs.length;
+tabs.push({href,src:t.src,folder:t.folder,kind:t===TABS.active?KIND:t.kind,title:t.title})}store(TABS_KEY,JSON.stringify({v:1,active,tabs}))}
+addEventListener('pagehide',saveTabs);
+function tabBusy(t){try{return !!t.frame.contentDocument.querySelector('.askw-panel.open,.askw-panel[aria-busy=true]')}catch(e){return false}}
+function dropFrame(t){t.frame.remove();t.frame=null;t.loaded=false}
+function evictTabs(){const live=()=>TABS.list.filter(t=>t.frame).length;if(live()<=TAB_LIVE)return;
+for(const t of TABS.list.filter(t=>t.frame&&t!==TABS.active&&t.loaded&&!tabBusy(t)).sort((a,b)=>a.used-b.used)){if(live()<=TAB_LIVE)break;dropFrame(t)}}
+// Run by the shell as it starts (it needs the view switch, set up after this). The frame the server drew is the tab
+// showing: it takes the place of the saved tab on the same page, or, new, the place after the one that showed. A blank
+// one — the app opening on Library — reads the saved tab that showed instead, in its view.
+function restoreTabs(){let saved=null;try{saved=JSON.parse(recall(TABS_KEY)||'null')}catch(e){}
+if(!saved||saved.v!==1||!Array.isArray(saved.tabs))return false;const t0=TABS.list[0];
+const list=saved.tabs.filter(x=>x&&typeof x.href==='string').map(x=>makeTab({href:x.href,src:String(x.src||''),folder:String(x.folder||''),kind:VAULTS[x.kind]?x.kind:'library',title:String(x.title||'')}));if(!list.length)return false;
+let at=Math.min(Math.max(saved.active|0,0),list.length-1),restored=false;
+if(t0.src){const m=list[at].src===t0.src?at:list.findIndex(t=>t.src===t0.src);if(m>=0){list[m]=t0;at=m}else list.splice(++at,0,t0)}
+else if(KIND==='library'){const x=list[at];Object.assign(t0,{href:x.href,src:x.src,folder:x.folder,title:x.title});list[at]=t0;if(x.kind!==KIND)switchVault(x.kind,true);if(x.href){navigate(x.href);restored=true}}
+else list.splice(++at,0,t0);
+TABS.list=list;drawTabs();return restored}
+// A move or rename in Artifacts (vault_ui's remap): a tab behind on a page that moved keeps its place in the bar and reads
+// the page from its new path when next shown. Its frame goes (unless in use), so no page lives on at a path that is gone.
+function remapTabs(move){for(const t of TABS.list){if(t===TABS.active)continue;const to=move(t.src);if(!to)continue;const hash=t.href.includes('#')?t.href.slice(t.href.indexOf('#')):'';
+t.href=viewHref(to,'html')+hash;t.src=to;if(t.frame&&!tabBusy(t))dropFrame(t)}saveTabs()}
 drawTabs();"""
 
 

@@ -726,13 +726,13 @@ tree.addEventListener('drop',e=>{{const t=DRAG&&dropAt(e.target),entry=DRAG&&DRA
 tree.addEventListener('dragend',endDrag);
 async function moveEntry(entry,dest){{try{{const d=await postJSON('/api/vault/html/move',{{path:entry,dest}});remap(d.from,d.path);if(dest)setOpen('html',rootOf('html')+'/'+dest,true);await loadTree();OnyxMenu.toast('Moved to '+(dest?dest.split('/').join(' › '):'the top level'))}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
 // A move or rename changes the vault path of everything beneath it, so what the shell remembers by path follows: the
-// folders left shut, the page each view comes back to, the + panel's destination, and the page open now (loaded again
-// from its new path, which is how it keeps its link's context).
+// folders left shut, the page each view comes back to, the + panel's destination, the tabs behind (remapTabs), and the
+// page open now (loaded again from its new path, which is how it keeps its link's context).
 function remap(from,to){{if(!from||from===to)return;const move=p=>p===from?to:p&&p.startsWith(from+'/')?to+p.slice(from.length):'';
 const f=FOLDS.html;for(const p of [...f]){{const q=move(p);if(q){{f.delete(p);f.add(q)}}}}store(foldKey('html'),JSON.stringify([...f]));
 const lk=keyOf('html')+'last',last=move(recall(lk));if(last)store(lk,last);
 const root=rootOf('html'),dest=recall(DEST_KEY),moved=dest&&move(root+'/'+dest);if(moved)store(DEST_KEY,moved.slice(root.length+1));
-const src=move(currentSrc());if(src){{let hash='';try{{hash=reader.contentWindow.location.hash}}catch(e){{}}navigate(viewHref(src,'html')+hash)}}}}
+remapTabs(move);const src=move(currentSrc());if(src){{let hash='';try{{hash=reader.contentWindow.location.hash}}catch(e){{}}navigate(viewHref(src,'html')+hash)}}}}
 // New Folder and Rename name a row in place, as Finder does: Return keeps the name, Escape (or nothing typed) puts it back.
 function nameInPlace(slot,initial,save){{const input=document.createElement('input'),was=[...slot.childNodes],held=slot.closest('[draggable]');
 input.className='name-edit';input.value=initial;input.spellcheck=false;input.autocomplete='off';input.setAttribute('aria-label',initial?'New name':'Folder name');if(held)held.draggable=false;slot.replaceChildren(input);let done=false;
@@ -830,9 +830,11 @@ window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistor
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
 // The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.
 document.body.classList.add('outline-still');setPane(relOn);applyOutlinePin();requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('outline-still')));
+// The tabs open last time come back (tabs_ui.py); a relaunch on Library reads the one that showed, in its view.
+const RESTORED=restoreTabs();
 // Both trees load up front: Library draws them together, and the first switch is as instant as the rest.
-const FIRST=KIND; if(FIRST==='library'&&!INITIAL_SRC)loadHome();
-(FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);{{const s=currentSrc();if(s){{rememberLast(s);highlight(s)}}}}if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)navigate(viewHref(last,FIRST))}});
+const FIRST=KIND; if(FIRST==='library'&&!INITIAL_SRC&&!RESTORED)loadHome();
+(FIRST==='library'?loadTree():fetchTree(FIRST).then(()=>{{if(KIND===FIRST)showTree()}})).then(()=>{{for(const k of BOTH)if(!TREES[k])fetchTree(k);{{const s=currentSrc();if(s){{rememberLast(s);highlight(s)}}}}if(KIND!==FIRST||FIRST==='library'||INITIAL_SRC||RESTORED||!rootOf(FIRST))return;const last=recall(KEY+'last');if(last)navigate(viewHref(last,FIRST))}});
 syncAppearance();
 // A fragment names a dialog to open: #settings, #diagnostics, #history — which is where the old launcher's links land.
 {{const h=location.hash.slice(1);if(/^(settings|diagnostics|history)$/.test(h)){{history.replaceState(null,'',location.pathname+location.search);if(h==='history')PANELS.openHistory();else PANELS.openSettings(h==='diagnostics'?'diagnostics':'')}}}}
