@@ -17,7 +17,8 @@
  * (flip and clamp), keyboard navigation, and dismissal.
  *
  *   OnyxMenu.open({items, x, y, label, onSelect(id), onClose(), returnFocus})
- *     items: [{id, label, enabled?, alt?: {id, label}} | {separator: true}]
+ *     items: [{id, label, enabled?, checked?, alt?: {id, label}} | {separator: true}]
+ *     checked: a pick among several (the tab bar's list); true draws the check, in a gutter every such row keeps
  *   OnyxMenu.toast(text, tone)   tone 'bad' for an error
  */
 (function () {
@@ -35,6 +36,7 @@
     '.onyx-menu button:focus{outline:none;background:rgb(var(--accent));color:#fff}',
     '.onyx-menu button[aria-disabled=true]{color:rgb(var(--faint));opacity:.5}',
     '.onyx-menu [role=separator]{height:1px;margin:4px 0;background:var(--line)}',
+    '.onyx-menu [role=menuitemradio]{position:relative;padding-left:24px}.onyx-menu [aria-checked=true]::before{content:"\\2713";position:absolute;left:8px}',
     '.onyx-toast{position:fixed;left:50%;bottom:22px;z-index:2147483001;max-width:calc(100vw - 32px);padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:rgb(var(--bg-elevated));color:rgb(var(--ink));box-shadow:0 12px 34px rgb(0 0 0/.24);font:12.5px/1.4 var(--ui-font,-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transform:translate(-50%,6px);transition:opacity .15s,transform .15s;pointer-events:none}',
     '.onyx-toast.show{opacity:1;transform:translate(-50%,0)}.onyx-toast.bad{color:rgb(var(--bad))}',
     '@media(prefers-reduced-motion:reduce){.onyx-toast{transition:none}}'
@@ -119,7 +121,8 @@
       var item = document.createElement('button');
       item.type = 'button';
       item.tabIndex = -1;
-      item.setAttribute('role', 'menuitem');
+      item.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
+      if (entry.checked !== undefined) item.setAttribute('aria-checked', String(!!entry.checked));
       // aria-disabled, not `disabled`: a disabled control swallows mouse events,
       // and the row under the pointer has to take the highlight off the others.
       if (entry.enabled === false) item.setAttribute('aria-disabled', 'true');

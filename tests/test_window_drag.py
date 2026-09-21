@@ -106,12 +106,14 @@ class WindowDragTests(unittest.TestCase):
             if "data-nodrag" in attrs:
                 inert[name] = chain
 
-        # The three panes of chrome: the sidebar (its top strip sits under the traffic lights), the
-        # library's home page, and the outline panel.
-        self.assertEqual(set(regions), {"vault-side", "home", "outline-side"})
-        # A list is not chrome, the context-folder disclosure is a form, and each grip resizes its
-        # own pane with a drag of its own.
-        self.assertEqual(set(inert), {"tree", "outline", "related", "side-grip", "outline-grip", "open-context"})
+        # The four panes of chrome: the sidebar (its top strip sits under the traffic lights), the
+        # library's home page, the outline panel, and the tab bar (pinned, a band across the title bar).
+        self.assertEqual(set(regions), {"vault-side", "home", "outline-side", "tab-bar"})
+        # A list is not chrome, the context-folder disclosure is a form, each grip resizes its own pane
+        # with a drag of its own, and the tab bar's card holds pills that take their own clicks.
+        self.assertEqual(
+            set(inert), {"tree", "outline", "related", "side-grip", "outline-grip", "open-context", "tab-group"}
+        )
         for name, chain in inert.items():
             self.assertFalse(self._drags(chain), f"#{name} would drag the window")
         for name, chain in regions.items():

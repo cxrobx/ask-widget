@@ -3119,6 +3119,162 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_tab_bar_comes_out_at_the_top_edge_and_pins_as_a_band(self) -> None:
+        # The bar behaves as the sidebar and the outline do: away until the pointer rests in the top 24 px of the
+        # reader's middle 60 %, gone 400 ms after it leaves unless its list is open, and pinned it is a band that
+        # moves the reader down. Both engines: the app is WebKit.
+        artifacts = self._tab_pages()
+        one = artifacts / "Pages" / "one.html"
+        shots = os.environ.get("ONYX_TAB_SHOTS")
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    page.frame_locator("#reader").locator("h1").wait_for()
+                    group, pin, bar = page.locator("#tab-bar .tab-group"), page.locator("#tab-pin"), page.locator("#tab-bar")
+                    pane = page.locator("#reader-pane").bounding_box()
+                    mid = pane["x"] + pane["width"] / 2
+
+                    # Away and inert by default, and the reader keeps the whole pane.
+                    expect(group).to_be_hidden()
+                    self.assertTrue(group.evaluate("g => g.inert"))
+                    self.assertEqual(page.locator("#reader").bounding_box()["y"], pane["y"])
+
+                    # 20 px down the middle brings it out; 30 px down, or the top of the right-hand corner, does not.
+                    page.mouse.move(mid, 300)
+                    page.mouse.move(mid, 30)
+                    page.wait_for_timeout(300)
+                    expect(group).to_be_hidden()
+                    page.mouse.move(pane["x"] + pane["width"] - 20, 10)
+                    page.wait_for_timeout(300)
+                    expect(group).to_be_hidden()
+                    page.mouse.move(mid, 20)
+                    expect(group).to_be_visible()
+                    self.assertFalse(group.evaluate("g => g.inert"))
+                    if shots:
+                        page.screenshot(path=f"{shots}/{engine}-out.png")
+                    # Off it, it waits out its grace, then goes.
+                    page.mouse.move(mid, 300)
+                    page.wait_for_timeout(200)
+                    expect(group).to_be_visible()
+                    expect(group).to_be_hidden()
+
+                    # Its pills: + opens a tab (Library's home page), a pill brings its tab back, × closes one.
+                    page.mouse.move(mid, 20)
+                    expect(group).to_be_visible()
+                    page.locator("#tab-new").click()
+                    expect(page.locator("#tab-strip .tab")).to_have_count(2)
+                    expect(page.locator("#home")).to_be_visible()
+                    expect(page.locator(".tab[aria-selected=true]")).to_have_text("New Tab")
+                    page.locator(".tab", has_text="One").click()
+                    expect(page.locator(".tab[aria-selected=true]")).to_have_text("One")
+                    expect(page.locator("#home")).to_be_hidden()
+                    page.locator("#tree a.file.active[data-path$='one.html']").wait_for()
+
+                    # The list holds it out while it is open, and lists every tab with the one showing checked.
+                    page.locator("#tab-list").click()
+                    menu = page.get_by_role("menu", name="Tabs")
+                    expect(menu).to_be_visible()
+                    expect(menu.get_by_role("menuitemradio", name="One")).to_have_attribute("aria-checked", "true")
+                    expect(menu.get_by_role("menuitemradio", name="New Tab")).to_have_attribute("aria-checked", "false")
+                    page.mouse.move(mid, 400)
+                    page.wait_for_timeout(900)
+                    expect(group).to_be_visible()
+                    menu.get_by_role("menuitem", name="Close Other Tabs").click()
+                    expect(page.locator("#tab-strip .tab")).to_have_count(1)
+                    expect(page.locator("#stage > iframe")).to_have_count(1)
+                    expect(group).to_be_hidden()
+
+                    # Pinned: a band above the reader, which moves down by its height and stays there over a reload,
+                    # put back without a glide; ⌘⌥\ unpins it, from the shell or from inside the reader.
+                    page.mouse.move(mid, 20)
+                    expect(group).to_be_visible()
+                    pin.click()
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    page.mouse.move(mid, 400)
+                    page.wait_for_timeout(700)
+                    expect(group).to_be_visible()
+                    tabs_h = bar.bounding_box()["height"]
+                    self.assertEqual(tabs_h, 40)
+                    page.wait_for_function("h => Math.round(document.querySelector('#reader').getBoundingClientRect().top) === h", arg=tabs_h)
+                    self.assertEqual(page.locator("#reader").bounding_box()["height"], pane["height"] - tabs_h)
+                    if shots:
+                        page.screenshot(path=f"{shots}/{engine}-pinned.png")
+                    page.add_init_script(
+                        "window.__tabRuns = []; addEventListener('transitionrun', e => {"
+                        " if (e.target.id === 'reader-pane' || e.target.classList?.contains('tab-group')) __tabRuns.push(e.propertyName) }, true)"
+                    )
+                    page.reload(wait_until="networkidle")
+                    page.frame_locator("#reader").locator("h1").wait_for()
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    expect(group).to_be_visible()
+                    self.assertEqual(page.locator("#reader").bounding_box()["y"], tabs_h)
+                    self.assertEqual(page.evaluate("__tabRuns"), [])
+                    page.frame_locator("#reader").locator("body").press("Meta+Alt+Backslash")
+                    expect(pin).to_have_attribute("aria-pressed", "false")
+                    expect(group).to_be_hidden()
+                    page.wait_for_function("() => Math.round(document.querySelector('#reader').getBoundingClientRect().top) === 0")
+                    page.keyboard.press("Meta+Alt+Backslash")
+                    expect(pin).to_have_attribute("aria-pressed", "true")
+                    page.keyboard.press("Meta+Alt+Backslash")
+                    expect(pin).to_have_attribute("aria-pressed", "false")
+
+                    # Reduce Motion: it fades where it is instead of travelling.
+                    page.emulate_media(reduced_motion="reduce")
+                    self.assertEqual(group.evaluate("g => getComputedStyle(g).transform"), "none")
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_tab_labels_read_under_both_vault_looks(self) -> None:
+        # The pills wear the app's tokens, the vault's own colours while Match vault appearance is on: the tab showing
+        # and the rest must read at 4.5:1 on the card, floating or pinned, under a dark vault and a light one.
+        artifacts = self._tab_pages()
+        vault = self.root / "vault"
+        vault.mkdir()
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        looks = {
+            "dark": {"mode": "dark", "styles": {"content": {"background-color": "rgb(26, 26, 26)", "color": "rgb(196, 197, 181)"}}},
+            "light": {"mode": "light", "styles": {"content": {"background-color": "rgb(253, 246, 227)", "color": "rgb(0, 43, 54)"}}},
+        }
+        two = artifacts / "Pages" / "two.html"
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                browser = getattr(playwright, engine).launch(headless=True)
+                for mode in ("dark", "light"):
+                    for pinned in (False, True):
+                        with self.subTest(engine=engine, vault=mode, pinned=pinned):
+                            storage.save_markdown_theme(vault, looks[mode])
+                            page = browser.new_page(viewport={"width": 1200, "height": 760})
+                            page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                            page.add_init_script(f"localStorage.setItem('askw:vault:tabbar', '{'pinned' if pinned else ''}')")
+                            page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(two))}", wait_until="networkidle")
+                            expect(page.locator("html")).to_have_class(re.compile(r"\bvault-look\b"))
+                            # The window's glass, flat: the app tints it with the vault's ground, which the shell's
+                            # translucent panes lie on. Unmodelled, a pinned band would be measured against white.
+                            page.add_style_tag(content="html{background:rgb(var(--bg-primary))}")
+                            page.evaluate("openTab('')")
+                            page.evaluate("activateTab(TABS.list[0])")
+                            if not pinned:
+                                pane = page.locator("#reader-pane").bounding_box()
+                                page.mouse.move(pane["x"] + pane["width"] / 2, 20)
+                            expect(page.locator("#tab-bar .tab-group")).to_be_visible()
+                            ratios = {
+                                "showing": page.locator(".tab[aria-selected=true] .tab-title").evaluate(CONTRAST),
+                                "behind": page.locator(".tab[aria-selected=false] .tab-title").evaluate(CONTRAST),
+                            }
+                            self.assertEqual({k: v for k, v in ratios.items() if v < 4.5}, {})
+                            page.close()
+                browser.close()
+
+        self.assertEqual(page_errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

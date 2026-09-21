@@ -46,7 +46,7 @@ from .find_ui import find_markup, find_script, find_style
 from .launcher_ui import glass_script, theme_settings, theme_style
 from .palette_ui import palette_markup, palette_script, palette_style
 from .panels_ui import ICONS, panels_markup, panels_script, panels_style
-from .tabs_ui import tabs_script
+from .tabs_ui import tabs_markup, tabs_script, tabs_style
 
 # The sidebar's pin: filled while the sidebar is pinned, outlined while it floats and comes out from the left edge.
 PIN_ICON = (
@@ -152,7 +152,7 @@ def vault_page(
     panels_css, panels_html, panels_js = panels_style(), panels_markup(settings), panels_script()
     search_css, search_html, search_js = palette_style(), palette_markup(), palette_script()
     find_css, find_html, find_js = find_style(), find_markup(), find_script()
-    tabs_js = tabs_script()
+    tabs_css, tabs_html, tabs_js = tabs_style(), tabs_markup(PIN_ICON), tabs_script()
     # The + and its panel ship with every view (CSS shows them only in Artifacts), so a switch needs no reload.
     add_toggle = (
         '<button id=add-toggle class=add-toggle type=button title="Add pages or a folder" '
@@ -217,7 +217,7 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
 /* The foot: how much is here, then the two modals — Recent conversations and Settings — as cxtasks parks its cog. */
 .aside-foot{{position:static;display:flex;align-items:center;gap:2px;margin-top:8px;padding:0 2px 0 8px}} #vault-count{{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
 .foot-btn{{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms}} .foot-btn:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .foot-btn svg{{width:14px;height:14px}}
-main,body.native main{{position:relative;display:grid;grid-template-rows:minmax(0,1fr);padding:0;overflow:hidden}}
+main,body.native main{{position:relative;display:grid;padding:0;overflow:hidden}}
 /* The reader's place: one frame per tab (tabs_ui.py), stacked in one cell, and only the tab showing (#reader) is seen. */
 #stage{{position:relative;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}}
 #stage>iframe{{grid-area:1/1;display:block;width:100%;height:100%;border:0;background:transparent}} #stage>iframe:not(#reader){{visibility:hidden}}
@@ -333,13 +333,14 @@ body.outline-resizing,body.outline-resizing *{{cursor:col-resize!important;user-
 {panels_css}
 {search_css}
 {find_css}
+{tabs_css}
 </style><style id=sidebar-theme>{sidebar_css}</style><style id=vault-look>{look_css}</style></head><body class="{body_class}"><div class=shell><aside id=vault-side data-drag><div class=brand><img class=mark src=/onyx-mark.png alt=""><span class=brand-name>{vault_name}</span>{add_toggle}<button id=side-pin class=side-toggle type=button aria-pressed=true title="Unpin sidebar (⌘\\)" aria-label="Pin sidebar" aria-controls=vault-side>{PIN_ICON}</button></div>
 <nav class=vault-switch aria-label="Library and vaults"><a href="/"{library_active} data-kind=library>Library</a><a href="/vault"{notes_active} data-kind=notes>Notes</a><a href="/vault?vault=html"{html_active} data-kind=html>Artifacts</a></nav>
 {add_panel}
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
 <nav id=tree data-nodrag aria-label="{tree_label}"><div class=none>Loading…</div></nav>
 <div class=aside-foot><span id=vault-count>v{version}</span><button id=open-history class=foot-btn type=button title="Recent conversations (⌘Y)" aria-label="Recent conversations">{history_icon}</button><button id=open-settings class=foot-btn type=button title="Settings (⌘,)" aria-label="Settings">{settings_icon}</button></div><div id=side-grip data-nodrag role=separator aria-orientation=vertical aria-label="Resize sidebar" title="Drag to resize · double-click to reset"></div></aside>
-<main id=reader-pane><div id=stage><div id=reader-empty{empty_hidden}><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
+<main id=reader-pane>{tabs_html}<div id=stage><div id=reader-empty{empty_hidden}><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
 <section id=home data-drag aria-label="Library"{home_hidden}><div class=home-inner>
 <form id=open-form class=open-row><input id=open-src placeholder="Open a file or URL — HTML, Markdown, text, PDF, or https://…" spellcheck=false autocomplete=off aria-label="Document URL or local file"><button type=button class="secondary pick" data-pick=file data-target=open-src>Choose…</button><button class=primary>Open</button></form>
 <details class=open-context data-nodrag><summary>Context folder: <span id=open-folder-label>{short_folder}</span></summary><div class=row><input id=open-folder value="{default_folder}" spellcheck=false autocomplete=off aria-label="Context folder"><button type=button class="secondary pick" data-pick=folder data-target=open-folder>Choose…</button></div><p class=field-help>Only files inside this folder are available to the provider as evidence. Notes and Artifacts bring their own.</p></details>
