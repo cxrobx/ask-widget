@@ -3420,6 +3420,52 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_tabs_past_what_the_bar_holds_spill_into_its_list(self) -> None:
+        # Pills give up width down to a floor; past that, the ones furthest from the tab showing leave the bar for the
+        # ⌄ list, which holds every tab. The tab showing always keeps its pill.
+        artifacts = self._tab_pages()
+        one, two = artifacts / "Pages" / "one.html", artifacts / "Pages" / "two.html"
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.add_init_script("localStorage.setItem('askw:vault:tabbar', 'pinned')")
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    for _ in range(11):
+                        page.evaluate("href => openTab(href, {background: true})", f"/view?src={urllib.parse.quote(str(two))}")
+                    pills, strip = page.locator("#tab-strip .tab"), page.locator("#tab-strip")
+                    expect(pills).to_have_count(12)
+                    shown = page.locator("#tab-strip .tab:not([hidden])")
+                    self.assertLess(shown.count(), 12)
+                    self.assertGreater(shown.count(), 1)
+                    self.assertTrue(strip.evaluate("s => s.scrollWidth <= s.clientWidth + 1"))
+                    # However many pills, the pinned bar never widens the pane's column and takes the reader with it.
+                    self.assertEqual(
+                        page.locator("#reader").bounding_box()["width"], page.locator("#reader-pane").bounding_box()["width"]
+                    )
+                    expect(page.locator(".tab[aria-selected=true]")).to_be_visible()
+                    expect(page.locator("#tab-list")).to_have_attribute("aria-label", f"All tabs ({12 - shown.count()} more)")
+
+                    # The list holds every tab; picking one that had spilled brings it, and its pill, forward.
+                    page.locator("#tab-list").click()
+                    menu = page.get_by_role("menu", name="Tabs")
+                    expect(menu.get_by_role("menuitemradio")).to_have_count(12)
+                    menu.get_by_role("menuitemradio").last.click()
+                    self.assertEqual(page.evaluate("TABS.list.indexOf(TABS.active)"), 11)
+                    expect(page.locator(".tab[aria-selected=true]")).to_be_visible()
+                    self.assertTrue(pills.first.evaluate("p => p.hidden"))
+
+                    # A wider window holds more of them.
+                    before = shown.count()
+                    page.set_viewport_size({"width": 1700, "height": 760})
+                    page.wait_for_function("n => document.querySelectorAll('#tab-strip .tab:not([hidden])').length > n", arg=before)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_tab_labels_read_under_both_vault_looks(self) -> None:
         # The pills wear the app's tokens, the vault's own colours while Match vault appearance is on: the tab showing
         # and the rest must read at 4.5:1 on the card, floating or pinned, under a dark vault and a light one.

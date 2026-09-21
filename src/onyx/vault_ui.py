@@ -634,8 +634,9 @@ relPane.addEventListener('mouseleave',()=>relMark(-1));
 relList.addEventListener('focusin',e=>{{const b=e.target.closest('.rel-row');if(b)relMark(+b.dataset.i)}});
 relList.addEventListener('click',e=>{{const b=e.target.closest('.rel-row');if(b)relOpen(relRows[+b.dataset.i],e.metaKey||e.ctrlKey)}});
 relMap.addEventListener('click',e=>{{const c=e.target.closest('.rel-dot');if(c)relOpen(relRows[+c.dataset.i],e.metaKey||e.ctrlKey)}});
-// MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads.
-// History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
+// MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads, and
+// whichever tab is brought forward (the URL is always the tab showing, so ⌘R keeps it). History that crosses into the
+// other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
 function traversed(f){{try{{const n=(f||reader).contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
 // Library rests on its home page, in the reader's place; Notes and Artifacts say what to pick instead.
 function syncOverlays(){{const page=!!readerPage(),lib=KIND==='library',show=lib&&!page;empty.hidden=lib||page;showHome(show);document.body.classList.toggle('reader-blank',!page)}}

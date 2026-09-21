@@ -40,8 +40,9 @@ PLUS_ICON = (
     'stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>'
 )
 
-TABS_CSS = """/* Tabs (tabs_ui.py). The reader's pane is two rows: the bar's, empty until it is pinned, then the stage. */
-#reader-pane{--tabs-h:40px;grid-template-rows:0 minmax(0,1fr);transition:grid-template-rows .15s cubic-bezier(.2,.8,.2,1)} #stage{grid-row:2}
+TABS_CSS = """/* Tabs (tabs_ui.py). The reader's pane is two rows: the bar's, empty until it is pinned, then the stage. Its one
+   column is held to the pane: an `auto` one grew to a pinned bar's pills and took the reader past the pane's edge. */
+#reader-pane{--tabs-h:40px;grid-template-columns:minmax(0,1fr);grid-template-rows:0 minmax(0,1fr);transition:grid-template-rows .15s cubic-bezier(.2,.8,.2,1)} #stage{grid-row:2}
 body.tabs-pinned #reader-pane{grid-template-rows:var(--tabs-h) minmax(0,1fr)}
 /* Unpinned, the bar lies over the reader's top and only its centred card takes the pointer, so it never covers the
    context pill, the find bar or the outline's toggle. Pinned, it is a band of its own whose empty space drags the window. */
@@ -57,7 +58,7 @@ body.tabs-pinned .tab-group{max-width:100%;padding:0;border-color:transparent;ba
 body.tabs-pinned .tab-group,body.tabs-still .tab-group,body.tabs-still #reader-pane{transition:none!important}
 @media(prefers-reduced-motion:reduce){body:not(.tabs-pinned) .tab-group{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s} body.tabs-out:not(.tabs-pinned) .tab-group{opacity:1;transition:opacity .15s linear,visibility 0s} #reader-pane{transition:none}}
 /* The pills: a segmented strip, as the panel's Outline/Related switch — the tab showing on the raised ground, in ink. */
-#tab-strip{display:flex;align-items:center;gap:2px;min-width:0;padding:2px;border-radius:9px;background:rgb(var(--ink)/.055)}
+#tab-strip{display:flex;align-items:center;gap:2px;min-width:0;padding:2px;overflow:hidden;border-radius:9px;background:rgb(var(--ink)/.055)} .tab[hidden]{display:none}
 .tab{display:flex;align-items:center;flex:0 1 180px;gap:4px;min-width:88px;height:26px;padding:0 3px 0 10px;border-radius:7px;color:rgb(var(--secondary));font-size:12px;font-weight:500;cursor:default;user-select:none;-webkit-user-select:none;transition:background-color .12s,color .12s}
 .tab:hover{background:rgb(var(--ink)/.05);color:rgb(var(--ink))} .tab[aria-selected=true]{background:rgb(var(--bg-elevated));color:rgb(var(--ink));font-weight:600;box-shadow:0 1px 2px rgb(0 0 0/.1)}
 .tab:focus-visible{outline:2px solid rgb(var(--accent));outline-offset:-2px} .tab-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -113,7 +114,12 @@ const tabBar=$('#tab-bar'),tabGroup=tabBar.querySelector('.tab-group'),tabStrip=
 function tabLabel(t){return t.title||(t.src?t.src.split('/').pop():t.href?'Loading…':'New Tab')}
 function drawTabs(){const had=tabStrip.contains(document.activeElement);tabStrip.innerHTML=TABS.list.map(t=>{const on=t===TABS.active,l=esc(tabLabel(t));
 return `<div class=tab role=tab id=tab-${t.id} data-id=${t.id} aria-selected=${on} tabindex=${on?0:-1} title="${l}"><span class=tab-title>${l}</span><button class=tab-x type=button tabindex=-1 title="Close tab (⌘W)" aria-label="Close ${l}">${TAB_X}</button></div>`}).join('');
-if(had){const p=TABS.active&&document.getElementById('tab-'+TABS.active.id);if(p)p.focus()}}
+fitTabs();if(had){const p=TABS.active&&document.getElementById('tab-'+TABS.active.id);if(p)p.focus()}}
+// Past what the bar holds (a pill gives up width down to 88 px), pills spill into the ⌄ list, which lists every tab:
+// those furthest from the tab showing go first, so it always has its pill. Measured again as the bar changes width.
+function fitTabs(){const ps=[...tabStrip.children],at=ps.findIndex(p=>p.getAttribute('aria-selected')==='true');let lo=0,hi=ps.length-1;for(const p of ps)p.hidden=false;
+while(tabStrip.scrollWidth>tabStrip.clientWidth+1&&lo<hi){if(at-lo>hi-at)ps[lo++].hidden=true;else ps[hi--].hidden=true}
+const more=ps.filter(p=>p.hidden).length,label=more?`All tabs (${more} more)`:'All tabs';tabList.title=label;tabList.setAttribute('aria-label',label)}
 function tabsChanged(){drawTabs();saveTabs()}
 tabStrip.addEventListener('click',e=>{const p=e.target.closest('.tab');if(!p)return;const t=tabById(+p.dataset.id);if(e.target.closest('.tab-x'))closeTab(t);else activateTab(t)});
 // The middle button closes a pill, as in every browser; its mousedown is kept from starting the page's autoscroll.
@@ -124,6 +130,7 @@ const to=e.key==='ArrowRight'?(i+1)%n:e.key==='ArrowLeft'?(i+n-1)%n:e.key==='Hom
 if(to>=0){e.preventDefault();activateTab(TABS.list[to]);const q=document.getElementById('tab-'+TABS.list[to].id);if(q)q.focus()}
 else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();closeTab(TABS.list[i])}});
 $('#tab-new').onclick=()=>openTab('',{kind:'library'});
+if(window.ResizeObserver)new ResizeObserver(()=>fitTabs()).observe(tabBar);
 // ⌄: every tab, the one showing checked, and Close Other Tabs. The bar stays out while the list is open.
 let tabMenuOpen=false;
 tabList.onclick=()=>{if(!window.OnyxMenu)return;const r=tabList.getBoundingClientRect(),items=TABS.list.map(t=>({id:'tab:'+t.id,label:tabLabel(t),checked:t===TABS.active}));

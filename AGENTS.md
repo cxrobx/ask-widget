@@ -107,8 +107,13 @@ the app theme or the vault's mode. Adding `"html"` to `KINDS` would fight the pa
 instead of helping it.
 
 **The reader is an iframe, same-origin, and navigation is plain HTML.** The
-sidebar targets a named iframe so history and back/forward work with no click
-handlers. Don't replace it with router JS.
+sidebar's rows are `<a target=reader>` links, so the browser navigates and keeps
+history and back/forward. Don't replace it with router JS. Each open tab is an
+iframe of its own (`tabs_ui.py`), and a frame keeps the name it was born with:
+the shell's one click listener points a `target=reader` link at the frame
+showing. Don't "simplify" that into renaming the frames. The app's WebKit 17
+files joint history under frame names, so after a rename Back loads one tab's
+page into another, while Chromium and Playwright's WebKit pass.
 
 **Comments here carry reasons, not restatements.** Several explain a measurement
 or a failure that motivated the code. If you change such code, update the reason
