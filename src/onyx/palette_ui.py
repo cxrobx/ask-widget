@@ -3,7 +3,7 @@
 Empty, it lists what was opened lately. Typed into, it shows at once the pages whose titles match (the sidebar's own
 ``/api/vault/search``, over both vaults), then, once typing pauses, the passages inside pages that match by their words
 or by their meaning (``/api/search``, ``search.py``). ↑↓ move, ↩ opens the pick in the reader, a passage at its
-section, and Escape or a click outside puts the box away. It opens from File ▸ Search… in the app
+section (⌘↩ or a ⌘-click, in a new tab), and Escape or a click outside puts the box away. It opens from File ▸ Search… in the app
 (``window.onyxShell.openSearch``), from ⌘P in a browser or with focus inside the reader, and from a ``#search``
 fragment on the shell's URL.
 
@@ -11,7 +11,7 @@ It wears the shell's modal look (``panels_ui``) but stands near the top of the w
 stays where it is while results come and go; and it shows at once, with no rise. The script runs inside the shell's
 ``<script>`` and leans on it: ``$``, ``esc``, ``api``, ``label``, ``navigate``, ``viewHref``, ``openItem``,
 ``docWhere``, ``switchVault``, ``currentSrc``, ``rootOf``, ``hidePeek``, ``KIND``, ``GROUPS``, ``BOTH``, ``reader``,
-``onReaderLoad``, and the outline's ``HEADS`` and ``setOutActive``.
+``onReaderLoad``, ``openTab``, and the outline's ``HEADS`` and ``setOutActive``.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ PALETTE_CSS = """/* The search palette (⌘P, palette_ui.py): Obsidian's prompt 
 
 PALETTE_HTML = """<dialog id=search-modal class="modal search-modal" aria-label="Search notes and artifacts"><div class=sr-bar>__ICON__<input id=search-input type=text placeholder="Search notes and artifacts…" autocomplete=off spellcheck=false role=combobox aria-expanded=true aria-controls=search-results aria-autocomplete=list aria-label="Search notes and artifacts"></div>
 <div id=search-results role=listbox aria-label="Results"></div>
-<div class=sr-foot><span><kbd>↑↓</kbd> to navigate</span><span><kbd>↩</kbd> to open</span><span><kbd>esc</kbd> to dismiss</span><span id=search-state></span></div></dialog>"""
+<div class=sr-foot><span><kbd>↑↓</kbd> to navigate</span><span><kbd>↩</kbd> to open</span><span><kbd>⌘↩</kbd> in a new tab</span><span><kbd>esc</kbd> to dismiss</span><span id=search-state></span></div></dialog>"""
 
 PALETTE_JS = r"""// MARK: search palette — ⌘P (palette_ui.py). Titles on every keystroke, passages once typing pauses; a reply that lands
 // after a newer query is dropped. The top row is highlighted until ↑↓ or the pointer picks another, and a pick stays on
@@ -63,29 +63,31 @@ function head(title,place,re){return `<span class=sr-t><span class=sr-title>${ma
 function draw(){const q=input.value.trim(),out=[];rows=[];
 const add=(key,go,body,old)=>{out.push(`<div class=sr-row role=option id=sr-${rows.length} data-i=${rows.length} aria-selected=false>${body}</div>`);rows.push({key,go,old})};
 const group=t=>out.push(`<div class=sr-group role=presentation>${esc(t)}</div>`),note=t=>out.push(`<div class=sr-note>${esc(t)}</div>`);
-if(!q){if(recent.length){group('Recently opened');for(const d of recent)add('d:'+d.source,()=>openItem(d,''),head(d.title,docWhere(d),null))}else note('Search your notes and artifacts by title, and by what is written in them.')}
-else{const typed=asTyped(q),words=byWords(q);if(titles.length){group('Titles');for(const t of titles)add('t:'+t.path,()=>openPage(t,''),head(t.title,where(t),typed))}
+if(!q){if(recent.length){group('Recently opened');for(const d of recent)add('d:'+d.source,inTab=>openItem(d,'',inTab),head(d.title,docWhere(d),null))}else note('Search your notes and artifacts by title, and by what is written in them.')}
+else{const typed=asTyped(q),words=byWords(q);if(titles.length){group('Titles');for(const t of titles)add('t:'+t.path,inTab=>openPage(t,'',inTab),head(t.title,where(t),typed))}
 if(!(status&&status.words&&!status.words.ok)&&(passages.length||pending)){group('Inside pages');if(!passages.length)note('Searching…');else{out.push(`<div role=group${stale?' class=sr-stale':''}>`);
-for(const p of passages){const re=p.match==='meaning'?null:words;add('p:'+p.path+'#'+p.heading,()=>openPage(p,p.heading),head(p.title,where(p),re)+`<span class=sr-l><span class=sr-sec>${esc(p.section)}</span><span class=sr-how>${HOW[p.match]||''}</span></span>`+(p.snippet?`<span class=sr-snip>${marked(p.snippet,re)}</span>`:''),stale)}out.push('</div>')}}
+for(const p of passages){const re=p.match==='meaning'?null:words;add('p:'+p.path+'#'+p.heading,inTab=>openPage(p,p.heading,inTab),head(p.title,where(p),re)+`<span class=sr-l><span class=sr-sec>${esc(p.section)}</span><span class=sr-how>${HOW[p.match]||''}</span></span>`+(p.snippet?`<span class=sr-snip>${marked(p.snippet,re)}</span>`:''),stale)}out.push('</div>')}}
 if(!rows.length&&!pending)note(`Nothing matches “${q}”.`)}
 list.innerHTML=out.join('');const at=picked?rows.findIndex(r=>r.key===picked):-1;select(at<0?0:at,false,false)}
 function select(i,scroll,pick){input.removeAttribute('aria-activedescendant');if(!rows.length){sel=0;return}sel=Math.max(0,Math.min(i,rows.length-1));if(pick)picked=rows[sel].key;
 const was=list.querySelector('[aria-selected=true]');if(was)was.setAttribute('aria-selected','false');const el=document.getElementById('sr-'+sel);el.setAttribute('aria-selected','true');input.setAttribute('aria-activedescendant',el.id);if(scroll)el.scrollIntoView({block:'nearest'})}
-function choose(i){const r=rows[i];if(!r)return;dlg.close();r.go()}
+function choose(i,inTab){const r=rows[i];if(!r)return;dlg.close();r.go(!!inTab)}
 async function findTitles(){const q=input.value.trim(),seq=++titleSeq;if(!q)return;let found=[];
 try{found=(await Promise.all(BOTH.filter(rootOf).map(k=>api('/api/vault/search?vault='+k+'&limit=6&q='+encodeURIComponent(q)).then(d=>d.items.map(i=>({vault:k,path:i.path,title:label(i,k),folder:i.folder||''})))))).flat()}catch(e){}
 if(seq!==titleSeq)return;titles=found;draw()}
 async function findPassages(){const q=input.value,seq=++passSeq;let d;try{d=await api('/api/search?q='+encodeURIComponent(q))}catch(e){d={items:[],words:{ok:false,reason:e.message},meaning:{ok:false,reason:e.message}}}
-if(seq!==passSeq||d.superseded)return;passages=d.items;status={words:d.words,meaning:d.meaning};pending=false;stale=false;showState();draw();if(openWhenReady){openWhenReady=false;choose(sel)}}
+if(seq!==passSeq||d.superseded)return;passages=d.items;status={words:d.words,meaning:d.meaning};pending=false;stale=false;showState();draw();if(openWhenReady){const inTab=openWhenReady==='tab';openWhenReady=false;choose(sel,inTab)}}
 function refresh(){picked='';openWhenReady=false;clearTimeout(titleTimer);clearTimeout(passTimer);const q=input.value.trim();
 if(!q){titleSeq++;passSeq++;titles=[];passages=[];pending=stale=false;draw();return}titleTimer=setTimeout(findTitles,40);
 if(q.length>1){pending=true;stale=passages.length>0;passTimer=setTimeout(findPassages,180)}else{passSeq++;passages=[];pending=stale=false}}
 function showState(){const s=status;state.textContent=!s||!s.words?'':!s.words.ok?'Titles only — '+s.words.reason:!s.meaning.ok?'Titles and words — meaning is off: '+s.meaning.reason:'Titles, words and meaning';state.title=state.textContent}
 async function loadRecent(){try{recent=((await api('/api/library')).documents||[]).slice(0,8)}catch(e){recent=[]}if(!input.value.trim())draw()}
 // A passage opens at its section: the reader stays hidden until the page is in and scrolled there, so it never shows the
-// page's top (or the reading position it would put back) first. Already open, it just scrolls.
-function openPage(r,heading){if(KIND!=='library'&&r.vault!==KIND)switchVault(r.vault,true);const here=currentSrc()===r.path;if(here){if(heading)land(heading);return}
-if(heading){jump={path:r.path,heading,frame:reader};reader.style.visibility='hidden';clearTimeout(jumpTimer);jumpTimer=setTimeout(landed,1500)}navigate(viewHref(r.path,r.vault))}
+// page's top (or the reading position it would put back) first. Already open, it just scrolls. With ⌘, it opens in a
+// new tab, which lands the same way.
+function openPage(r,heading,inTab){const k=KIND!=='library'&&r.vault!==KIND?r.vault:KIND,href=viewHref(r.path,r.vault);if(inTab)openTab(href,{kind:k});else if(k!==KIND)switchVault(k,true);
+if(!inTab&&currentSrc()===r.path){if(heading)land(heading);return}
+if(heading){jump={path:r.path,heading,frame:reader};reader.style.visibility='hidden';clearTimeout(jumpTimer);jumpTimer=setTimeout(landed,1500)}if(!inTab)navigate(href)}
 function land(heading){const want=heading.toLowerCase(),i=HEADS.findIndex(h=>h.text.toLowerCase()===want);if(i<0)return;const el=HEADS[i].el,root=el.ownerDocument.documentElement,was=root.style.scrollBehavior;
 for(let d=el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))d.open=true;root.style.scrollBehavior='auto';el.scrollIntoView({block:'start'});root.style.scrollBehavior=was;setOutActive(i)}
 function landed(){clearTimeout(jumpTimer);const j=jump;jump=null;if(j&&currentSrc()===j.path)land(j.heading);(j?j.frame:reader).style.visibility=''}
@@ -97,10 +99,10 @@ document.addEventListener('keydown',key);
 onReaderLoad(()=>{try{reader.contentWindow.addEventListener('keydown',key)}catch(e){}if(jump)landed()});
 input.addEventListener('input',refresh);
 input.addEventListener('keydown',e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(rows.length)select((sel+(e.key==='ArrowDown'?1:rows.length-1))%rows.length,true,true)}
-else if(e.key==='Enter'&&!e.isComposing){e.preventDefault();const r=rows[sel];if(pending&&(!r||r.old))openWhenReady=true;else choose(sel)}});
+else if(e.key==='Enter'&&!e.isComposing){e.preventDefault();const r=rows[sel],inTab=e.metaKey||e.ctrlKey;if(pending&&(!r||r.old))openWhenReady=inTab?'tab':true;else choose(sel,inTab)}});
 list.addEventListener('mousedown',e=>e.preventDefault());
 list.addEventListener('mousemove',e=>{const r=e.target.closest('.sr-row');if(r&&+r.dataset.i!==sel)select(+r.dataset.i,false,true)});
-list.addEventListener('click',e=>{const r=e.target.closest('.sr-row');if(r)choose(+r.dataset.i)});
+list.addEventListener('click',e=>{const r=e.target.closest('.sr-row');if(r)choose(+r.dataset.i,e.metaKey||e.ctrlKey)});
 dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close()});
 dlg.addEventListener('close',()=>{clearTimeout(titleTimer);clearTimeout(passTimer);titleSeq++;passSeq++;pending=openWhenReady=false});
 if(location.hash==='#search'){history.replaceState(null,'',location.pathname+location.search);open()}

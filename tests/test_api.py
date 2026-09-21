@@ -672,6 +672,36 @@ class HtmlVaultApiTests(unittest.TestCase):
         self.assertEqual((homed.json()["ok"], homed.json()["context_roots"]), (True, []))
         self.assertNotIn(str(self.base), [r["path"] for r in self.client.get("/api/settings").json()["roots"]])
 
+    def test_locate_maps_a_real_file_to_its_row_and_refuses_strangers(self) -> None:
+        # Finder and Alfred hand over the real file; a tab reads it as the row Artifacts lists it by.
+        real = str(self.guide / "index.html")
+        found = self.client.get("/api/vault/locate", params={"src": real}).json()
+        self.assertEqual((found["ok"], found["vault"], found["path"]), (True, "html", str(self.page)))
+        stray = self.base / "context" / "stray.html"
+        stray.write_text("<title>Stray</title>", encoding="utf-8")
+        loose = self.client.get("/api/vault/locate", params={"src": str(stray)}).json()
+        self.assertEqual((loose["vault"], loose["path"]), (None, str(stray)))
+        remote = self.client.get("/api/vault/locate", params={"src": "https://example.com/a.html"}).json()
+        self.assertEqual((remote["vault"], remote["path"]), (None, "https://example.com/a.html"))
+        foreign = self.client.get(
+            "/api/vault/locate", params={"src": real}, headers={"origin": "https://attacker.example"}
+        )
+        self.assertEqual(foreign.status_code, 403)
+
+    def test_the_shell_ships_the_tab_bar_and_its_entry_points(self) -> None:
+        shell = self.client.get("/vault", params={"vault": "html", "src": str(self.page)}).text
+        for part in ("<div id=tab-bar data-drag>", "<div class=tab-group data-nodrag>", "id=tab-strip role=tablist",
+                     "<button id=tab-new", "<button id=tab-list", "<button id=tab-pin", "<div id=stage>"):
+            self.assertIn(part, shell)
+        # The frame the server draws is still the reader, by name and by id: tab one.
+        self.assertIn(f'<iframe id=reader name=reader src="/view?src={urllib.parse.quote(str(self.page))}"', shell)
+        # The app's menu reaches the tabs through onyxShell (Onyx.swift, shellCall).
+        self.assertIn("...TAB_SHELL}", shell)
+        entries = re.search(r"const TAB_SHELL=\{(.*?)\};\n", shell, re.DOTALL)
+        self.assertIsNotNone(entries)
+        for entry in ("newTab", "closeTab", "nextTab", "prevTab", "openInTab", "openHref", "pinTabs"):
+            self.assertIn(f"{entry}:", entries.group(1))
+
     def test_row_menu_routes_take_a_row_and_work_out_the_rest(self) -> None:
         real = str(self.guide / "index.html")
         entry = self.client.get("/api/vault/entry", params={"vault": "html", "path": str(self.page)}).json()

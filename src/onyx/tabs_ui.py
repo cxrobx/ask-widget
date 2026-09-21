@@ -22,7 +22,8 @@ so a pill there takes its click, and the band's empty space drags the window.
 
 The script runs inside the shell's ``<script>`` and leans on it: ``$``, ``esc``, ``store``, ``recall``, ``reader``
 (reassigned here), ``stage``, ``KIND``, ``VAULTS``, ``switchVault``, ``showHome``, ``empty``, ``home``, ``goHome``,
-``highlight``, ``traversed``, ``readerLoaded`` and ``onReaderLoad``.
+``highlight``, ``traversed``, ``readerLoaded``, ``onReaderLoad``, ``api``, ``viewHref``, ``navigate`` and
+``readerPage``; the shell adds ``TAB_SHELL`` to ``window.onyxShell``.
 """
 
 from __future__ import annotations
@@ -149,6 +150,32 @@ tabGroup.addEventListener('focusout',()=>{if(!tabsOver)tabsLater()});
 tabGroup.addEventListener('keydown',e=>{if(e.key==='Escape'&&!tabsPinned()){document.activeElement.blur();tabsOut(false)}});
 tabPin.onclick=()=>setTabsPinned(!tabsPinned());document.addEventListener('keydown',tabsKey);
 onReaderLoad(()=>{tabsAtEdge=false;try{const w=reader.contentWindow;w.addEventListener('mousemove',tabsEdgeMove,{passive:true});w.addEventListener('keydown',tabsKey);w.document.documentElement.addEventListener('mouseleave',tabsEdgeLeave)}catch(e){}});
+// MARK: tab entry points — ⌘-click or a middle click on a link to a page opens it in a new tab, in the shell and inside
+// the page alike (the row menu's Open in New Tab, ⌘ on a Related row and ⌘↩ in the palette are their own). Left to the
+// browser, either asks for a new window, and the app used to load the page over the whole shell. A plain click is
+// never touched: it is the browser's own navigation, in the tab showing.
+function modClick(e){const mid=e.type==='auxclick'&&e.button===1,mod=e.type==='click'&&e.button===0&&(e.metaKey||e.ctrlKey);if(!mid&&!mod)return;
+const el=e.target,a=el&&el.closest?el.closest('a[href]'):null;if(!a)return;let u;try{u=new URL(a.href)}catch(err){return}
+if(u.origin!==location.origin||!/^\/(view|quick)$/.test(u.pathname))return;e.preventDefault();e.stopPropagation();openTab(u.pathname+u.search+u.hash)}
+document.addEventListener('click',modClick,true);document.addEventListener('auxclick',modClick,true);
+// ⌘⇧] and ⌘⇧[ step through the tabs, ⌘1–8 go to that one, ⌘9 to the last, as in Safari; from the shell and the reader.
+function stepTab(d){const n=TABS.list.length;if(n>1)activateTab(TABS.list[(TABS.list.indexOf(TABS.active)+d+n)%n]);return true}
+function tabKey(e){if(!(e.metaKey||e.ctrlKey)||e.altKey)return;const n=TABS.list.length;let to=null;
+if(e.shiftKey&&(e.code==='BracketRight'||e.code==='BracketLeft')){e.preventDefault();stepTab(e.code==='BracketRight'?1:-1);return}
+if(!e.shiftKey&&/^Digit[1-9]$/.test(e.code)){const d=+e.code.slice(5);to=TABS.list[d===9?n-1:d-1]}if(!to)return;e.preventDefault();activateTab(to)}
+document.addEventListener('keydown',tabKey);
+onReaderLoad(()=>{try{const w=reader.contentWindow;w.addEventListener('click',modClick,true);w.addEventListener('auxclick',modClick,true);w.addEventListener('keydown',tabKey)}catch(e){}});
+// A page from outside — Finder, File ▸ Open, Alfred — comes forward in the tab already reading it, or opens in a new
+// one; a tab resting on the home page takes it instead, as a browser's empty tab does. The service maps a real file to
+// the row a vault lists it as (the tree's nodes carry vault paths, not real ones), so the tree highlights it.
+async function openInTab(path){let loc=null;try{loc=await api('/api/vault/locate?src='+encodeURIComponent(path))}catch(e){}
+const k=loc&&loc.vault,src=loc&&loc.path||path,have=TABS.list.find(t=>t.src===src);if(have){activateTab(have);return}
+openHref(k?viewHref(src,k):'/view?src='+encodeURIComponent(src),k&&k===KIND?KIND:'library')}
+function openHref(href,k){k=k||KIND;const t=TABS.active;if(t&&!t.href&&!readerPage()){if(k!==KIND)switchVault(k,true);navigate(href);return}openTab(href,{kind:k})}
+// What the app's menu reaches (window.onyxShell): File ▸ New Tab and Close Tab, Window ▸ Show Next and Previous Tab, and
+// a new-window request the page made anyway (Onyx.swift, createWebViewWith). Close Tab answers false on a lone home tab.
+const TAB_SHELL={newTab:()=>{openTab('',{kind:'library'});return true},closeTab:()=>closeTab(),nextTab:()=>stepTab(1),prevTab:()=>stepTab(-1),
+openInTab:path=>{openInTab(path);return true},openHref:href=>{openHref(href);return true},pinTabs:()=>{setTabsPinned(!tabsPinned());return true}};
 // Put back as it was left without a glide: pinned under tabs-still, lifted once the first frame has painted.
 if(recall(TABBAR_KEY)==='pinned'){document.body.classList.add('tabs-still');setTabsPinned(true);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('tabs-still')))}else tabsOut(false);
 drawTabs();"""

@@ -1019,7 +1019,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if let url = navigationAction.request.url {
+        guard let url = navigationAction.request.url else { return nil }
+        // A page of Onyx's own asking for a window (a ⌘-click or middle click the shell didn't catch) opens as a tab,
+        // never over the shell. Anything else still loads here.
+        if let base = URL(string: baseURL), url.host == base.host, url.port == base.port,
+           ["/view", "/quick"].contains(url.path) {
+            let href = url.path + (url.query.map { "?\($0)" } ?? "") + (url.fragment.map { "#\($0)" } ?? "")
+            shellCall("onyxShell.openHref(\(jsString(href)))", fallback: href)
+        } else {
             webView.load(URLRequest(url: url))
         }
         return nil
@@ -1084,6 +1091,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func openSearch() {
         shellCall("onyxShell.openSearch()", fallback: "/#search")
     }
+    // The tabs (tabs_ui.py). New Tab loads the shell when it isn't showing; the others act only on the shell.
+    @objc private func newTab() { shellCall("onyxShell.newTab()", fallback: "/") }
+    @objc private func nextTab() { onShell("onyxShell.nextTab()") }
+    @objc private func previousTab() { onShell("onyxShell.prevTab()") }
+    /// ⌘W closes the tab showing. The shell answers false for its lone home tab, and off the shell there are no
+    /// tabs: then, as in any Mac app, ⌘W closes the window. A panel or alert that is key closes itself instead.
+    @objc private func closeTab() {
+        guard let webView, NSApp.keyWindow == nil || NSApp.keyWindow === window,
+              ["/", "/vault"].contains(webView.url?.path ?? "") else {
+            (NSApp.keyWindow ?? window)?.performClose(nil)
+            return
+        }
+        webView.evaluateJavaScript("!!(window.onyxShell && onyxShell.closeTab && onyxShell.closeTab())") {
+            [weak self] result, _ in
+            if (result as? Bool) != true { self?.window?.performClose(nil) }
+        }
+    }
     @objc private func openFind() { findInPage("open") }
     @objc private func findNext() { findInPage("next") }
     @objc private func findPrevious() { findInPage("previous") }
@@ -1091,10 +1115,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     /// unlike `shellCall` this never loads anything in its place. ⌘F and ⌘G typed in the page reach the bar first
     /// (the page takes the key); these items serve a click, and any key the page leaves alone.
     private func findInPage(_ verb: String) {
+        onShell("onyxShell.find('\(verb)')")
+    }
+    /// Runs one of the shell's entry points when the shell is showing, and nothing otherwise.
+    private func onShell(_ call: String) {
         guard let webView, ["/", "/vault"].contains(webView.url?.path ?? "") else { return }
-        webView.evaluateJavaScript(
-            "!!(window.onyxShell && onyxShell.find && onyxShell.find('\(verb)'))", completionHandler: nil
-        )
+        let entry = call.prefix { $0 != "(" }
+        webView.evaluateJavaScript("!!(window.onyxShell && \(entry) && \(call))", completionHandler: nil)
+    }
+    /// A string as a JavaScript literal, for handing a path or a URL to the shell.
+    private func jsString(_ text: String) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed, .withoutEscapingSlashes])
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
     }
     /// On the shell (Library, Notes, Artifacts) a view comes in place, so the sidebar never reloads
     /// (a load blanks the glass window for a frame); from any other page, or if the shell can't, it loads.
@@ -1198,16 +1230,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             .contains(url.pathExtension.lowercased())
     }
 
-    /// A document from Finder or File ▸ Open reads in Library, beside the sidebar; a page that lives in a vault
-    /// opens as its row there (the service maps the real file back to it).
+    /// A document from Finder, File ▸ Open or Alfred comes forward in the tab already reading it, or opens in a new
+    /// one; a page that lives in a vault opens as its row there (the service maps the real file back to it). Off the
+    /// shell, or before it has loaded, the shell loads with the page in Library, as it always did.
     private func openDocumentURL(_ documentURL: URL) {
-        var components = URLComponents(string: "\(baseURL)/")!
+        var components = URLComponents()
         components.queryItems = [URLQueryItem(name: "src", value: documentURL.path)]
-        if let url = components.url {
-            webView?.load(URLRequest(url: url))
-            window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        guard let query = components.percentEncodedQuery else { return }
+        shellCall("onyxShell.openInTab(\(jsString(documentURL.path)))", fallback: "/?\(query)")
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func openQuickSelection(_ text: String) {
@@ -1253,6 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         main.addItem(fileItem)
         let fileMenu = NSMenu(title: "File")
         fileItem.submenu = fileMenu
+        fileMenu.addItem(menuItem("New Tab", #selector(newTab), "t"))
         fileMenu.addItem(menuItem("Open Document…", #selector(openDocument), "o"))
         fileMenu.addItem(menuItem("Search…", #selector(openSearch), "p"))
         fileMenu.addItem(.separator())
@@ -1261,6 +1294,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         fileMenu.addItem(menuItem("Artifacts", #selector(goHTMLVault), "H"))
         fileMenu.addItem(.separator())
         fileMenu.addItem(menuItem("Recent Conversations", #selector(openRecentConversations), "y"))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(menuItem("Close Tab", #selector(closeTab), "w"))
+        fileMenu.addItem(NSMenuItem(
+            title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "W"
+        ))
 
         let editItem = NSMenuItem()
         main.addItem(editItem)
@@ -1304,9 +1342,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         windowMenu.addItem(NSMenuItem(
             title: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"
         ))
-        windowMenu.addItem(NSMenuItem(
-            title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"
-        ))
+        windowMenu.addItem(.separator())
+        // ⌃⇥ and ⌃⇧⇥, as Safari files them; ⌘⇧] and ⌘⇧[ are the page's own (tabs_ui.py).
+        let previousTabItem = menuItem("Show Previous Tab", #selector(previousTab), "\u{19}")
+        previousTabItem.keyEquivalentModifierMask = [.control, .shift]
+        windowMenu.addItem(previousTabItem)
+        let nextTabItem = menuItem("Show Next Tab", #selector(nextTab), "\t")
+        nextTabItem.keyEquivalentModifierMask = [.control]
+        windowMenu.addItem(nextTabItem)
 
         NSApp.mainMenu = main
     }

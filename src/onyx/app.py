@@ -918,6 +918,23 @@ def create_app(config: AppConfig) -> FastAPI:
         status = await asyncio.to_thread(app.state.passages.status, warm=True)
         return JSONResponse({"ok": True, **status}, headers=cors(request.headers.get("origin")))
 
+    # A page opened from outside (Finder, File ▸ Open, Alfred) goes to a tab of
+    # its own, or to the tab already reading it (tabs_ui.py). The client can't
+    # tell which vault row a real file is — the tree lists vault paths — so the
+    # service maps it, as the shell does for Library's ?src= (_shell).
+    @app.get("/api/vault/locate")
+    async def vault_locate_api(request: Request, src: str = ""):
+        if denied := api_forbidden(request):
+            return denied
+        headers = cors(request.headers.get("origin"))
+        found: dict = {"source": src}
+        if src and not viewer.is_remote(src):
+            await asyncio.to_thread(_tag_vaults, [found], "source")
+        vault_kind = found.get("vault")
+        return JSONResponse(
+            {"ok": True, "vault": vault_kind, "path": found["vault_path"] if vault_kind else src}, headers=headers
+        )
+
     # The sidebar's right-click menu: one row's paths to show it by, then a
     # reveal. The client only ever names a row; the server works out what that
     # row really is, so neither route can reach a path the tree doesn't list.

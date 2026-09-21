@@ -627,13 +627,13 @@ relList.innerHTML=items.map((r,i)=>`<button class=rel-row type=button data-i=${{
 +`<span class=rel-where>${{esc(relWhere(r))}}</span></button>`).join('')}}
 function relMark(i){{for(const el of relPane.querySelectorAll('.on'))el.classList.remove('on');if(i<0)return;
 const row=relList.querySelector(`.rel-row[data-i="${{i}}"]`);if(row)row.classList.add('on');for(const el of relMap.querySelectorAll(`[data-i="${{i}}"]`))el.classList.add('on')}}
-function relOpen(r){{if(!r)return;if(KIND!=='library'&&r.vault!==KIND)switchVault(r.vault,true);if(currentSrc()!==r.path)navigate(viewHref(r.path,r.vault))}}
+function relOpen(r,inTab){{if(!r)return;const k=KIND!=='library'&&r.vault!==KIND?r.vault:KIND;if(inTab){{openTab(viewHref(r.path,r.vault),{{kind:k}});return}}if(k!==KIND)switchVault(k,true);if(currentSrc()!==r.path)navigate(viewHref(r.path,r.vault))}}
 relList.addEventListener('mousemove',e=>{{const b=e.target.closest('.rel-row');relMark(b?+b.dataset.i:-1)}});
 relMap.addEventListener('mousemove',e=>{{const c=e.target.closest('.rel-dot');relMark(c?+c.dataset.i:-1)}});
 relPane.addEventListener('mouseleave',()=>relMark(-1));
 relList.addEventListener('focusin',e=>{{const b=e.target.closest('.rel-row');if(b)relMark(+b.dataset.i)}});
-relList.addEventListener('click',e=>{{const b=e.target.closest('.rel-row');if(b)relOpen(relRows[+b.dataset.i])}});
-relMap.addEventListener('click',e=>{{const c=e.target.closest('.rel-dot');if(c)relOpen(relRows[+c.dataset.i])}});
+relList.addEventListener('click',e=>{{const b=e.target.closest('.rel-row');if(b)relOpen(relRows[+b.dataset.i],e.metaKey||e.ctrlKey)}});
+relMap.addEventListener('click',e=>{{const c=e.target.closest('.rel-dot');if(c)relOpen(relRows[+c.dataset.i],e.metaKey||e.ctrlKey)}});
 // MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads.
 // History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
 function traversed(f){{try{{const n=(f||reader).contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
@@ -657,7 +657,7 @@ function rememberLast(src){{const k=vaultOf(src);if(k)store(keyOf(k)+'last',src)
 function itemHref(item,action){{const src=item.source||item.document_source||'',p=new URLSearchParams();let base='/view';
 if(src.startsWith('service://selection/')){{base='/quick';p.set('text',item.selection||'');if(item.folder)p.set('folder',item.folder)}}else{{p.set('src',item.vault_path||src);const folder=item.vault==='notes'?(rootOf('notes')||item.folder):item.vault==='html'?'':item.folder;if(folder)p.set('folder',folder)}}
 if(action){{p.set('history',item.request_id);p.set('history_action',action)}}return base+'?'+p}}
-function openItem(item,action){{if(KIND!=='library'&&(item.vault||'')!==KIND)switchVault('library',true);navigate(itemHref(item,action))}}
+function openItem(item,action,inTab){{const k=KIND!=='library'&&(item.vault||'')!==KIND?'library':KIND;if(inTab){{openTab(itemHref(item,action),{{kind:k}});return}}if(k!==KIND)switchVault(k,true);navigate(itemHref(item,action))}}
 let filterTimer; filter.oninput=()=>{{clearTimeout(filterTimer);filterTimer=setTimeout(applyFilter,150)}};
 async function applyFilter(){{const q=filter.value.trim(),k=KIND;if(q.length<2){{renderTree();return}}const lib=k==='library',kinds=lib?BOTH.filter(rootOf):[k];
 try{{const found=await Promise.all(kinds.map(vk=>api('/api/vault/search?vault='+vk+'&q='+encodeURIComponent(q)+(lib?'&limit=25':'')).then(d=>d.items.map(i=>({{...i,k:vk}})))));if(k!==KIND)return;const items=found.flat();hidePeek();NODES.clear();items.forEach(i=>NODES.set(i.path,{{n:i,crumbs:(i.folder||'').split('/').filter(Boolean),k:i.k}}));
@@ -678,7 +678,7 @@ e.preventDefault();
 const sel=getSelection();if(sel&&sel.anchorNode&&row.contains(sel.anchorNode))sel.removeAllRanges();const holder=row.closest('[data-vault]'),vk=holder&&holder.dataset.vault,path=row.dataset.path||row.parentElement.dataset.path;if(!path||!vk)return;
 let x=e.clientX,y=e.clientY;if(!x&&!y){{const r=row.getBoundingClientRect();x=r.left+16;y=r.bottom}}
 const seq=++menuSeq;let d;try{{d=await api('/api/vault/entry?vault='+vk+'&path='+encodeURIComponent(path))}}catch(err){{OnyxMenu.toast(err.message,'bad');return}}if(seq!==menuSeq)return;
-const items=[];if(!d.is_dir)items.push({{id:'open',label:'Open',enabled:d.exists}});
+const items=[];if(!d.is_dir)items.push({{id:'open',label:'Open',enabled:d.exists}},{{id:'open-tab',label:'Open in New Tab',enabled:d.exists}});
 items.push({{id:'reveal',label:'Reveal in Finder',enabled:!!d.real,alt:{{id:'copy',label:'Copy Path'}}}});
 if(d.link)items.push({{id:'reveal-link',label:'Reveal Link in Finder',alt:{{id:'copy-link',label:'Copy Link Path'}}}});
 // Artifacts' own rows (see grip): a folder of its own takes a new one, and what the vault owns renames (folders — a page
@@ -688,7 +688,7 @@ if(own)more.push({{id:'new-folder',label:'New Folder'}});if(entry&&row.tagName==
 if(entry)more.push({{id:pinned?'unpin':'pin',label:pinned?'Unpin':'Pin to Top'}},{{id:'remove',label:'Remove from Artifacts'}});if(more.length)items.push({{separator:true}},...more)}}
 OnyxMenu.open({{items,x,y,label:(d.is_dir?'Folder':vk==='html'?'Page':'Note')+' actions',returnFocus:row,onClose:()=>row.classList.remove('menu-for'),onSelect:id=>rowAction(id,d,row,vk)}});row.classList.add('menu-for')}});
 function copyPath(p){{if(!navigator.clipboard)throw new Error('The clipboard is not available here.');return navigator.clipboard.writeText(p).then(()=>OnyxMenu.toast('Copied '+shortPath(p)))}}
-async function rowAction(id,d,row,vk){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else navigate(viewHref(d.path,vk))}}else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:vk,path:d.path,which:id==='reveal'?'real':'link'}})
+async function rowAction(id,d,row,vk){{try{{if(id==='open'){{if(row.tagName==='A')row.click();else navigate(viewHref(d.path,vk))}}else if(id==='open-tab')openTab(viewHref(d.path,vk));else if(id==='copy')await copyPath(d.real);else if(id==='copy-link')await copyPath(d.path);else if(id==='reveal'||id==='reveal-link')await postJSON('/api/vault/reveal',{{vault:vk,path:d.path,which:id==='reveal'?'real':'link'}})
 else if(id==='new-folder')newFolder(row.parentElement.dataset.rel);else if(id==='rename')renameRow(row);
 else if(id==='pin'||id==='unpin'){{await postJSON('/api/vault/html/pin',{{path:row.dataset.entry,pinned:id==='pin'}});await loadTree()}}
 else if(id==='remove'){{const r=await postJSON('/api/vault/html/remove',{{path:row.dataset.entry}});await loadTree();OnyxMenu.toast(r.removed==='link'?'Removed the link · the original is untouched':'Removed the folder')}}}}catch(err){{OnyxMenu.toast(err.message||String(err),'bad')}}}}
@@ -822,10 +822,10 @@ home.hidden=true;history.replaceState(null,'',shellUrl(k,''));document.title=VAU
 (cached?Promise.resolve():fresh).then(()=>{{if(k!==KIND)return;const last=rootOf(k)?recall(KEY+'last'):null;empty.hidden=!!last;if(last)navigate(viewHref(last,k));else if(readerPage())reader.src='about:blank'}})}}
 for(const a of switchLinks)a.addEventListener('click',e=>{{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();switchVault(a.dataset.kind)}});
 // The app menu comes through these: File ▸ Library / Vault / Artifacts switch in place (and load the page when it isn't
-// this one), Settings… (⌘,) and Recent Conversations (⌘Y) open their dialogs, Search… (⌘P) the palette, and Edit ▸
-// Find's items (⌘F, ⌘G, ⇧⌘G) the find bar.
+// this one), Settings… (⌘,) and Recent Conversations (⌘Y) open their dialogs, Search… (⌘P) the palette, Edit ▸
+// Find's items (⌘F, ⌘G, ⇧⌘G) the find bar, and the tab items and outside opens the tabs (TAB_SHELL, tabs_ui.py).
 window.onyxVault={{switchTo:k=>{{if(!VAULTS[k])return false;switchVault(k);return true}}}};
-window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory(),openSearch:()=>SEARCH.open(),find:verb=>FIND.run(verb)}};
+window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory(),openSearch:()=>SEARCH.open(),find:verb=>FIND.run(verb),...TAB_SHELL}};
 // Put back as it was left without a slide: the page opens with the sidebar already away.
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
 // The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.

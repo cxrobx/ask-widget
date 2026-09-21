@@ -1681,7 +1681,7 @@ class BrowserSmokeTests(unittest.TestCase):
 
                     row.click(button="right")
                     expect(menu).to_have_attribute("aria-label", "Page actions")
-                    expect(items).to_have_text(["Open", "Reveal in Finder", "Reveal Link in Finder"])
+                    expect(items).to_have_text(["Open", "Open in New Tab", "Reveal in Finder", "Reveal Link in Finder"])
                     expect(row).to_have_class(marked)
                     self.assertEqual(page.evaluate("getSelection().toString()"), "")  # WebKit's word-select is undone
                     # Themed and opaque: the app's elevated surface, not the glass under it.
@@ -1690,12 +1690,12 @@ class BrowserSmokeTests(unittest.TestCase):
 
                     # Holding Option swaps each Reveal for a Copy in place, at the same width.
                     page.keyboard.down("Alt")
-                    expect(items).to_have_text(["Open", "Copy Path", "Copy Link Path"])
+                    expect(items).to_have_text(["Open", "Open in New Tab", "Copy Path", "Copy Link Path"])
                     self.assertEqual(menu.evaluate("e => e.getBoundingClientRect().width"), width)
-                    page.keyboard.press("ArrowDown")
-                    page.keyboard.press("ArrowDown")
-                    expect(items.nth(1)).to_be_focused()
-                    self.assertEqual(items.nth(1).evaluate("e => getComputedStyle(e).backgroundColor"), "rgb(58, 131, 247)")
+                    for _ in range(3):
+                        page.keyboard.press("ArrowDown")
+                    expect(items.nth(2)).to_be_focused()
+                    self.assertEqual(items.nth(2).evaluate("e => getComputedStyle(e).backgroundColor"), "rgb(58, 131, 247)")
                     page.keyboard.press("Enter")  # Option still down: no keypress in Chromium
                     page.keyboard.up("Alt")
                     expect(menu).to_be_hidden()
@@ -1706,8 +1706,8 @@ class BrowserSmokeTests(unittest.TestCase):
                     # An Option-right-click opens straight into the copies.
                     page.keyboard.down("Alt")
                     row.click(button="right")
-                    expect(items.nth(2)).to_have_text("Copy Link Path")
-                    items.nth(2).click()
+                    expect(items.nth(3)).to_have_text("Copy Link Path")
+                    items.nth(3).click()
                     page.keyboard.up("Alt")
                     self.assertEqual(page.evaluate("window.__copied"), [real, str(row_path)])
 
@@ -1733,7 +1733,7 @@ class BrowserSmokeTests(unittest.TestCase):
                     # Open reads the page, as a click on the row does; a click into the
                     # reader (another document) still dismisses a menu.
                     row.click(button="right")
-                    menu.get_by_role("menuitem", name="Open").click()
+                    menu.get_by_role("menuitem", name="Open", exact=True).click()
                     reader = page.frame_locator("iframe[name=reader]")
                     passage = reader.locator("p", has_text="A passage")
                     passage.wait_for()
@@ -3226,6 +3226,112 @@ class BrowserSmokeTests(unittest.TestCase):
                     # Reduce Motion: it fades where it is instead of travelling.
                     page.emulate_media(reduced_motion="reduce")
                     self.assertEqual(group.evaluate("g => getComputedStyle(g).transform"), "none")
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_modified_clicks_keys_and_outside_opens_reach_the_tabs(self) -> None:
+        # ⌘-click and a middle click on a link to a page open a tab, in the shell and inside a page, and leave the tab
+        # showing where it was; left to the browser they asked for a window, which the app loaded over the shell.
+        artifacts = self._tab_pages()
+        one, two, three = (artifacts / "Pages" / f"{n}.html" for n in ("one", "two", "three"))
+        # A link to another page, as a note's wikilink renders one.
+        one.write_text(
+            f"<title>One</title><h1>One</h1><p><a id=next href='/view?src={urllib.parse.quote(str(two))}'>On to Two</a></p>",
+            encoding="utf-8",
+        )
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    popups: list = []
+                    page.on("popup", lambda popup: popups.append(popup))
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    page.frame_locator("#reader").locator("h1").wait_for()
+                    frames, pills = page.locator("#stage > iframe"), page.locator("#tab-strip .tab")
+
+                    def showing() -> str:
+                        page.wait_for_function("() => document.querySelector('#reader').contentDocument?.readyState === 'complete'")
+                        return page.evaluate("document.querySelector('#reader').contentDocument.title")
+
+                    def first_src() -> str:
+                        return frames.nth(0).evaluate("f => new URLSearchParams(f.contentWindow.location.search).get('src')")
+
+                    # ⌘-click on a row: a new tab beside, brought forward; the first keeps its page.
+                    page.locator("#tree a.file", has_text="Three").click(modifiers=["Meta"])
+                    expect(pills).to_have_count(2)
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Three'")
+                    self.assertTrue(first_src().endswith("one.html"))
+                    # A middle click on a row, too.
+                    page.locator("#tree a.file", has_text="Two").click(button="middle")
+                    expect(pills).to_have_count(3)
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
+                    self.assertEqual(pills.evaluate_all("ps => ps.map(p => p.textContent)"), ["One", "Three", "Two"])
+
+                    # ⌘1 goes to the first, ⌘9 to the last, ⌘⇧[ and ⌘⇧] step round, from the shell or the page.
+                    page.keyboard.press("Meta+1")
+                    self.assertEqual(showing(), "One")
+                    page.frame_locator("#reader").locator("body").press("Meta+9")
+                    self.assertEqual(showing(), "Two")
+                    page.keyboard.press("Meta+Shift+BracketLeft")
+                    self.assertEqual(showing(), "Three")
+                    page.frame_locator("#reader").locator("body").press("Meta+Shift+BracketRight")
+                    self.assertEqual(showing(), "Two")
+                    page.keyboard.press("Meta+Shift+BracketRight")
+                    self.assertEqual(showing(), "One")
+
+                    # ⌘-click on a link inside the page: a new tab, and this page stays where it is.
+                    page.frame_locator("#reader").locator("#next").click(modifiers=["Meta"])
+                    expect(pills).to_have_count(4)
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
+                    self.assertTrue(first_src().endswith("one.html"))
+                    self.assertEqual(popups, [])
+
+                    # The row menu's Open in New Tab.
+                    page.locator("#tree a.file", has_text="One").click(button="right")
+                    page.get_by_role("menuitem", name="Open in New Tab").click()
+                    expect(pills).to_have_count(5)
+                    self.assertEqual(showing(), "One")
+
+                    # From outside (Finder, Alfred): the tab already on the page comes forward, else one opens.
+                    page.evaluate("onyxShell.closeTab()")
+                    page.keyboard.press("Meta+1")
+                    expect(pills).to_have_count(4)
+                    page.evaluate("p => onyxShell.openInTab(p)", str(three))
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Three'")
+                    expect(pills).to_have_count(4)
+                    self.assertEqual(pills.evaluate_all("ps => ps.map(p => p.textContent)"), ["One", "Two", "Three", "Two"])
+                    self.assertEqual(page.evaluate("TABS.list.indexOf(TABS.active)"), 2)
+                    page.evaluate("onyxShell.closeTab()")
+                    page.evaluate("onyxShell.closeTab()")
+                    page.evaluate("onyxShell.closeTab()")
+                    expect(pills).to_have_count(1)
+                    page.evaluate("p => onyxShell.openInTab(p)", str(three))
+                    expect(pills).to_have_count(2)
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Three'")
+                    # A tab resting on the home page takes the page itself, as a browser's empty tab does.
+                    page.evaluate("onyxShell.newTab()")
+                    expect(pills).to_have_count(3)
+                    expect(page.locator("#home")).to_be_visible()
+                    page.evaluate("p => onyxShell.openInTab(p)", str(two))
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
+                    expect(pills).to_have_count(3)
+                    expect(page.locator("#home")).to_be_hidden()
+
+                    # ⌘↩ in the palette opens the pick in a new tab. (The pointer is parked clear of the list first: rows
+                    # drawn under it take the selection.)
+                    page.mouse.move(10, 750)
+                    page.keyboard.press("Meta+p")
+                    page.locator("#search-input").fill("One")
+                    expect(page.locator("#search-modal .sr-group").first).to_have_text("Titles")
+                    expect(page.locator("#search-modal .sr-row[aria-selected=true]")).to_contain_text("One")
+                    page.locator("#search-input").press("Meta+Enter")
+                    expect(page.locator("#search-modal")).to_be_hidden()
+                    expect(pills).to_have_count(4)
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'One'")
                     browser.close()
 
         self.assertEqual(page_errors, [])
