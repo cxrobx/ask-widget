@@ -1073,6 +1073,7 @@ class BrowserSmokeTests(unittest.TestCase):
             dots: [...document.querySelectorAll('#rel-map .rel-dot')].map(round),
             labels: [...document.querySelectorAll('#rel-map .rel-lab')].map(lab => ({text: lab.textContent, box: box(lab)})),
             here: round(document.querySelector('#rel-map .rel-here')),
+            rows: [...document.querySelectorAll('#rel-list .rel-score')].map(el => el.textContent),
           };
         }"""
         subjects = "ABABAB"  # A and B alternate down the list
@@ -1115,7 +1116,11 @@ class BrowserSmokeTests(unittest.TestCase):
         across = [math.dist(a["at"], b["at"]) for i, a in enumerate(drawn["dots"]) for j, b in enumerate(drawn["dots"])
                   if i < j and subjects[i] != subjects[j]]
         self.assertLess(sum(same) / len(same), 0.7 * sum(across) / len(across), "pages on one subject sit together")
-        self.assertEqual([lab["text"] for lab in drawn["labels"]], [f"{s:.2f}" for s in scores])
+        # Shown on the range Smart Connections' readers know: the 0.45 floor reads 0.70, the same text 1.00, order kept.
+        shown = [lab["text"] for lab in drawn["labels"]]
+        self.assertEqual(shown, ["0.74", "0.74", "0.73", "0.73", "0.71", "0.71"])
+        self.assertEqual(shown, drawn["rows"])  # the list and the map say the same number
+        self.assertEqual(sorted(shown, reverse=True), shown)
 
         def boxes_meet(a: list[float], b: list[float]) -> bool:
             return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]

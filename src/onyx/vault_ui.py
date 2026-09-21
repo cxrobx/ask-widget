@@ -593,19 +593,28 @@ function relLayout(scores,near){{const n=scores.length,R=relRings(scores);if(n==
 const D=scores.map((_,i)=>scores.map((_,j)=>i===j?0:Math.max(.001,1-((near[i]||[])[j]??.5))));
 return relSeparate(relStress(R,D),R)}}
 function relWhere(r){{return [GROUPS[r.vault]].concat(r.folder?r.folder.split('/'):[]).join(' › ')}}
-function relScoreTitle(s){{return s.toFixed(2)+' — 0 would be no closer than any two pages in the vault, 1 the same text'}}
+// The number shown is the score relabelled onto the range Smart Connections' readers know, where a good match reads
+// 0.7 to 0.9: the floor shows as REL_SHOW_FLOOR, the same text as 1, straight between, so the order never changes.
+// The score itself has the vault's common direction taken out (search.py), which is what keeps meeting notes from
+// neighbouring everything, but it puts a strong match at 0.5 — the same pair is 0.85 by bare cosine — and asks anyone
+// who knows Obsidian's pane to convert in their head. Bare cosine itself can't be shown: measured, it bunches every row
+// into 0.86–0.96 and reads 38% of adjacent rows out of order. Nor can the two panes agree note for note, since they
+// embed with different models; this puts them in the same range, not on the same number.
+const REL_SHOW_FLOOR=.7;
+function relShow(s){{return (REL_SHOW_FLOOR+Math.max(0,Math.min(1,(s-relFloor)/Math.max(.05,1-relFloor)))*(1-REL_SHOW_FLOOR)).toFixed(2)}}
+function relScoreTitle(s){{return relShow(s)+' — '+REL_SHOW_FLOOR.toFixed(2)+' is the least related page worth listing, 1 the same text'}}
 function relDots(items,near){{const n=Math.min(items.length,REL_MAP),P=relLayout(items.slice(0,n).map(r=>r.score),near||[]),dots=[],labs=[];
 dots.push(`<circle class=rel-here cx=50 cy=50 r=${{REL_HERE}}><title>${{esc(document.title.replace(/ — [^—]*$/,''))}}</title></circle>`);
 P.forEach(([x,y],i)=>{{const r=items[i];
 dots.push(`<circle class="rel-dot${{r.dupe?' dupe':''}}" data-i=${{i}} cx=${{x.toFixed(1)}} cy=${{y.toFixed(1)}} r=3><title>${{esc(r.title)}} — ${{relScoreTitle(r.score)}}</title></circle>`);
-labs.push(`<text class=rel-lab data-i=${{i}} x=${{x.toFixed(1)}} y=${{(y<50?y-4.6:y+7.8).toFixed(1)}}>${{r.score.toFixed(2)}}</text>`)}});
+labs.push(`<text class=rel-lab data-i=${{i}} x=${{x.toFixed(1)}} y=${{(y<50?y-4.6:y+7.8).toFixed(1)}}>${{relShow(r.score)}}</text>`)}});
 return dots.concat(labs).join('')}}
 function drawRelated(d){{const items=d.items||[];relRows=items;relPane.classList.toggle('no-map',!items.length);
 if(typeof d.floor==='number')relFloor=d.floor;
 if(!items.length){{relMap.innerHTML='';const why=d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1):'Nothing in the vault is near this page — its subject appears nowhere else';relList.innerHTML='<div class=none>'+esc(why.replace(/\\.?$/,'.'))+'</div>';return}}
 relMap.innerHTML=relDots(items,d.near);
 relList.innerHTML=items.map((r,i)=>`<button class=rel-row type=button data-i=${{i}} title="${{esc(r.title)}}${{r.section?' — '+esc(r.section):''}}">`
-+`<span class=rel-t><span class=rel-score title="${{esc(relScoreTitle(r.score))}}">${{r.score.toFixed(2)}}</span><span class=rel-name>${{esc(r.title)}}</span>${{r.dupe?'<span class=rel-dupe>same?</span>':''}}</span>`
++`<span class=rel-t><span class=rel-score title="${{esc(relScoreTitle(r.score))}}">${{relShow(r.score)}}</span><span class=rel-name>${{esc(r.title)}}</span>${{r.dupe?'<span class=rel-dupe>same?</span>':''}}</span>`
 +`<span class=rel-where>${{esc(relWhere(r))}}</span></button>`).join('')}}
 function relMark(i){{for(const el of relPane.querySelectorAll('.on'))el.classList.remove('on');if(i<0)return;
 const row=relList.querySelector(`.rel-row[data-i="${{i}}"]`);if(row)row.classList.add('on');for(const el of relMap.querySelectorAll(`[data-i="${{i}}"]`))el.classList.add('on')}}

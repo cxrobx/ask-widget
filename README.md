@@ -226,6 +226,11 @@ pages, which is what lets the pane drop anything below a floor — so everything
 listed is related by design, and a page whose subject appears nowhere else says
 so instead of padding itself out with its own tail.
 
+The number on a row is that score shown on the range Smart Connections uses, so
+the two panes read alike: 0.70 is the least related page worth listing, 1.00 the
+same text. The panes embed with different models, so a note's two numbers land
+in the same range rather than on the same value.
+
 The map above the list draws the neighbourhood around the page you are on, each
 dot with its score beside it. Distance from the centre is the score, stretched
 over this page's neighbours — the nearest on the inner ring, the furthest on the
