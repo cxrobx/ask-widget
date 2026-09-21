@@ -3434,6 +3434,8 @@ class BrowserSmokeTests(unittest.TestCase):
                     page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
                     page.add_init_script("localStorage.setItem('askw:vault:tabbar', 'pinned')")
                     page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    # With room, a pill has its full width; it gives width up only as tabs crowd in.
+                    self.assertEqual(page.locator("#tab-strip .tab").bounding_box()["width"], 180)
                     for _ in range(11):
                         page.evaluate("href => openTab(href, {background: true})", f"/view?src={urllib.parse.quote(str(two))}")
                     pills, strip = page.locator("#tab-strip .tab"), page.locator("#tab-strip")

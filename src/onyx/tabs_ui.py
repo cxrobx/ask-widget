@@ -57,9 +57,11 @@ body.tabs-pinned .tab-group{max-width:100%;padding:0;border-color:transparent;ba
 .tab-group{transition:transform .13s cubic-bezier(.4,0,1,1),visibility 0s linear .13s} body.tabs-out .tab-group{transition:transform .15s cubic-bezier(.2,.8,.2,1),visibility 0s}
 body.tabs-pinned .tab-group,body.tabs-still .tab-group,body.tabs-still #reader-pane{transition:none!important}
 @media(prefers-reduced-motion:reduce){body:not(.tabs-pinned) .tab-group{transform:none;opacity:0;transition:opacity .15s linear,visibility 0s linear .15s} body.tabs-out:not(.tabs-pinned) .tab-group{opacity:1;transition:opacity .15s linear,visibility 0s} #reader-pane{transition:none}}
-/* The pills: a segmented strip, as the panel's Outline/Related switch — the tab showing on the raised ground, in ink. */
+/* The pills: a segmented strip, as the panel's Outline/Related switch — the tab showing on the raised ground, in ink.
+   A pill's 180 px is a width, not a flex-basis: the strip sizes itself from its pills' widths, and a basis alone left
+   every pill at its 88 px floor however much room there was. */
 #tab-strip{display:flex;align-items:center;gap:2px;min-width:0;padding:2px;overflow:hidden;border-radius:9px;background:rgb(var(--ink)/.055)} .tab[hidden]{display:none}
-.tab{display:flex;align-items:center;flex:0 1 180px;gap:4px;min-width:88px;height:26px;padding:0 3px 0 10px;border-radius:7px;color:rgb(var(--secondary));font-size:12px;font-weight:500;cursor:default;user-select:none;-webkit-user-select:none;transition:background-color .12s,color .12s}
+.tab{display:flex;align-items:center;flex:0 1 auto;gap:4px;width:180px;min-width:88px;height:26px;padding:0 3px 0 10px;border-radius:7px;color:rgb(var(--secondary));font-size:12px;font-weight:500;cursor:default;user-select:none;-webkit-user-select:none;transition:background-color .12s,color .12s}
 .tab:hover{background:rgb(var(--ink)/.05);color:rgb(var(--ink))} .tab[aria-selected=true]{background:rgb(var(--bg-elevated));color:rgb(var(--ink));font-weight:600;box-shadow:0 1px 2px rgb(0 0 0/.1)}
 .tab:focus-visible{outline:2px solid rgb(var(--accent));outline-offset:-2px} .tab-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .tab-x{display:grid;flex:none;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:5px;background:transparent;color:rgb(var(--faint));opacity:0;transition:opacity .12s}
