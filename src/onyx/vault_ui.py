@@ -16,9 +16,11 @@ in the same index ⌘P searches, read from the page's own direction instead of a
 query (``search.PassageIndex.related``).
 
 The page is deliberately thin. Files are plain ``<a target=reader>`` links, so
-the named iframe handles navigation and history without any click JS; the
-script only builds the tree, keeps the highlight in sync with whatever the
-reader currently shows, drives the filter box, the right-click menus
+the browser does the navigating and keeps the history; the one click script
+points a link at the frame of the tab showing (``tabs_ui.py``: each open tab
+reads in a frame of its own). The rest of the script builds the tree, keeps
+the highlight in sync with whatever the reader currently shows, drives the
+filter box, the right-click menus
 (``static/app-menu.js``: a row's Reveal in Finder and ⌥ Copy Path; the empty
 space below the rows carries what the tree itself does — Reveal Current Note
 and Collapse All), and, in Artifacts, the add panel and reorganising: drag a
@@ -44,6 +46,7 @@ from .find_ui import find_markup, find_script, find_style
 from .launcher_ui import glass_script, theme_settings, theme_style
 from .palette_ui import palette_markup, palette_script, palette_style
 from .panels_ui import ICONS, panels_markup, panels_script, panels_style
+from .tabs_ui import tabs_script
 
 # The sidebar's pin: filled while the sidebar is pinned, outlined while it floats and comes out from the left edge.
 PIN_ICON = (
@@ -149,6 +152,7 @@ def vault_page(
     panels_css, panels_html, panels_js = panels_style(), panels_markup(settings), panels_script()
     search_css, search_html, search_js = palette_style(), palette_markup(), palette_script()
     find_css, find_html, find_js = find_style(), find_markup(), find_script()
+    tabs_js = tabs_script()
     # The + and its panel ship with every view (CSS shows them only in Artifacts), so a switch needs no reload.
     add_toggle = (
         '<button id=add-toggle class=add-toggle type=button title="Add pages or a folder" '
@@ -213,8 +217,10 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
 /* The foot: how much is here, then the two modals — Recent conversations and Settings — as cxtasks parks its cog. */
 .aside-foot{{position:static;display:flex;align-items:center;gap:2px;margin-top:8px;padding:0 2px 0 8px}} #vault-count{{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
 .foot-btn{{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms}} .foot-btn:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .foot-btn svg{{width:14px;height:14px}}
-main,body.native main{{position:relative;padding:0;overflow:hidden}}
-#reader{{display:block;width:100%;height:100%;border:0;background:transparent}}
+main,body.native main{{position:relative;display:grid;grid-template-rows:minmax(0,1fr);padding:0;overflow:hidden}}
+/* The reader's place: one frame per tab (tabs_ui.py), stacked in one cell, and only the tab showing (#reader) is seen. */
+#stage{{position:relative;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}}
+#stage>iframe{{grid-area:1/1;display:block;width:100%;height:100%;border:0;background:transparent}} #stage>iframe:not(#reader){{visibility:hidden}}
 #reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
 /* Library's home, in the reader's place while no page is open: open something, what you had open, what you asked. */
 #home{{position:absolute;inset:0;z-index:1;overflow:auto;padding:40px 44px 56px}} body.native #home{{padding-top:52px}} #home[hidden]{{display:none}}
@@ -333,14 +339,14 @@ body.outline-resizing,body.outline-resizing *{{cursor:col-resize!important;user-
 <input id=vault-filter type=search placeholder="Filter {units}… (press /)" autocomplete=off spellcheck=false aria-label="Filter {units}">
 <nav id=tree data-nodrag aria-label="{tree_label}"><div class=none>Loading…</div></nav>
 <div class=aside-foot><span id=vault-count>v{version}</span><button id=open-history class=foot-btn type=button title="Recent conversations (⌘Y)" aria-label="Recent conversations">{history_icon}</button><button id=open-settings class=foot-btn type=button title="Settings (⌘,)" aria-label="Settings">{settings_icon}</button></div><div id=side-grip data-nodrag role=separator aria-orientation=vertical aria-label="Resize sidebar" title="Drag to resize · double-click to reset"></div></aside>
-<main id=reader-pane><div id=reader-empty{empty_hidden}><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
+<main id=reader-pane><div id=stage><div id=reader-empty{empty_hidden}><div><span id=empty-hint>{empty_hint}</span><br><small>Select any passage inside it to ask.</small></div></div>
 <section id=home data-drag aria-label="Library"{home_hidden}><div class=home-inner>
 <form id=open-form class=open-row><input id=open-src placeholder="Open a file or URL — HTML, Markdown, text, PDF, or https://…" spellcheck=false autocomplete=off aria-label="Document URL or local file"><button type=button class="secondary pick" data-pick=file data-target=open-src>Choose…</button><button class=primary>Open</button></form>
 <details class=open-context data-nodrag><summary>Context folder: <span id=open-folder-label>{short_folder}</span></summary><div class=row><input id=open-folder value="{default_folder}" spellcheck=false autocomplete=off aria-label="Context folder"><button type=button class="secondary pick" data-pick=folder data-target=open-folder>Choose…</button></div><p class=field-help>Only files inside this folder are available to the provider as evidence. Notes and Artifacts bring their own.</p></details>
 <div class=home-h><h2>Recently opened</h2></div><div id=home-docs class=home-grid></div>
 <div class=home-h><h2>Recent asks</h2><button type=button id=home-all class=link>See all</button></div><div id=home-asks class=home-list></div>
 </div></section>
-<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe><button id=outline-toggle class=outline-toggle type=button title="Outline and related (⌘⇧\\)" aria-label="Show outline and related pages" aria-controls=outline-side aria-expanded=false>{OUTLINE_ICON}</button>{find_html}</main>
+<iframe id=reader name=reader src="{initial}" aria-label="Reader"></iframe><button id=outline-toggle class=outline-toggle type=button title="Outline and related (⌘⇧\\)" aria-label="Show outline and related pages" aria-controls=outline-side aria-expanded=false>{OUTLINE_ICON}</button>{find_html}</div></main>
 <aside id=outline-side data-drag aria-label="Outline and related pages"><div class=brand><div class=pane-tabs role=tablist aria-label="Panel"><button id=tab-outline class=pane-tab type=button role=tab aria-selected=true aria-controls=outline>Outline</button><button id=tab-related class=pane-tab type=button role=tab aria-selected=false aria-controls=related>Related</button></div><button id=outline-fold class=side-toggle type=button title="Collapse all" aria-label="Collapse all headings">{FOLD_ICONS}</button><button id=outline-pin class=side-toggle type=button aria-pressed=false title="Pin panel (⌘⇧\\)" aria-label="Pin panel" aria-controls=outline-side>{PIN_ICON}</button></div>
 <input id=outline-filter type=search placeholder="Filter headings…" autocomplete=off spellcheck=false aria-label="Filter headings">
 <nav id=outline data-nodrag role=tabpanel aria-labelledby=tab-outline aria-label="Page outline"><div class=none>Open a page to see its outline.</div></nav>
@@ -366,7 +372,9 @@ Promise.resolve(window.webkit.messageHandlers.askwDrag.postMessage({{}})).catch(
 const VAULTS={vaults_json},GROUPS={groups_json},BOTH=['notes','html']; let HTML,KEY,UNIT,VAULT;
 function keyOf(k){{return 'askw:vault:'+(k==='notes'?'':k+':')}}
 function setKind(k){{KIND=k;HTML=k==='html';KEY=keyOf(k);VAULT=VAULTS[k];UNIT=VAULT.unit}} setKind(KIND);
-const tree=$('#tree'),reader=$('#reader'),filter=$('#vault-filter'),empty=$('#reader-empty'),home=$('#home'); const TREES={{}};
+const tree=$('#tree'),filter=$('#vault-filter'),empty=$('#reader-empty'),home=$('#home'),stage=$('#stage'); const TREES={{}};
+// The reader is the frame of the tab showing (tabs_ui.py): a tab switch moves it, so it is read at the moment it is used.
+let reader=$('#reader');
 // MARK: reader navigation — instant, as in Obsidian: no fade and no wait. What made a page change feel jerky was what
 // changed AFTER the page had painted, and each is now settled before its first frame: the vault look and the reading
 // position come in the page itself (app.py `_first_paint`), and a switch resizes the sidebar at once (kind-still).
@@ -627,13 +635,19 @@ relList.addEventListener('click',e=>{{const b=e.target.closest('.rel-row');if(b)
 relMap.addEventListener('click',e=>{{const c=e.target.closest('.rel-dot');if(c)relOpen(relRows[+c.dataset.i])}});
 // MARK: reader — what shows in the reader's place, and the window's URL and title, follow whatever the reader loads.
 // History that crosses into the other vault (back past a switch) brings the sidebar along; a link inside a page doesn't.
-function traversed(){{try{{const n=reader.contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
+function traversed(f){{try{{const n=(f||reader).contentWindow.performance.getEntriesByType('navigation')[0];return !!n&&n.type==='back_forward'}}catch(e){{return false}}}}
 // Library rests on its home page, in the reader's place; Notes and Artifacts say what to pick instead.
 function syncOverlays(){{const page=!!readerPage(),lib=KIND==='library',show=lib&&!page;empty.hidden=lib||page;showHome(show);document.body.classList.toggle('reader-blank',!page)}}
 function shellUrl(k,src,folder){{const p=new URLSearchParams();if(k==='html')p.set('vault','html');if(src)p.set('src',src);if(folder)p.set('folder',folder);const q=p.toString();return (k==='library'?'/':'/vault')+(q?'?'+q:'')}}
 function readerFolder(){{try{{return new URLSearchParams(reader.contentWindow.location.search).get('folder')||''}}catch(e){{return ''}}}}
-reader.addEventListener('load',()=>{{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}syncOverlays();outlineLoaded();const src=currentSrc();if(!src){{if(!readerPage()){{history.replaceState(null,'',shellUrl(KIND,''));document.title=VAULT.name}}return}}
-const k=vaultOf(src);if(k&&KIND!=='library'&&k!==KIND&&traversed())switchVault(k,true);highlight(src);history.replaceState(null,'',shellUrl(KIND,src,KIND==='library'&&!k?readerFolder():''));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+VAULT.name;rememberLast(src)}});
+// What follows the page in the reader, on its load and again whenever a tab brings another frame forward. The shell's
+// other parts (find, the palette, the tab bar) hang theirs on with onReaderLoad; each binds named listeners, so running
+// again binds nothing twice, and one that throws is reported without stopping the rest.
+const READER_HOOKS=[]; function onReaderLoad(fn){{READER_HOOKS.push(fn)}}
+function readerLoaded(){{readerFollow();for(const fn of READER_HOOKS)try{{fn()}}catch(e){{setTimeout(()=>{{throw e}})}}}}
+function readerFollow(){{try{{reader.contentWindow.addEventListener('keydown',sideKey)}}catch(e){{}}syncOverlays();outlineLoaded();const src=currentSrc();if(!src){{if(!readerPage()){{history.replaceState(null,'',shellUrl(KIND,''));document.title=VAULT.name}}return}}
+const k=vaultOf(src);if(k&&KIND!=='library'&&k!==KIND&&traversed())switchVault(k,true);highlight(src);history.replaceState(null,'',shellUrl(KIND,src,KIND==='library'&&!k?readerFolder():''));let t='';try{{t=reader.contentDocument.title}}catch(e){{}}document.title=(t||src.split('/').pop())+' — '+VAULT.name;rememberLast(src)}}
+{tabs_js}
 // The page a vault shows is its last page, the one a switch back brings up. The page the shell opened on can load before
 // its tree does (the two race, a few ms apart), when `vaultOf` can't yet say whose it is: the trees' arrival asks again.
 function rememberLast(src){{const k=vaultOf(src);if(k)store(keyOf(k)+'last',src);return k}}

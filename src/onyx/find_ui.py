@@ -14,7 +14,7 @@ is CSS alone, which no observer sees).
 
 It opens from Edit ▸ Find in the app (``window.onyxShell.find``), and from ⌘F in a browser or with focus inside the
 reader. The script runs inside the shell's ``<script>`` and leans on it: ``$``, ``reader``, ``readerDoc``,
-``readerPage``, ``pillRoom`` and ``hidePeek``.
+``readerPage``, ``pillRoom``, ``hidePeek`` and ``onReaderLoad``.
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ function key(e){if(!(e.metaKey||e.ctrlKey)||e.altKey||!readerDoc()||document.que
 if(k==='f'&&!e.shiftKey){e.preventDefault();open(true)}else if(k==='g'&&queryOf().trim()){e.preventDefault();run(e.shiftKey?'previous':'next')}}
 function hook(w){try{w.addEventListener('keydown',key);w.addEventListener('click',poke,true);w.addEventListener('change',poke,true)}catch(e){}}
 document.addEventListener('keydown',key);
-reader.addEventListener('load',()=>{hook(reader.contentWindow);if(!bar.hidden)sync()});
+onReaderLoad(()=>{hook(reader.contentWindow);if(!bar.hidden)sync()});
 if(readerPage())hook(reader.contentWindow);
 input.addEventListener('input',()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(find)});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();go(e.shiftKey?-1:1)}});

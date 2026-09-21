@@ -3029,5 +3029,96 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
+    def _tab_pages(self) -> Path:
+        """An Artifacts vault of three pages, each long enough to scroll, for the tab tests."""
+        artifacts = self.root / "Artifacts"
+        (artifacts / "Pages").mkdir(parents=True)
+        for name in ("One", "Two", "Three"):
+            body = "".join(f"<p>{name} paragraph {i}.</p>" for i in range(80))
+            (artifacts / "Pages" / f"{name.lower()}.html").write_text(
+                f"<title>{name}</title><h1>{name}</h1>{body}", encoding="utf-8"
+            )
+        self.app.state.storage.update_settings({"html_vault_root": str(artifacts)}, model_default="sonnet")
+        return artifacts
+
+    def test_tabs_keep_a_frame_each_and_plain_links_follow_the_tab_showing(self) -> None:
+        # Each tab reads in a frame of its own. A frame keeps its birth name, so a plain `target=reader` row is pointed
+        # at the tab showing as it is clicked; Back steps whichever frame moved last and brings its tab forward.
+        # Both engines; the app's own WebKit (17.5) was checked by hand, since renaming frames fails only there.
+        artifacts = self._tab_pages()
+        one, two = artifacts / "Pages" / "one.html", artifacts / "Pages" / "two.html"
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    popups: list = []
+                    page.on("popup", lambda popup: popups.append(popup))
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    page.frame_locator("#reader").locator("h1").wait_for()
+                    frames = page.locator("#stage > iframe")
+                    self.assertEqual(frames.count(), 1)
+
+                    def src_of(index: int) -> str:
+                        return frames.nth(index).evaluate(
+                            "f => new URLSearchParams(f.contentWindow.location.search).get('src') || ''"
+                        )
+
+                    # A second tab: its own frame, shown; the first keeps its page, hidden and inert behind it.
+                    page.evaluate("href => openTab(href)", f"/view?src={urllib.parse.quote(str(two))}")
+                    expect(frames).to_have_count(2)
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
+                    self.assertEqual(frames.nth(1).get_attribute("id"), "reader")
+                    self.assertTrue(frames.nth(0).evaluate("f => f.inert && getComputedStyle(f).visibility === 'hidden'"))
+                    self.assertTrue(src_of(0).endswith("one.html"))
+                    page.locator("#tree a.file.active[data-path$='two.html']").wait_for()
+                    self.assertIn("two.html", page.url)
+                    # Same place, same size: the frame showing is where the one reader always was.
+                    self.assertEqual(frames.nth(0).bounding_box(), frames.nth(1).bounding_box())
+
+                    # A plain click on a row reads in the tab showing, never in the first frame, and opens no window.
+                    page.locator("#tree a.file", has_text="Three").click()
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Three'")
+                    self.assertTrue(src_of(0).endswith("one.html"))
+                    self.assertTrue(src_of(1).endswith("three.html"))
+                    self.assertEqual(popups, [])
+
+                    # Back to the first tab: the sidebar, the title and the URL follow it.
+                    page.evaluate("activateTab(TABS.list[0])")
+                    self.assertEqual(frames.nth(0).get_attribute("id"), "reader")
+                    page.locator("#tree a.file.active[data-path$='one.html']").wait_for()
+                    self.assertIn("one.html", page.url)
+                    self.assertTrue(page.title().startswith("One"))
+                    page.locator("#tree a.file", has_text="Two").click()
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
+                    self.assertTrue(src_of(1).endswith("three.html"))
+
+                    # History is the window's: Back steps the frame that moved last (the first), and then the second,
+                    # whose tab is behind — so it comes forward.
+                    page.evaluate("history.back()")
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'One'")
+                    self.assertEqual(page.evaluate("TABS.list.indexOf(TABS.active)"), 0)
+                    page.evaluate("history.back()")
+                    page.wait_for_function("() => TABS.list.indexOf(TABS.active) === 1")
+                    page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
+                    self.assertTrue(src_of(0).endswith("one.html"))
+
+                    # Closing the tab showing brings its neighbour forward; the last one goes home instead of away,
+                    # and a lone home tab refuses, so the window can close in its place.
+                    self.assertTrue(page.evaluate("closeTab()"))
+                    expect(frames).to_have_count(1)
+                    self.assertEqual(frames.nth(0).get_attribute("id"), "reader")
+                    page.locator("#tree a.file.active[data-path$='one.html']").wait_for()
+                    self.assertTrue(page.evaluate("closeTab()"))
+                    expect(page.locator("#home")).to_be_visible()
+                    expect(frames).to_have_count(1)
+                    self.assertFalse(page.evaluate("closeTab()"))
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ It wears the shell's modal look (``panels_ui``) but stands near the top of the w
 stays where it is while results come and go; and it shows at once, with no rise. The script runs inside the shell's
 ``<script>`` and leans on it: ``$``, ``esc``, ``api``, ``label``, ``navigate``, ``viewHref``, ``openItem``,
 ``docWhere``, ``switchVault``, ``currentSrc``, ``rootOf``, ``hidePeek``, ``KIND``, ``GROUPS``, ``BOTH``, ``reader``,
-and the outline's ``HEADS`` and ``setOutActive``.
+``onReaderLoad``, and the outline's ``HEADS`` and ``setOutActive``.
 """
 
 from __future__ import annotations
@@ -85,16 +85,16 @@ async function loadRecent(){try{recent=((await api('/api/library')).documents||[
 // A passage opens at its section: the reader stays hidden until the page is in and scrolled there, so it never shows the
 // page's top (or the reading position it would put back) first. Already open, it just scrolls.
 function openPage(r,heading){if(KIND!=='library'&&r.vault!==KIND)switchVault(r.vault,true);const here=currentSrc()===r.path;if(here){if(heading)land(heading);return}
-if(heading){jump={path:r.path,heading};reader.style.visibility='hidden';clearTimeout(jumpTimer);jumpTimer=setTimeout(landed,1500)}navigate(viewHref(r.path,r.vault))}
+if(heading){jump={path:r.path,heading,frame:reader};reader.style.visibility='hidden';clearTimeout(jumpTimer);jumpTimer=setTimeout(landed,1500)}navigate(viewHref(r.path,r.vault))}
 function land(heading){const want=heading.toLowerCase(),i=HEADS.findIndex(h=>h.text.toLowerCase()===want);if(i<0)return;const el=HEADS[i].el,root=el.ownerDocument.documentElement,was=root.style.scrollBehavior;
 for(let d=el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))d.open=true;root.style.scrollBehavior='auto';el.scrollIntoView({block:'start'});root.style.scrollBehavior=was;setOutActive(i)}
-function landed(){clearTimeout(jumpTimer);const j=jump;jump=null;if(j&&currentSrc()===j.path)land(j.heading);reader.style.visibility=''}
+function landed(){clearTimeout(jumpTimer);const j=jump;jump=null;if(j&&currentSrc()===j.path)land(j.heading);(j?j.frame:reader).style.visibility=''}
 function open(){if(window.OnyxMenu)OnyxMenu.close();hidePeek();for(const d of document.querySelectorAll('dialog[open]'))if(d!==dlg)d.close();
 if(!dlg.open){dlg.showModal();loadRecent();api('/api/search/status').then(d=>{status=d;showState();draw()}).catch(()=>{});refresh()}input.focus();input.select();return true}
 function key(e){if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&(e.key||'').toLowerCase()==='p'){e.preventDefault();open()}}
 document.addEventListener('keydown',key);
-// Registered after the shell's own load handler, so the outline's HEADS are the new page's by the time a passage lands.
-reader.addEventListener('load',()=>{try{reader.contentWindow.addEventListener('keydown',key)}catch(e){}if(jump)landed()});
+// Run after the shell's own (readerLoaded), so the outline's HEADS are the new page's by the time a passage lands.
+onReaderLoad(()=>{try{reader.contentWindow.addEventListener('keydown',key)}catch(e){}if(jump)landed()});
 input.addEventListener('input',refresh);
 input.addEventListener('keydown',e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(rows.length)select((sel+(e.key==='ArrowDown'?1:rows.length-1))%rows.length,true,true)}
 else if(e.key==='Enter'&&!e.isComposing){e.preventDefault();const r=rows[sel];if(pending&&(!r||r.old))openWhenReady=true;else choose(sel)}});
