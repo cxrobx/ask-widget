@@ -6,9 +6,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ask_widget import __version__
-from ask_widget.app import PROTOCOL_VERSION, create_app
-from ask_widget.config import AppConfig
+from onyx import __version__
+from onyx.app import PROTOCOL_VERSION, create_app
+from onyx.config import AppConfig
 
 
 class RuntimeContractTests(unittest.TestCase):

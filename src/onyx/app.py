@@ -48,7 +48,7 @@ from .vault_ui import vault_page
 from . import handoff, markdown_theme, search, sidebar_theme, vault, vault_look, viewer
 from . import __version__
 
-logger = logging.getLogger("ask_widget.app")
+logger = logging.getLogger("onyx.app")
 
 _FROZEN_ROOT = getattr(sys, "_MEIPASS", None)
 STATIC_DIR = (

@@ -17,7 +17,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from ask_widget.vault import VaultIndex
+from onyx.vault import VaultIndex
 
 SCRIPT = Path(__file__).resolve().parents[1] / "integrations" / "alfred" / "onyx_search.py"
 ALFRED_PYTHON = "/usr/bin/python3"

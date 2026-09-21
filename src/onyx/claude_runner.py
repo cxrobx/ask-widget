@@ -32,7 +32,7 @@ from pathlib import Path
 from .citations import extract_citations, safe_tool_trace
 from .providers import find_claude, subscription_environment
 
-logger = logging.getLogger("ask_widget.runner")
+logger = logging.getLogger("onyx.runner")
 
 # Whole-stream wall-clock budget. First token is ~2-3s; "Prove it" with several
 # Grep/Read calls can take longer, so give it headroom but bound the worst case.

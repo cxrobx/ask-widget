@@ -94,8 +94,8 @@ Python 3.11 or newer. The built app needs at least one supported CLI installed:
 Claude Code signed into claude.ai, or Codex signed in with ChatGPT.
 
 ```bash
-git clone https://github.com/cxrobx/ask-widget.git
-cd ask-widget
+git clone https://github.com/cxrobx/onyx.git
+cd onyx
 ./launcher/build-app.sh
 open -a "Onyx"
 ```
@@ -228,7 +228,10 @@ so instead of padding itself out with its own tail.
 
 The map above the list places each neighbour at its distance from the centre,
 which is the page you are on; the ring is the floor, so the disc is the
-neighbourhood and the angle is only rank and means nothing. Click a dot or a row
+neighbourhood, and the angle scatters and means nothing. Distance is the score
+by its root rather than straight, because the scores bunch just above the floor
+— half of them sit in the bottom fifth of the range — and a straight radius drew
+every page's neighbours as a ring around the rim. Click a dot or a row
 to open it. A neighbour near enough to be the same content twice is marked
 `same?` — usually a note beside its own HTML rendering, or an inbox capture
 beside the note it became.
@@ -508,7 +511,7 @@ PYTHONPATH=src .venv/bin/python -W error -m unittest discover -s tests -v
 PYTHONPATH=src .venv/bin/python -m unittest tests.browser_smoke -v
 
 swiftc -typecheck -framework Cocoa -framework WebKit \
-  -framework UniformTypeIdentifiers launcher/AskWidget.swift
+  -framework UniformTypeIdentifiers launcher/Onyx.swift
 plutil -lint launcher/Info.plist
 
 ./launcher/build-app.sh --no-install
@@ -534,13 +537,13 @@ build.
 ## Project layout
 
 ```text
-ask-widget/
+onyx/
 ├── integrations/
 │   ├── alfred/               Alfred workflow: onx/onxc search, file action
 │   └── obsidian/             Obsidian plugin (TypeScript, esbuild)
 ├── launcher/                 native Swift app and release build
 ├── scripts/                  smoke tests, background daemon, plugin install
-├── src/ask_widget/
+├── src/onyx/
 │   ├── app.py                HTTP API, capabilities, persistence orchestration
 │   ├── claude_runner.py      Claude process lifecycle and SSE translation
 │   ├── codex_runner.py       Codex headless JSONL lifecycle and SSE translation
@@ -558,3 +561,24 @@ ask-widget/
 ├── tests/                    API, security, storage, viewer, and runner tests
 └── requirements-*.lock       exact runtime, build, and test environments
 ```
+
+---
+
+## Contributing with an agent
+
+Point your coding agent at [`AGENTS.md`](AGENTS.md) before it changes anything.
+It is short on purpose: the invariants that must not be relaxed, the one command
+that actually runs the suite, and the names that look stale but are load-bearing
+contracts. Claude Code, Cursor, and Codex all read it automatically.
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). Copyright © 2026 Christopher Robinson.
+
+The project was renamed from **Ask Widget** to **Onyx**; the licence and its
+copyright holder are unchanged by that, and the built wheel carries
+`License-Expression: MIT` with `LICENSE` bundled. No third-party code is
+vendored here, and every runtime dependency (FastAPI, uvicorn, markdown-it-py,
+pypdf) is MIT- or BSD-licensed.

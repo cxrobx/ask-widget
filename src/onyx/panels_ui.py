@@ -28,7 +28,7 @@ from typing import Any
 
 from .launcher_ui import theme_settings
 
-logger = logging.getLogger("ask_widget.panels")
+logger = logging.getLogger("onyx.panels")
 
 _ICON = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '

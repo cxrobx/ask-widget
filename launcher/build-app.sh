@@ -30,7 +30,7 @@ echo "→ Preparing Python service bundler…"
 "$BUILDER_VENV/bin/python" -m pip install --disable-pip-version-check \
   --requirement "$BUILD_LOCK"
 PYTHON_APP_VERSION="$(PYTHONPATH="$ROOT/src" "$BUILDER_VENV/bin/python" -c \
-  'from ask_widget import __version__; print(__version__)')"
+  'from onyx import __version__; print(__version__)')"
 if [ "$PYTHON_APP_VERSION" != "$APP_VERSION" ]; then
   echo "Version mismatch: Python=$PYTHON_APP_VERSION, Info.plist=$APP_VERSION" >&2
   exit 1
@@ -75,7 +75,7 @@ ALFRED_WORKFLOW="$BUILD/Open-in-Onyx.alfredworkflow"
 
 echo "→ Compiling Swift…"
 swiftc -framework Cocoa -framework WebKit -framework UniformTypeIdentifiers -O \
-  "$DIR/AskWidget.swift" -o "$BUNDLE/Contents/MacOS/$BIN_NAME"
+  "$DIR/Onyx.swift" -o "$BUNDLE/Contents/MacOS/$BIN_NAME"
 
 echo "→ Assembling bundle…"
 cp "$DIR/Info.plist" "$BUNDLE/Contents/Info.plist"

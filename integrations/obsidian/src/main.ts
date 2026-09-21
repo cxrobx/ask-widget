@@ -14,9 +14,9 @@ import {
   vaultBasePath,
   type Capture,
 } from "./context";
-import { AskWidgetPanel, VIEW_TYPE_ASK_WIDGET } from "./panel";
+import { OnyxPanel, VIEW_TYPE_ASK_WIDGET } from "./panel";
 import { AskService, ServiceError } from "./service";
-import { AskWidgetSettingTab, DEFAULT_SETTINGS, type AskWidgetSettings } from "./settings";
+import { OnyxSettingTab, DEFAULT_SETTINGS, type OnyxSettings } from "./settings";
 import { captureMarkdownTheme } from "./markdown-theme";
 import { captureSidebarTheme } from "./sidebar-theme";
 
@@ -28,8 +28,8 @@ const ACTION_TITLES: Record<Action, string> = {
   ask: "Onyx: Ask…",
 };
 
-export default class AskWidgetPlugin extends Plugin {
-  settings: AskWidgetSettings = { ...DEFAULT_SETTINGS };
+export default class OnyxPlugin extends Plugin {
+  settings: OnyxSettings = { ...DEFAULT_SETTINGS };
   service!: AskService;
   private themeTimer = 0;
   private themeSync: Promise<void> | null = null;
@@ -41,8 +41,8 @@ export default class AskWidgetPlugin extends Plugin {
     await this.loadSettings();
     this.service = new AskService(this.settings.serviceUrl);
 
-    this.registerView(VIEW_TYPE_ASK_WIDGET, (leaf) => new AskWidgetPanel(leaf, this));
-    this.addSettingTab(new AskWidgetSettingTab(this.app, this));
+    this.registerView(VIEW_TYPE_ASK_WIDGET, (leaf) => new OnyxPanel(leaf, this));
+    this.addSettingTab(new OnyxSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(() => {
       if (this.themeStopped) return;
@@ -109,7 +109,7 @@ export default class AskWidgetPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<AskWidgetSettings>);
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<OnyxSettings>);
   }
 
   async saveSettings(): Promise<void> {
@@ -235,7 +235,7 @@ export default class AskWidgetPlugin extends Plugin {
     new Notice(error instanceof Error ? error.message : String(error));
   }
 
-  private async revealPanel(): Promise<AskWidgetPanel> {
+  private async revealPanel(): Promise<OnyxPanel> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_ASK_WIDGET);
     let leaf: WorkspaceLeaf | null = existing[0] ?? null;
     if (!leaf) {
@@ -243,7 +243,7 @@ export default class AskWidgetPlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE_ASK_WIDGET, active: true });
     }
     this.app.workspace.revealLeaf(leaf);
-    return leaf.view as AskWidgetPanel;
+    return leaf.view as OnyxPanel;
   }
 
   private promptForQuestion(selection: string): Promise<string> {
@@ -259,7 +259,7 @@ class QuestionModal extends Modal {
   private settled = false;
 
   constructor(
-    app: AskWidgetPlugin["app"],
+    app: OnyxPlugin["app"],
     private selection: string,
     private done: (question: string) => void,
   ) {

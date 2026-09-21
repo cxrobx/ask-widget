@@ -6,7 +6,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from ask_widget import __version__
+from onyx import __version__
 
 
 class VersioningTests(unittest.TestCase):

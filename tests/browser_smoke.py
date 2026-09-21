@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import socket
@@ -21,15 +22,15 @@ import uvicorn
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 
-from ask_widget import search
-from ask_widget.app import create_app
-from ask_widget.citations import extract_citations
-from ask_widget.config import AppConfig
-from ask_widget.launcher_ui import glass_alphas
-from ask_widget.runner import _sse
-from ask_widget.storage import Storage
+from onyx import search
+from onyx.app import create_app
+from onyx.citations import extract_citations
+from onyx.config import AppConfig
+from onyx.launcher_ui import glass_alphas
+from onyx.runner import _sse
+from onyx.storage import Storage
 
-LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "AskWidget.swift"
+LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "Onyx.swift"
 PLUGIN_SRC = Path(__file__).resolve().parent.parent / "integrations" / "obsidian" / "src"
 PLUGIN_ESBUILD = PLUGIN_SRC.parent / "node_modules" / ".bin" / "esbuild"
 
@@ -159,7 +160,7 @@ class BrowserSmokeTests(unittest.TestCase):
                 "selected_effort": "low",
             },
         ]
-        self.catalog_patch = patch("ask_widget.app.provider_catalogs", return_value=catalogs)
+        self.catalog_patch = patch("onyx.app.provider_catalogs", return_value=catalogs)
         self.catalog_patch.start()
 
         server_config = uvicorn.Config(
@@ -346,7 +347,7 @@ class BrowserSmokeTests(unittest.TestCase):
             e.closest('.askw-body').getBoundingClientRect().top - e.getBoundingClientRect().top)"""
 
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", long_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", long_stream), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1100, "height": 640})
             page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -532,7 +533,7 @@ class BrowserSmokeTests(unittest.TestCase):
             yield _sse("done", {"elapsed_ms": 5})
 
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", long_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", long_stream), sync_playwright() as playwright:
             browser = getattr(playwright, engine).launch(headless=True)
             page = browser.new_page(viewport={"width": 1100, "height": 640})
             page.on("pageerror", lambda error: page_errors.append(f"{engine}: {error}"))
@@ -606,7 +607,7 @@ class BrowserSmokeTests(unittest.TestCase):
             yield _sse("done", {"elapsed_ms": 5})
 
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", short_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", short_stream), sync_playwright() as playwright:
             browser = getattr(playwright, engine).launch(headless=True)
             page = browser.new_page(viewport={"width": 1100, "height": 640})
             page.on("pageerror", lambda error: page_errors.append(f"{engine}: {error}"))
@@ -700,7 +701,7 @@ class BrowserSmokeTests(unittest.TestCase):
             yield _sse("done", {"elapsed_ms": 5})
 
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", table_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", table_stream), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1100, "height": 640})
             page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -762,7 +763,7 @@ class BrowserSmokeTests(unittest.TestCase):
 
         page_top = "() => document.scrollingElement.scrollTop"
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", long_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", long_stream), sync_playwright() as playwright:
             browser = getattr(playwright, engine).launch(headless=True)
             page = browser.new_page(viewport={"width": 1100, "height": 640})
             page.on("pageerror", lambda error: page_errors.append(f"{engine}: {error}"))
@@ -840,7 +841,7 @@ class BrowserSmokeTests(unittest.TestCase):
         under_newest = """p => p.closest('.askw-body') !== null
             && p.parentElement.previousElementSibling === [...document.querySelectorAll('.askw-a')].pop()"""
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", tool_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", tool_stream), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1100, "height": 640})
             page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -930,7 +931,7 @@ class BrowserSmokeTests(unittest.TestCase):
         # A real box on screen: an element inside a closed <details> measures 0×0 at the top, which is not "in view".
         in_view = "el => { const r = el.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight; }"
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", cited_stream), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", cited_stream), sync_playwright() as playwright:
             browser = getattr(playwright, engine).launch(headless=True)
             page = browser.new_page(viewport={"width": 1280, "height": 760})
             page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -1042,6 +1043,79 @@ class BrowserSmokeTests(unittest.TestCase):
 
             browser.close()
 
+        self.assertEqual(page_errors, [])
+        self.assertEqual(console_errors, [])
+
+    def test_related_map_spaces_its_dots_by_how_alike_the_pages_are(self) -> None:
+        """The map's one job: a dot's distance from the centre is its score, on a scale that doesn't stretch to the page.
+
+        Seven neighbours between 0.45 and 0.53 is a real pane — it is the one that drew a ring — and it is the case a
+        radius linear in the score gets wrong, since nothing scores over most of the range such a radius spends the
+        disc on. What the map must hold either way: the order, a floor dot on the rim, no dot sitting on another, and a
+        distance that doesn't move when a nearer neighbour arrives.
+        """
+        vault = self.root / "vault"
+        (vault / "notes").mkdir(parents=True)
+        alpha = vault / "notes" / "Alpha.md"
+        alpha.write_text("# Alpha\n\nA page with neighbours.\n", encoding="utf-8")
+        storage: Storage = self.app.state.storage
+        storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
+        storage.add_root(vault)
+
+        # The pane's own drawing, given scores instead of an index: the map is what is under test, not the scoring.
+        draw = """({floor, scores}) => {
+          drawRelated({floor, items: scores.map((score, i) => (
+            {score, title: 'Page ' + i, vault: 'notes', folder: 'Areas', dupe: false}
+          ))});
+          return [...document.querySelectorAll('#rel-map .rel-dot')].map(
+            dot => [+dot.getAttribute('cx'), +dot.getAttribute('cy')]);
+        }"""
+        scores = [0.53, 0.52, 0.51, 0.51, 0.46, 0.45, 0.45]
+        console_errors: list[str] = []
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto(
+                f"{self.base_url}/vault?src={urllib.parse.quote(str(alpha))}",
+                wait_until="networkidle",
+            )
+            page.locator("#outline-toggle").click()  # the panel, out of the reader's right edge
+            page.locator("#tab-related").click()
+            page.locator("#related").wait_for(state="visible")
+            # Whatever the index says about this page, it has said it: nothing lands on the map after this.
+            page.wait_for_function("() => document.querySelector('#rel-list').textContent.trim() !== 'Looking…'")
+
+            dots = [tuple(dot) for dot in page.evaluate(draw, {"floor": 0.45, "scores": scores})]
+            deeper = [tuple(dot) for dot in page.evaluate(draw, {"floor": 0.45, "scores": [0.96] + scores})]
+            page.locator("#rel-map").wait_for(state="visible")
+            browser.close()
+
+        def away(dot: tuple[float, float]) -> float:
+            return math.dist(dot, (50, 50))  # how far out the map drew it
+
+        radii = [away(dot) for dot in dots]
+        self.assertEqual(len(radii), len(scores))
+        for i, (near, far) in enumerate(zip(scores, scores[1:])):
+            if near > far:
+                self.assertGreater(radii[i + 1], radii[i] + 0.3, f"{far} has to sit further out than {near}")
+            else:
+                self.assertAlmostEqual(radii[i], radii[i + 1], delta=0.2, msg="one score, one distance")
+        self.assertGreater(
+            max(radii) - min(radii), 12, "a tight neighbourhood still has to spread across the map, not ring it"
+        )
+        self.assertGreater(radii[-1], 45, "a neighbour at the floor sits on the rim")
+        closest = min(math.dist(a, b) for i, a in enumerate(dots) for b in dots[i + 1 :])
+        self.assertGreater(closest, 6, "no dot may sit on another; a dot is 6 of the map's 100 units across")
+        self.assertAlmostEqual(
+            away(deeper[1]),
+            radii[0],
+            delta=0.2,
+            msg="the scale is the vault's: a dot doesn't move because a nearer neighbour arrived",
+        )
+        self.assertLess(away(deeper[0]), 15, "a page that is nearly the same text sits by the centre")
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
@@ -1467,7 +1541,7 @@ class BrowserSmokeTests(unittest.TestCase):
             yield _sse("done", {"elapsed_ms": 5})
 
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", one_answer), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", one_answer), sync_playwright() as playwright:
             for engine in ("chromium", "webkit"):
                 with self.subTest(engine=engine):
                     browser = getattr(playwright, engine).launch(headless=True)
@@ -1562,7 +1636,7 @@ class BrowserSmokeTests(unittest.TestCase):
         revealed: list[str] = []
         page_errors: list[str] = []
         with (
-            patch("ask_widget.vault.reveal_in_finder", side_effect=lambda target: revealed.append(str(target))),
+            patch("onyx.vault.reveal_in_finder", side_effect=lambda target: revealed.append(str(target))),
             sync_playwright() as playwright,
         ):
             for engine in ("chromium", "webkit"):
@@ -2760,7 +2834,7 @@ class BrowserSmokeTests(unittest.TestCase):
             yield _sse("done", {"elapsed_ms": 5})
 
         page_errors: list[str] = []
-        with patch("ask_widget.app.stream_answer", canned), sync_playwright() as playwright:
+        with patch("onyx.app.stream_answer", canned), sync_playwright() as playwright:
             for engine in ("chromium", "webkit"):
                 browser = getattr(playwright, engine).launch(headless=True)
                 for mode, tone in (("dark", "light"), ("light", "dark"), ("dark", "dark"), ("light", "light")):

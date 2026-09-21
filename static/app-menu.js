@@ -4,7 +4,7 @@
  * or dark — so, as in cxtasks (its gotcha #9) and cxnotes, Onyx draws its menus
  * itself, from the app's theme tokens: a page that loads this must carry
  * launcher_ui.theme_style. The native app suppresses WebKit's menu wherever a
- * page did not claim the event (AskWidget.swift); OnyxMenu.open is how a page
+ * page did not claim the event (Onyx.swift); OnyxMenu.open is how a page
  * claims it. The look is cxtasks' Menu.tsx, so a right-click reads the same in
  * both apps.
  *

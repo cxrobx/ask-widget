@@ -7,8 +7,8 @@ import time
 import unittest
 from pathlib import Path
 
-from ask_widget import vault as vault_mod
-from ask_widget.vault import VaultCache, VaultIndex, is_inside, normalize, read_attachment_folder
+from onyx import vault as vault_mod
+from onyx.vault import VaultCache, VaultIndex, is_inside, normalize, read_attachment_folder
 
 
 def make_vault(base: Path) -> tuple[Path, Path]:

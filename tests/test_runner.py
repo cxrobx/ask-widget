@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ask_widget.claude_runner import build_cmd as build_claude_cmd, stream_answer
-from ask_widget.codex_runner import build_cmd as build_codex_cmd, stream_answer as stream_codex_answer
+from onyx.claude_runner import build_cmd as build_claude_cmd, stream_answer
+from onyx.codex_runner import build_cmd as build_codex_cmd, stream_answer as stream_codex_answer
 
 
 def json_line(payload: dict) -> bytes:

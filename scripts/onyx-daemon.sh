@@ -12,7 +12,10 @@ PORT="${ONYX_PORT:-8899}"
 FOLDER="${ONYX_FOLDER:-$HOME/Projects}"
 ROOTS_FILE="$HOME/.config/onyx/allow-roots"
 APP_SERVER="/Applications/Onyx.app/Contents/Resources/Server/onyx-server"
-REPO="${ONYX_REPO:-$HOME/Projects/ask-widget}"
+# Both spellings of the checkout: the project was renamed to Onyx while the folder
+# on disk stayed `ask-widget`, and either may be what a developer has.
+REPO="${ONYX_REPO:-$HOME/Projects/onyx}"
+[ -d "$REPO" ] || REPO="$HOME/Projects/ask-widget"
 
 # Same allow-roots file the launcher reads, so both routes trust the same folders.
 ARGS=(--folder "$FOLDER" --port "$PORT")
@@ -45,7 +48,7 @@ fi
 if [ -x "$REPO/.venv/bin/python" ]; then
   cd "$REPO"
   export PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}"
-  exec "$REPO/.venv/bin/python" -m ask_widget "${ARGS[@]}"
+  exec "$REPO/.venv/bin/python" -m onyx "${ARGS[@]}"
 fi
 
 echo "No Onyx service found. Install the app or build the checkout." >&2

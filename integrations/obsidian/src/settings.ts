@@ -1,21 +1,21 @@
 import { Notice, PluginSettingTab, Setting, type App } from "obsidian";
 
-import type AskWidgetPlugin from "./main";
+import type OnyxPlugin from "./main";
 
-export interface AskWidgetSettings {
+export interface OnyxSettings {
   serviceUrl: string;
   contextFolder: string;
 }
 
-export const DEFAULT_SETTINGS: AskWidgetSettings = {
+export const DEFAULT_SETTINGS: OnyxSettings = {
   serviceUrl: "http://127.0.0.1:8899",
   contextFolder: "",
 };
 
-export class AskWidgetSettingTab extends PluginSettingTab {
+export class OnyxSettingTab extends PluginSettingTab {
   constructor(
     app: App,
-    private plugin: AskWidgetPlugin,
+    private plugin: OnyxPlugin,
   ) {
     super(app, plugin);
   }

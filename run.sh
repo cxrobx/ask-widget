@@ -6,7 +6,7 @@
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="${ONYX_VENV:-$PROJECT_DIR/.venv}"
-STAMP="$VENV_DIR/.ask-widget-installed"
+STAMP="$VENV_DIR/.onyx-installed"
 RUNTIME_LOCK="$PROJECT_DIR/requirements-runtime.lock"
 cd "$PROJECT_DIR"
 
@@ -23,7 +23,7 @@ fi
 # manifest changed. Source is loaded directly through PYTHONPATH below.
 if [ ! -f "$STAMP" ] || [ "$RUNTIME_LOCK" -nt "$STAMP" ] || \
    ! PYTHONPATH="$PROJECT_DIR/src" "$VENV_DIR/bin/python" -c \
-     'import ask_widget, fastapi, pypdf, uvicorn' 2>/dev/null; then
+     'import onyx, fastapi, pypdf, uvicorn' 2>/dev/null; then
   echo "Installing Onyx dependencies…" >&2
   if ! "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check \
     --requirement "$RUNTIME_LOCK"; then
@@ -38,4 +38,4 @@ if [ $# -eq 0 ]; then
 fi
 
 export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-exec "$VENV_DIR/bin/python" -m ask_widget "$@"
+exec "$VENV_DIR/bin/python" -m onyx "$@"

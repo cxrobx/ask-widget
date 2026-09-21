@@ -290,7 +290,7 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 #outline .tw svg{{width:12px;height:12px;transform:rotate(90deg);transition:transform .12s}} #outline li.shut>.row .tw svg{{transform:none}} #outline li.shut>ul{{display:none}} #outline.filtering li.shut>ul{{display:block}} #outline li.miss{{display:none}}
 #outline .h:focus-visible,#outline .tw:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} #outline .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px}}
 /* Related: the pages nearest this one by meaning. The map above the list places each at its distance from the centre —
-   the score, on a scale fixed across pages, so a tight neighbourhood looks tight; the angle is rank, and means nothing.
+   the score, on a scale fixed across pages, so a tight neighbourhood looks tight; the angle scatters, and means nothing.
    The ring is the floor, so the disc is the neighbourhood and everything drawn inside it is related. */
 #related{{display:none;flex:1;flex-direction:column;min-height:0}} #related:not([hidden]){{display:flex}}
 #rel-map{{display:block;flex:none;width:100%;max-width:210px;height:auto;margin:2px auto 12px;aspect-ratio:1;overflow:visible}} #related.no-map #rel-map{{display:none}}
@@ -517,9 +517,10 @@ function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('
 // MARK: related — the pages nearest the one being read (/api/related, search.py): the index ⌘P searches, read from a
 // page's own direction instead of from a query. Nothing is embedded for it, so it answers while Ollama is off. The map
 // puts each neighbour at its distance from the centre — the radius is its score on a scale fixed across pages, so a
-// tight neighbourhood looks tight and two pages' maps compare; the angle is only rank, spread so the dots don't land on
-// each other, and means nothing. Only pages past a floor are shown at all, so everything here is related by design and
-// nothing needs dimming or excusing: a page with no neighbour shows none rather than twenty of its own tail.
+// tight neighbourhood looks tight and two pages' maps compare; the angle turns by the golden angle each rank, so no
+// dot lands on another and scores that are alike don't draw a dial, and means nothing. Only pages past a floor are
+// shown at all, so everything here is related by design and nothing needs dimming or excusing: a page with no
+// neighbour shows none rather than twenty of its own tail.
 const PANE_KEY='askw:vault:pane', relPane=$('#related'), relList=$('#rel-list'), relMap=$('#rel-map'), tabOut=$('#tab-outline'), tabRel=$('#tab-related');
 let relOn=recall(PANE_KEY)==='related', relFor=null, relSeq=0, relRows=[];
 let relFloor=0.45;  // until the first answer says; the server owns it
@@ -538,12 +539,24 @@ let d;try{{d=await api('/api/related?vault='+here.vault+'&path='+encodeURICompon
 if(seq!==relSeq||d.superseded)return;relFor=here.path;drawRelated(d)}}
 // The floor is the map's outer edge and 1 is its centre, so the disc IS the neighbourhood: everything drawn is inside
 // it, and how far out a dot sits is how much of the page it shares. The same scale on every page, so two maps compare.
-function relRadius(score){{return Math.max(9,Math.min(46,9+(1-score)*(37/Math.max(.05,1-relFloor))))}}
+//
+// The radius is the ROOT of the score's place between those two ends, because the scores don't fall evenly along it:
+// measured over 913 neighbours of 112 pages of the author's vault, the median one sits 0.18 of the way from the floor
+// to 1, and a radius linear in that fraction pinned 47% of every map's dots into the outer sixth of the disc — seven
+// neighbours scoring 0.45 to 0.53 drew a ring 5 units wide, which is the bug. The root moves neither end and keeps
+// the order, and spends the 37 units between them where the scores are: the median neighbour lands halfway out, a
+// tenth of dots stay near the rim, and those same seven spread over 14. So distance is not the score times a constant
+// — the row carries the number — it is where the page stands among what a vault's neighbours actually score.
+function relRadius(score){{return 46-37*Math.sqrt(Math.max(0,Math.min(1,(score-relFloor)/Math.max(.05,1-relFloor))))}}
 function relWhere(r){{return [GROUPS[r.vault]].concat(r.folder?r.folder.split('/'):[]).join(' › ')}}
 function relScoreTitle(s){{return s.toFixed(2)+' — 0 would be no closer than any two pages in the vault, 1 the same text'}}
+// Each dot a golden angle on from the one before, as a sunflower sets its seeds: 137.5° never comes back round, so a
+// page whose neighbours all score alike scatters them instead of drawing the regular polygon 360/n would, and no two
+// of twelve come within 20° — 16 of the map's 100 units apart out at the rim, where a dot is 6 across.
+const REL_TURN=137.507;
 function relDots(items){{const n=Math.min(items.length,12),out=['<circle class=rel-edge cx=50 cy=50 r=47></circle>'];
 out.push(`<circle class=rel-here cx=50 cy=50 r=4.5><title>${{esc(document.title.replace(/ — [^—]*$/,''))}}</title></circle>`);
-for(let i=0;i<n;i++){{const a=(-90+i*360/n)*Math.PI/180,r=relRadius(items[i].score);
+for(let i=0;i<n;i++){{const a=(-90+i*REL_TURN)*Math.PI/180,r=relRadius(items[i].score);
 out.push(`<circle class="rel-dot${{items[i].dupe?' dupe':''}}" data-i=${{i}} cx=${{(50+r*Math.cos(a)).toFixed(1)}} cy=${{(50+r*Math.sin(a)).toFixed(1)}} r=3><title>${{esc(items[i].title)}} — ${{relScoreTitle(items[i].score)}}</title></circle>`)}}
 return out.join('')}}
 function drawRelated(d){{const items=d.items||[];relRows=items;relPane.classList.toggle('no-map',!items.length);

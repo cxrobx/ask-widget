@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from ask_widget.prompts import append_system_for, build_user_prompt
+from onyx.prompts import append_system_for, build_user_prompt
 
 
 class PromptTests(unittest.TestCase):

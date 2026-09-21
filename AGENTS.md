@@ -1,0 +1,132 @@
+# AGENTS.md
+
+Read this before changing anything. The README explains what Onyx *is* and how to
+install it; this file is the part a coding agent gets wrong.
+
+Onyx is a local-first reading workspace: a small FastAPI service on `127.0.0.1`
+serves documents into a WebKit reader, injects `static/ask.js` into them, and
+streams answers from the **Claude** or **Codex** CLI. A native Swift app
+(`launcher/Onyx.swift`) wraps it. It runs on the user's own machine, against the
+user's own files, so every boundary in here is a real boundary.
+
+## Verify with this
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests     # 166 tests, ~3s
+```
+
+That is what CI runs, and it is the only command guaranteed to work — there is no
+`pytest` in the runtime environment, and a `pytest` on `PATH` usually lacks
+`fastapi`. The rest of CI, worth running when you touch those surfaces:
+
+```bash
+swiftc -typecheck -framework Cocoa -framework WebKit \
+  -framework UniformTypeIdentifiers launcher/Onyx.swift
+plutil -lint launcher/Info.plist
+cd integrations/obsidian && npm ci && npm run check && npm run build && npm test
+PYTHONPATH=src python -m unittest tests.browser_smoke     # needs playwright chromium+webkit
+```
+
+**A passing build is not a passing feature.** The browser suite drives real
+Chromium and WebKit; reach for it when you change `static/ask.js` or anything the
+reader renders. Note the shipped macOS app runs an **older system WebKit** than
+Playwright's, so a layout bug can pass both Playwright engines and still be wrong
+in the app.
+
+## Invariants — do not relax these
+
+Each one has a test. If your change makes a test here fail, the change is wrong,
+not the test.
+
+**The filesystem boundary.** `/_fs` serves *only the exact files a viewed document
+referenced*, each behind a per-document capability token. It is not a
+home-directory reader. Path checks resolve symlinks **before** comparing against
+allowed roots, and compare path components — not string prefixes, or
+`/home/user-evil` passes a `/home/user` check.
+→ `test_document_assets_use_a_capability_url`,
+`test_allowlist_rejects_a_sibling_with_the_same_prefix`,
+`test_allowlist_follows_symlinks_before_checking_boundaries`
+
+**Scripts run only in trusted local HTML.** Remote and untrusted documents get
+their `<script>` tags stripped in `viewer.prepare_html`, and a remote document can
+never opt back in. Markdown is rendered without executing raw HTML.
+→ `test_remote_html_scripts_stay_inert_even_if_requested`,
+`test_trusted_local_html_keeps_interactive_scripts`,
+`test_markdown_is_rendered_without_executing_raw_html`
+
+**Remote fetches refuse private addresses.** SSRF guard on the URL reader.
+→ `test_remote_private_addresses_are_rejected`
+
+**Mutations need the server token; only allowlisted origins get one.**
+→ `test_mutations_require_the_server_token`,
+`test_session_endpoint_returns_token_only_to_allowed_origins`,
+`test_unlisted_origins_are_still_rejected`
+
+**The model never gets write tools.** Provider commands gate web access and allow
+no writes, ever. Adding a write tool to the runner is not a feature.
+→ `test_claude_command_gates_web_tools_and_never_allows_writes`
+
+**Vault mutations stay inside the vault.** Link, folder and reorganise routes
+write only within the vault and never through a symlink target.
+→ `test_link_and_folder_routes_write_only_inside_the_vault`,
+`test_reorganising_moves_only_what_the_vault_owns_and_never_a_target`
+
+**Subscription-only execution.** Claude runs through a signed-in claude.ai
+session and Codex through ChatGPT. API-key environment variables are stripped and
+non-subscription sessions are rejected, deliberately, so the app can never bill
+the user per token. Do not add an API-key path.
+
+**Version metadata moves together.** `src/onyx/__init__.py`, the Obsidian
+`manifest.json` and `versions.json`, and the release metadata must agree.
+→ `test_all_release_metadata_uses_the_same_version`,
+`test_obsidian_manifest_and_versions_json_agree`
+
+## Names that look stale but are contracts
+
+The project was **Ask Widget** before it was Onyx. Some old names survive on
+purpose. Renaming any of these breaks existing users with nothing to show for it:
+
+| Name | Where | Why it stays |
+|---|---|---|
+| `askw-` / `askw:` | ~930 uses: CSS classes, `data-askw-*`, `<meta name="askw-…">`, `localStorage["askw:folder"]` | A wire contract baked into every served page, the Obsidian plugin, and users' saved browser state |
+| `~/Library/Application Support/Ask Widget/ask-widget.db` | `storage.legacy_database()` | The **migration source**. Rename it and existing users' history is stranded |
+| `ask-widget-panel`, `ask-widget-modal`, `VIEW_TYPE_ASK_WIDGET` | `integrations/obsidian/` | Obsidian persists the view type in the user's workspace layout; the CSS classes may be in their snippets |
+| `html_vault_root`, `kind="html"`, `?vault=html` | storage, routes | Predate the "Artifacts" name. Internal, and not worth a migration |
+| `~/Projects/ask-widget` | `launcher/Onyx.swift`, `scripts/onyx-daemon.sh` | The checkout folder kept its old name; both spellings are accepted |
+
+The user-facing name is **Onyx** everywhere else — repo, package, app, wheel.
+
+## Decisions an agent tends to "fix"
+
+**`markdown_theme.KINDS` excludes `"html"` on purpose.** Onyx pushes the vault's
+measured Obsidian styles into notes, text and PDF — the pages it lays out itself.
+An authored HTML page keeps its own look, and it still follows the vault, because
+a page from the HTML Artifact Kit carries its own `prefers-color-scheme` block and
+WebKit resolves that from the window's `NSAppearance`, which the shell sets from
+the app theme or the vault's mode. Adding `"html"` to `KINDS` would fight the page
+instead of helping it.
+
+**The reader is an iframe, same-origin, and navigation is plain HTML.** The
+sidebar targets a named iframe so history and back/forward work with no click
+handlers. Don't replace it with router JS.
+
+**Comments here carry reasons, not restatements.** Several explain a measurement
+or a failure that motivated the code. If you change such code, update the reason
+or delete it — do not leave a comment describing behaviour that no longer exists.
+
+## Layout
+
+`src/onyx/app.py` is the HTTP surface and orchestration; `viewer.py` the secure
+readers and `prepare_html`; `vault.py` the note/HTML index; `storage.py` SQLite;
+`claude_runner.py` / `codex_runner.py` the provider processes and SSE translation;
+`*_ui.py` the server-rendered shell. `static/ask.js` is the injected widget — the
+reusable core if you are building something similar. `launcher/` is the Swift app,
+`integrations/` the Obsidian plugin and Alfred workflow.
+
+## Scope
+
+Small, verified changes. Commit when a unit of work is complete *and* checked;
+don't bundle unrelated fixes. If you find a second problem, say so rather than
+silently widening the change.
+
+Licensed MIT — see `LICENSE`. Contributions are under the same terms.

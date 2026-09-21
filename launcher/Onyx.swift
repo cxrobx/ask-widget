@@ -11,8 +11,8 @@ private let port = 8899
 private let baseURL = "http://127.0.0.1:\(port)"
 private let expectedService = "onyx"
 private let expectedProtocol = 3
-private let releasesURL = URL(string: "https://github.com/cxrobx/ask-widget/releases/latest")!
-private let releasesAPIURL = URL(string: "https://api.github.com/repos/cxrobx/ask-widget/releases/latest")!
+private let releasesURL = URL(string: "https://github.com/cxrobx/onyx/releases/latest")!
+private let releasesAPIURL = URL(string: "https://api.github.com/repos/cxrobx/onyx/releases/latest")!
 
 private enum HealthResult {
     case healthy(providerAvailable: Bool)
@@ -325,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         }
     }
 
-    @objc func openDocumentWithAskWidget(
+    @objc func openDocumentWithOnyx(
         _ pasteboard: NSPasteboard,
         userData: String,
         error: AutoreleasingUnsafeMutablePointer<NSString?>
@@ -534,6 +534,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             .deletingLastPathComponent() // launcher/
             .deletingLastPathComponent() // checkout/
         candidates.append(bundleCheckout)
+        // Both spellings of the checkout: the project was renamed to Onyx while the
+        // folder on disk stayed `ask-widget`, and either may be what a developer has.
+        candidates.append(home.appendingPathComponent("Projects/onyx", isDirectory: true))
         candidates.append(home.appendingPathComponent("Projects/ask-widget", isDirectory: true))
 
         var seen = Set<String>()
@@ -542,7 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             if fileManager.isExecutableFile(atPath: python.path) {
                 return ServerLaunch(
                     executable: python,
-                    arguments: ["-m", "ask_widget"] + commonArguments,
+                    arguments: ["-m", "onyx"] + commonArguments,
                     workingDirectory: repo,
                     label: "development service"
                 )
@@ -628,7 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         if !fileManager.fileExists(atPath: logURL.path) {
             guard fileManager.createFile(atPath: logURL.path, contents: nil) else {
                 throw NSError(
-                    domain: "AskWidgetLauncher",
+                    domain: "OnyxLauncher",
                     code: 1,
                     userInfo: [NSLocalizedDescriptionKey: "Could not create \(logURL.path)."]
                 )

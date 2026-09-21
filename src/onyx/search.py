@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-logger = logging.getLogger("ask_widget.search")
+logger = logging.getLogger("onyx.search")
 
 DEFAULT_INDEX = "~/Projects/vault-mcp/data/index.db"  # vault-mcp's own default (its VAULT_MCP_DB)
 DEFAULT_OLLAMA = "http://localhost:11434"

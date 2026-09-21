@@ -6,7 +6,7 @@ from pathlib import Path
 
 from unittest.mock import patch
 
-from ask_widget.storage import Storage
+from onyx.storage import Storage
 
 
 class StorageTests(unittest.TestCase):
@@ -21,8 +21,8 @@ class StorageTests(unittest.TestCase):
             old.close()
             (legacy_dir / "onyx.db").rename(legacy)
 
-            with patch("ask_widget.storage.default_data_dir", return_value=new_dir), \
-                 patch("ask_widget.storage.legacy_database", return_value=legacy):
+            with patch("onyx.storage.default_data_dir", return_value=new_dir), \
+                 patch("onyx.storage.legacy_database", return_value=legacy):
                 store = Storage()
                 self.assertEqual(store.path, new_dir / "onyx.db")
                 self.assertEqual([d["title"] for d in store.recent_documents()], ["Guide"])
@@ -43,7 +43,7 @@ class StorageTests(unittest.TestCase):
             legacy = Path(raw) / "ask-widget.db"
             Storage(Path(raw)).close()
             (Path(raw) / "onyx.db").rename(legacy)
-            with patch("ask_widget.storage.legacy_database", return_value=legacy):
+            with patch("onyx.storage.legacy_database", return_value=legacy):
                 store = Storage(Path(raw) / "fresh")
                 self.assertEqual(store.recent_documents(), [])
                 store.close()

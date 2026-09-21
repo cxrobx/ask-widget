@@ -11,11 +11,11 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from ask_widget.app import create_app
-from ask_widget.claude_runner import _sse
-from ask_widget.config import AppConfig
-from ask_widget.panels_ui import answer_markdown
-from ask_widget.storage import Storage
+from onyx.app import create_app
+from onyx.claude_runner import _sse
+from onyx.config import AppConfig
+from onyx.panels_ui import answer_markdown
+from onyx.storage import Storage
 
 
 def make_vault(base: Path) -> tuple[Path, Path]:
@@ -179,7 +179,7 @@ class ApiTests(unittest.TestCase):
                 "models": [{"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"}],
             },
         ]
-        with patch("ask_widget.app.provider_catalogs", return_value=catalogs):
+        with patch("onyx.app.provider_catalogs", return_value=catalogs):
             response = self.client.get("/api/models")
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["id"] for item in response.json()["providers"]], ["claude", "codex"])
@@ -206,7 +206,7 @@ class ApiTests(unittest.TestCase):
                     "/api/settings", json={"token": self.config.token, "settings": {"web_lookups": enabled}}
                 )
                 self.assertIs(saved.json()["settings"]["web_lookups"], enabled)
-                with patch("ask_widget.app.stream_answer", fake_stream):
+                with patch("onyx.app.stream_answer", fake_stream):
                     self.client.post("/ask", json=body)
                 self.assertIs(seen["web"], enabled)
                 self.assertEqual("search the web" in seen["append_system"], enabled)
@@ -232,7 +232,7 @@ class ApiTests(unittest.TestCase):
             "request_mode": "rerun",
             "parent_request_id": "parent-request",
         }
-        with patch("ask_widget.app.stream_answer", fake_stream):
+        with patch("onyx.app.stream_answer", fake_stream):
             response = self.client.post("/ask", json=body)
         self.assertEqual(response.status_code, 200)
         self.assertIn("event: meta", response.text)
@@ -570,7 +570,7 @@ class HtmlVaultApiTests(unittest.TestCase):
         note.write_text("# Notes\n\n- The **plan** lives with the [harness](https://example.com), not the model.\n", encoding="utf-8")
         code = self.context / "harness.py"
         code.write_text("plan = []\n", encoding="utf-8")
-        with patch("ask_widget.app.open_source") as opened:
+        with patch("onyx.app.open_source") as opened:
             reply = self.post("/api/open-source", {"path": str(real), "line": 6, "reader": True}).json()
             expected = urllib.parse.urlencode({"src": str(self.page)}, quote_via=urllib.parse.quote, safe="/")
             self.assertEqual(reply["view"], f"/view?{expected}")  # the link's own context, as the sidebar opens it
@@ -683,7 +683,7 @@ class HtmlVaultApiTests(unittest.TestCase):
         )
         self.assertEqual(foreign.status_code, 403)
 
-        with patch("ask_widget.vault.reveal_in_finder") as reveal:
+        with patch("onyx.vault.reveal_in_finder") as reveal:
             self.assertEqual(self.post("/api/vault/reveal", {"vault": "html", "path": str(self.page)}, token=False).status_code, 403)
             shown = self.post("/api/vault/reveal", {"vault": "html", "path": str(self.page), "which": "real"}).json()
             link = self.post("/api/vault/reveal", {"vault": "html", "path": str(self.page), "which": "link"}).json()
@@ -820,7 +820,7 @@ class PluginOriginTests(unittest.TestCase):
             "folder": str(self.root),
             "document_source": str(self.document),
         }
-        with patch("ask_widget.app.stream_answer", fake_stream):
+        with patch("onyx.app.stream_answer", fake_stream):
             return self.client.post("/ask", json=body, headers={"origin": origin})
 
     def test_obsidian_origin_is_allowed_on_ask_and_api(self) -> None:

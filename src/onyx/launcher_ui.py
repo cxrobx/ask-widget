@@ -3,7 +3,7 @@
 The glass has two halves, driven by one slider. The page paints alpha-aware
 pane tints (``--pane-alpha`` and friends, from :func:`glass_alphas`); the native
 app blurs the desktop behind the window at a radius from :func:`blur_radius`
-(``CGSSetWindowBackgroundBlurRadius`` — see ``launcher/AskWidget.swift``). The
+(``CGSSetWindowBackgroundBlurRadius`` — see ``launcher/Onyx.swift``). The
 two are coupled on purpose: the more desktop the panes let through, the more
 blur it takes to keep text on top of it readable.
 """

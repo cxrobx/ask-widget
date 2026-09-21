@@ -6,10 +6,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ask_widget.app import create_app
-from ask_widget.config import AppConfig
-from ask_widget.markdown_theme import stylesheet, validate_snapshot
-from ask_widget.storage import Storage
+from onyx.app import create_app
+from onyx.config import AppConfig
+from onyx.markdown_theme import stylesheet, validate_snapshot
+from onyx.storage import Storage
 
 
 def snapshot(color: str = "rgb(196, 197, 181)") -> dict:

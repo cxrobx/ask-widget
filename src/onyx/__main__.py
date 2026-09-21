@@ -1,4 +1,4 @@
-"""CLI entrypoint: ``python -m ask_widget --folder ... --port 8899``."""
+"""CLI entrypoint: ``python -m onyx --folder ... --port 8899``."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _watch_parent(parent_pid: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="ask_widget",
+        prog="onyx",
         description="Local server for the highlight-to-ask reading companion widget.",
     )
     parser.add_argument(

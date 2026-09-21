@@ -14,12 +14,12 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from ask_widget import search
-from ask_widget.app import create_app
-from ask_widget.config import AppConfig
-from ask_widget.vault import VaultIndex
+from onyx import search
+from onyx.app import create_app
+from onyx.config import AppConfig
+from onyx.vault import VaultIndex
 
-LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "AskWidget.swift"
+LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "Onyx.swift"
 
 # vault-mcp's tables as its store.py creates them (SCHEMA and FTS_SCHEMA). search.py reads them and never writes; if
 # vault-mcp's schema changes, this is the copy that changes with it.

@@ -1,7 +1,8 @@
 {
-  "name": "ask-widget-obsidian",
+  "name": "onyx-obsidian",
   "version": "0.1.0",
   "description": "Obsidian client for the local Onyx service.",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {

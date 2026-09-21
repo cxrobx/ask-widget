@@ -19,7 +19,7 @@ import {
 
 import { parseVerdict, type SseFrame } from "./sse";
 import { ServiceError, type Citation } from "./service";
-import type AskWidgetPlugin from "./main";
+import type OnyxPlugin from "./main";
 
 export const VIEW_TYPE_ASK_WIDGET = "ask-widget-panel";
 
@@ -44,8 +44,8 @@ interface Turn {
   text: string;
 }
 
-export class AskWidgetPanel extends ItemView {
-  private plugin: AskWidgetPlugin;
+export class OnyxPanel extends ItemView {
+  private plugin: OnyxPlugin;
   private request: PanelRequest | null = null;
   private controller: AbortController | null = null;
   private answer = "";
@@ -68,7 +68,7 @@ export class AskWidgetPanel extends ItemView {
   private actionsEl!: HTMLElement;
   private followUpEl!: HTMLTextAreaElement;
 
-  constructor(leaf: WorkspaceLeaf, plugin: AskWidgetPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: OnyxPlugin) {
     super(leaf);
     this.plugin = plugin;
   }

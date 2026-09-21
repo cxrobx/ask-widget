@@ -6,10 +6,10 @@ import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 
-from ask_widget.config import AppConfig
-from ask_widget.vault_ui import vault_page
+from onyx.config import AppConfig
+from onyx.vault_ui import vault_page
 
-LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "AskWidget.swift"
+LAUNCHER_SWIFT = Path(__file__).resolve().parent.parent / "launcher" / "Onyx.swift"
 
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 

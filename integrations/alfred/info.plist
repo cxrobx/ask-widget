@@ -248,6 +248,6 @@ Onyx.app must be installed; it need not be running. The folders searched are the
     <key>version</key>
     <string>1.1.0</string>
     <key>webaddress</key>
-    <string>https://github.com/cxrobx/ask-widget</string>
+    <string>https://github.com/cxrobx/onyx</string>
 </dict>
 </plist>

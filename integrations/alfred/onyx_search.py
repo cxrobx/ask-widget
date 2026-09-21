@@ -4,7 +4,7 @@
     onyx_search.py titles  QUERY    keyword onx  — a page by its title or folder
     onyx_search.py content QUERY    keyword onxc — a page by the words in it
 
-Pages are listed the way Onyx's sidebar lists them (src/ask_widget/vault.py): a
+Pages are listed the way Onyx's sidebar lists them (src/onyx/vault.py): a
 note is named by its filename, an artifact by its <title>, and below the project
 level a folder holding index.html is one page. The rules are copied rather than
 imported because Alfred runs this with the system Python (/usr/bin/python3,

@@ -7,11 +7,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ask_widget.app import create_app
-from ask_widget.config import AppConfig
-from ask_widget.markdown_theme import _UNSAFE
-from ask_widget.sidebar_theme import ELEMENTS, folder_tints, stylesheet, validate_snapshot
-from ask_widget.storage import Storage
+from onyx.app import create_app
+from onyx.config import AppConfig
+from onyx.markdown_theme import _UNSAFE
+from onyx.sidebar_theme import ELEMENTS, folder_tints, stylesheet, validate_snapshot
+from onyx.storage import Storage
 
 PLUGIN_CAPTURE = Path(__file__).resolve().parent.parent / "integrations" / "obsidian" / "src" / "sidebar-theme.ts"
 

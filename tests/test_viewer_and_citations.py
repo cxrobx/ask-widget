@@ -7,9 +7,9 @@ from urllib.parse import quote
 
 from reportlab.pdfgen import canvas
 
-from ask_widget.citations import extract_citations, reader_target
-from ask_widget.vault import VaultIndex
-from ask_widget.launcher_ui import (
+from onyx.citations import extract_citations, reader_target
+from onyx.vault import VaultIndex
+from onyx.launcher_ui import (
     BASE_RGB,
     READABLE_CONTRAST,
     SIDEBAR_LABEL,
@@ -21,7 +21,7 @@ from ask_widget.launcher_ui import (
     sidebar_contrast,
     theme_style,
 )
-from ask_widget.viewer import (
+from onyx.viewer import (
     RangeNotSatisfiable,
     ViewerError,
     byte_range,

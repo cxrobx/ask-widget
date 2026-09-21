@@ -7,9 +7,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ask_widget.app import create_app
-from ask_widget.config import AppConfig
-from ask_widget.vault_look import SHADES, contrast, palette, reader_stylesheet, stylesheet
+from onyx.app import create_app
+from onyx.config import AppConfig
+from onyx.vault_look import SHADES, contrast, palette, reader_stylesheet, stylesheet
 
 FONT = '"JetBrains Mono", Inter, ui-sans-serif, -apple-system, sans-serif'
 
