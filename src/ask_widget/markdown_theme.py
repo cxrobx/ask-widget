@@ -35,6 +35,13 @@ _UNSAFE = re.compile(r"[;{}<>\\\x00-\x1f]|/\*|\*/|(?:url|var|env|attr|expression
 MAX_SNAPSHOT_BYTES = 64 * 1024
 # The reader kinds that wear the vault's reading styles: notes, and the other pages Onyx lays out itself. HTML is
 # authored and keeps its own look.
+#
+# That is not the same as an HTML page being stuck in light mode, and it is why no theme is pushed into one. A page
+# from the HTML Artifact Kit (~/.claude/docs/html-design) carries its own `prefers-color-scheme: dark` block in the
+# vault's colours, and WebKit resolves that media query from the window's NSAppearance — which the shell sets from
+# the app theme, or from the vault's mode while "Match vault appearance" is on (launcher/AskWidget.swift,
+# `askwAppearance`). So such a page already follows the vault in the reader frame, with nothing injected, and stays
+# dark when it is opened anywhere else. Don't "fix" this by adding "html" to KINDS.
 KINDS = ("markdown", "text", "pdf", "selection")
 
 

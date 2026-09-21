@@ -1596,7 +1596,8 @@
 
   // Markdown appearance changes in place: preserve selection, scroll, and answers.
   function initMarkdownTheme() {
-    // Notes, and the other pages Onyx lays out itself (markdown_theme.KINDS); an HTML page keeps its own look.
+    // Notes, and the other pages Onyx lays out itself (markdown_theme.KINDS); an HTML page keeps its own look —
+    // and an Artifact Kit page carries its own dark mode, which follows the window appearance (markdown_theme.KINDS).
     if (['markdown', 'text', 'pdf', 'selection'].indexOf(document.body.getAttribute('data-askw-document-kind')) < 0 || !metaSrc()) return;
     var style = document.getElementById('askw-markdown-theme');
     if (!style) {
