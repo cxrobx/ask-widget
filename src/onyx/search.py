@@ -100,6 +100,9 @@ DUPE_AT = 0.95
 # two pages share is evidence where a name five share is a filing convention.
 DUPE_NAMED = 0.60
 DUPE_NAME_SHARED_BY = 2
+# The related map draws this many of a page's neighbours, and places them by how related they are to one another as
+# well as to the page (``related``'s ``near``). Past twelve, the dots and their scores stop fitting a pane 210px wide.
+RELATED_MAP = 12
 CENTROID_SAMPLE = 2000  # passages the corpus baseline is estimated from; 2000 lands cos=0.9999 on the whole corpus
 
 # A C dot product from 3.12 (the app's Python is 3.14); 3.11, the oldest a checkout runs on, takes the slow road.
@@ -268,6 +271,13 @@ def centroid(vecs: list[array.array], cap: int = CENTROID_SAMPLE) -> array.array
     total = list(map(sum, zip(*picked)))
     norm = math.sqrt(_dot(total, total))
     return array.array("f", (value / norm for value in total)) if norm else array.array("f")
+
+
+def direction(vecs: Sequence[Sequence[float]]) -> list[float] | None:
+    """The unit mean of ``vecs``: a page's direction, from its passages'. None when they cancel out."""
+    total = [sum(column) for column in zip(*vecs)]
+    norm = math.sqrt(_dot(total, total)) if total else 0.0
+    return [value / norm for value in total] if norm else None
 
 
 def against_baseline(raw: float, source_mu: float, page_mu: float) -> float:
@@ -542,12 +552,13 @@ class PassageIndex:
         Scores are taken against the corpus baseline (``against_baseline``), so 0 is "no closer than any two pages in
         this vault" and everything returned is above ``RELATED_FLOOR`` — a page with nothing near it comes back empty
         rather than padded out with its own tail. ``dupe`` marks a neighbour near enough to be the same content twice.
+        ``near`` says how related the first ``RELATED_MAP`` neighbours are to one another, for the map (``_near``).
         ``reason`` says why there are no rows: a page too short to have been indexed, or one not indexed yet, has no
         direction to search from.
         """
         scan_id = next(self._relates)
         self._latest_related = scan_id
-        result: dict[str, Any] = {"note": path, "items": [], "floor": RELATED_FLOOR, "reason": ""}
+        result: dict[str, Any] = {"note": path, "items": [], "floor": RELATED_FLOOR, "near": [], "reason": ""}
         try:
             data = self._passages()
         except Unavailable as exc:
@@ -584,6 +595,7 @@ class PassageIndex:
                 page = data.paths[p]
                 if score > best.get(page, (-2.0, 0))[0]:
                     best[page] = (score, p)
+        listed: list[str] = []
         for page in sorted(best, key=lambda page: (-best[page][0], page)):
             if best[page][0] < RELATED_FLOOR:
                 break  # the tail every page has, and no reason to open anything
@@ -602,9 +614,38 @@ class PassageIndex:
                     "snippet": snippet(data.texts[p], ""),
                 }
             )
+            listed.append(page)
             if len(result["items"]) >= limit:
                 break
+        if len(listed) > 1:
+            result["near"] = self._near(data, listed[:RELATED_MAP])
         return result
+
+    @staticmethod
+    def _near(data: _Passages, pages: list[str]) -> list[list[float]]:
+        """How related each of ``pages`` is to each of the others: the map's other half, beside each one's ``score``.
+
+        One page scores another as ``related`` scores a neighbour — from the first page's direction, at the other's
+        nearest passage, with the baseline out — and the two ways round are averaged, since the map draws one
+        distance per pair. It is what lets the map put the neighbours that are alike near each other (radial stress,
+        vault_ui.py). Measured over 80 of the author's pages, a layout from these draws pairs of neighbours at
+        distances that rank-agree 0.67 with them; Smart Connections' four k-means corners manage 0.36, and angles
+        chosen at random 0.14.
+        """
+        heads = [direction([data.vecs[p] for p in data.pages[page]]) for page in pages]
+
+        def one_way(i: int, j: int) -> float:
+            head = heads[i]
+            if head is None:
+                return 0.0
+            head_mu = _dot(head, data.mu) if data.mu else 0.0
+            return max(against_baseline(_dot(head, data.vecs[p]), head_mu, data.hub[p]) for p in data.pages[pages[j]])
+
+        near = [[1.0] * len(pages) for _ in pages]
+        for i in range(len(pages)):
+            for j in range(i + 1, len(pages)):
+                near[i][j] = near[j][i] = round((one_way(i, j) + one_way(j, i)) / 2, 3)
+        return near
 
     def knows(self, path: str) -> bool:
         """Whether the index holds passages under this name.

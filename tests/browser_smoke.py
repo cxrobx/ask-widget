@@ -1046,13 +1046,13 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 
-    def test_related_map_spaces_its_dots_by_how_alike_the_pages_are(self) -> None:
-        """The map's one job: a dot's distance from the centre is its score, on a scale that doesn't stretch to the page.
+    def test_related_map_puts_the_nearest_inside_and_the_alike_together(self) -> None:
+        """The map's two promises, and that it keeps them legibly.
 
-        Seven neighbours between 0.45 and 0.53 is a real pane — it is the one that drew a ring — and it is the case a
-        radius linear in the score gets wrong, since nothing scores over most of the range such a radius spends the
-        disc on. What the map must hold either way: the order, a floor dot on the rim, no dot sitting on another, and a
-        distance that doesn't move when a nearer neighbour arrives.
+        A dot's distance from the centre is its score, stretched over this page's neighbours: nearest on the inner
+        ring, furthest on the outer. Its angle puts neighbours that are related to each other together — here two
+        subjects whose scores interleave, so a layout by rank would split both pairs. And no dot or score sits on
+        another, which is what the scores printed over the dots made hard.
         """
         vault = self.root / "vault"
         (vault / "notes").mkdir(parents=True)
@@ -1062,15 +1062,22 @@ class BrowserSmokeTests(unittest.TestCase):
         storage.update_settings({"vault_root": str(vault)}, model_default="sonnet")
         storage.add_root(vault)
 
-        # The pane's own drawing, given scores instead of an index: the map is what is under test, not the scoring.
-        draw = """({floor, scores}) => {
-          drawRelated({floor, items: scores.map((score, i) => (
+        # The pane's own drawing, fed scores and relations instead of an index: the map is under test, not the scoring.
+        draw = """({scores, near}) => {
+          drawRelated({floor: 0.45, near, items: scores.map((score, i) => (
             {score, title: 'Page ' + i, vault: 'notes', folder: 'Areas', dupe: false}
           ))});
-          return [...document.querySelectorAll('#rel-map .rel-dot')].map(
-            dot => [+dot.getAttribute('cx'), +dot.getAttribute('cy')]);
+          const box = el => { const b = el.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; };
+          const round = c => ({at: [+c.getAttribute('cx'), +c.getAttribute('cy')], r: +c.getAttribute('r')});
+          return {
+            dots: [...document.querySelectorAll('#rel-map .rel-dot')].map(round),
+            labels: [...document.querySelectorAll('#rel-map .rel-lab')].map(lab => ({text: lab.textContent, box: box(lab)})),
+            here: round(document.querySelector('#rel-map .rel-here')),
+          };
         }"""
-        scores = [0.53, 0.52, 0.51, 0.51, 0.46, 0.45, 0.45]
+        subjects = "ABABAB"  # A and B alternate down the list
+        scores = [0.53, 0.52, 0.51, 0.50, 0.47, 0.46]
+        near = [[1.0 if i == j else 0.9 if subjects[i] == subjects[j] else 0.1 for j in range(6)] for i in range(6)]
         console_errors: list[str] = []
         page_errors: list[str] = []
         with sync_playwright() as playwright:
@@ -1087,35 +1094,51 @@ class BrowserSmokeTests(unittest.TestCase):
             page.locator("#related").wait_for(state="visible")
             # Whatever the index says about this page, it has said it: nothing lands on the map after this.
             page.wait_for_function("() => document.querySelector('#rel-list').textContent.trim() !== 'Looking…'")
-
-            dots = [tuple(dot) for dot in page.evaluate(draw, {"floor": 0.45, "scores": scores})]
-            deeper = [tuple(dot) for dot in page.evaluate(draw, {"floor": 0.45, "scores": [0.96] + scores})]
+            drawn = page.evaluate(draw, {"scores": scores, "near": near})
             page.locator("#rel-map").wait_for(state="visible")
+            # Seven that score within 0.08 of each other, and no relations sent: still the whole disc, still legible.
+            tight = page.evaluate(draw, {"scores": [0.53, 0.52, 0.51, 0.51, 0.46, 0.45, 0.45], "near": []})
+            lone = page.evaluate(draw, {"scores": [0.5], "near": []})
             browser.close()
 
-        def away(dot: tuple[float, float]) -> float:
-            return math.dist(dot, (50, 50))  # how far out the map drew it
+        def away(dot: dict) -> float:
+            return math.dist(dot["at"], (50, 50))  # how far out the map drew it
 
-        radii = [away(dot) for dot in dots]
-        self.assertEqual(len(radii), len(scores))
-        for i, (near, far) in enumerate(zip(scores, scores[1:])):
-            if near > far:
-                self.assertGreater(radii[i + 1], radii[i] + 0.3, f"{far} has to sit further out than {near}")
-            else:
-                self.assertAlmostEqual(radii[i], radii[i + 1], delta=0.2, msg="one score, one distance")
-        self.assertGreater(
-            max(radii) - min(radii), 12, "a tight neighbourhood still has to spread across the map, not ring it"
-        )
-        self.assertGreater(radii[-1], 45, "a neighbour at the floor sits on the rim")
-        closest = min(math.dist(a, b) for i, a in enumerate(dots) for b in dots[i + 1 :])
-        self.assertGreater(closest, 6, "no dot may sit on another; a dot is 6 of the map's 100 units across")
-        self.assertAlmostEqual(
-            away(deeper[1]),
-            radii[0],
-            delta=0.2,
-            msg="the scale is the vault's: a dot doesn't move because a nearer neighbour arrived",
-        )
-        self.assertLess(away(deeper[0]), 15, "a page that is nearly the same text sits by the centre")
+        radii = [away(dot) for dot in drawn["dots"]]
+        self.assertEqual(len(radii), 6)
+        self.assertAlmostEqual(radii[0], 9, delta=0.2, msg="the nearest neighbour sits on the inner ring")
+        self.assertAlmostEqual(radii[-1], 45, delta=0.2, msg="the furthest sits on the outer ring")
+        for i in range(5):
+            self.assertGreater(radii[i + 1], radii[i], "a lower score sits further out")
+        same = [math.dist(a["at"], b["at"]) for i, a in enumerate(drawn["dots"]) for j, b in enumerate(drawn["dots"])
+                if i < j and subjects[i] == subjects[j]]
+        across = [math.dist(a["at"], b["at"]) for i, a in enumerate(drawn["dots"]) for j, b in enumerate(drawn["dots"])
+                  if i < j and subjects[i] != subjects[j]]
+        self.assertLess(sum(same) / len(same), 0.7 * sum(across) / len(across), "pages on one subject sit together")
+        self.assertEqual([lab["text"] for lab in drawn["labels"]], [f"{s:.2f}" for s in scores])
+
+        def boxes_meet(a: list[float], b: list[float]) -> bool:
+            return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+        def box_meets_circle(box: list[float], circle: dict) -> bool:
+            x, y = circle["at"]
+            nearest = (min(max(x, box[0]), box[2]), min(max(y, box[1]), box[3]))
+            return math.dist(nearest, (x, y)) < circle["r"]
+
+        for name, result in (("two subjects", drawn), ("tight", tight)):
+            circles, labels = result["dots"] + [result["here"]], result["labels"]
+            for i, a in enumerate(circles):
+                for j, b in enumerate(circles[i + 1 :], start=i + 1):
+                    self.assertGreaterEqual(math.dist(a["at"], b["at"]), a["r"] + b["r"], f"{name}: circles {i}, {j} meet")
+            for i, label in enumerate(labels):
+                for j, other in enumerate(labels[i + 1 :], start=i + 1):
+                    self.assertFalse(boxes_meet(label["box"], other["box"]), f"{name}: scores {i}, {j} overlap")
+                for j, circle in enumerate(circles):
+                    if j != i:  # a score sits beside its own dot by design
+                        self.assertFalse(box_meets_circle(label["box"], circle), f"{name}: score {i} sits on circle {j}")
+        spread = [away(dot) for dot in tight["dots"]]
+        self.assertGreater(max(spread) - min(spread), 30, "neighbours scoring alike still fill the disc, not ring it")
+        self.assertEqual(len(lone["dots"]), 1)
         self.assertEqual(page_errors, [])
         self.assertEqual(console_errors, [])
 

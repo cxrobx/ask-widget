@@ -403,6 +403,34 @@ class RelatedTests(unittest.TestCase):
         self.assertEqual(ranked[0], "Kin")  # with the baseline out, the page that shares the subject wins
         self.assertNotIn("Hub", ranked)  # and the hub drops under the floor rather than merely down the list
 
+    def test_the_map_is_told_how_related_the_neighbours_are_to_one_another(self) -> None:
+        """``near``: what lets the map put the neighbours on one subject together, in whatever order the scores list them."""
+        passages = [
+            ("Areas/Here.md", "Here", "The page being read, on two subjects.", [1, 1, 0, 0]),
+            ("Areas/DeployA.md", "DeployA", "Deploying, one way.", [1, 0.2, 0, 0]),
+            ("Areas/DeployB.md", "DeployB", "Deploying, another way.", [1, 0.3, 0, 0.05]),
+            ("Areas/MusicA.md", "MusicA", "Music, one way.", [0.2, 1, 0, 0]),
+            ("Areas/MusicB.md", "MusicB", "Music, another way.", [0.3, 1, 0.05, 0]),
+        ]
+        index = self.index(passages)
+        result = index.related("Areas/Here.md", place=as_notes)
+        titles = [item["title"] for item in result["items"]]
+        # The scores interleave the two subjects, so any layout by rank alone would pull each pair apart.
+        self.assertEqual(titles, ["DeployB", "MusicB", "DeployA", "MusicA"])
+        near = {(a, b): result["near"][i][j] for i, a in enumerate(titles) for j, b in enumerate(titles)}
+        for a in titles:
+            self.assertEqual(near[a, a], 1.0)
+            for b in titles:
+                self.assertEqual(near[a, b], near[b, a])  # one distance per pair, so one number
+                if a != b and a[:5] == b[:5]:
+                    for other in (t for t in titles if t[:5] != a[:5]):
+                        self.assertGreater(near[a, b], near[a, other], (a, b, other))
+        # The map draws only the first RELATED_MAP, so that is all the table covers; and one neighbour has no pairs.
+        with patch.object(search, "RELATED_MAP", 2):
+            self.assertEqual(len(index.related("Areas/Here.md", place=as_notes)["near"]), 2)
+        with patch.object(search, "RELATED_MAP", 1):
+            self.assertEqual(len(index.related("Areas/Here.md", place=as_notes, limit=1)["near"]), 0)
+
     def test_the_floor_leaves_out_the_tail_and_a_page_with_no_neighbour_comes_back_empty(self) -> None:
         passages = [
             ("Areas/Alone.md", "Alone", "A subject in this vault exactly once.", [1, 0, 0, 0]),

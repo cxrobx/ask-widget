@@ -226,12 +226,13 @@ pages, which is what lets the pane drop anything below a floor — so everything
 listed is related by design, and a page whose subject appears nowhere else says
 so instead of padding itself out with its own tail.
 
-The map above the list places each neighbour at its distance from the centre,
-which is the page you are on; the ring is the floor, so the disc is the
-neighbourhood, and the angle scatters and means nothing. Distance is the score
-by its root rather than straight, because the scores bunch just above the floor
-— half of them sit in the bottom fifth of the range — and a straight radius drew
-every page's neighbours as a ring around the rim. Click a dot or a row
+The map above the list draws the neighbourhood around the page you are on, each
+dot with its score beside it. Distance from the centre is the score, stretched
+over this page's neighbours — the nearest on the inner ring, the furthest on the
+outer — and the angle puts the neighbours that are related to one another
+together, so pages on one subject sit in one place. It is a radial stress layout:
+measured on 80 pages, its distances between dots agree 0.65 with how related the
+pages are, where Smart Connections' layout manages 0.36. Click a dot or a row
 to open it. A neighbour near enough to be the same content twice is marked
 `same?` — usually a note beside its own HTML rendering, or an inbox capture
 beside the note it became.

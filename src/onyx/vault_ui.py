@@ -289,15 +289,14 @@ body.side-resizing,body.side-resizing *{{cursor:col-resize!important;user-select
 #outline .tw{{display:grid;flex:none;place-items:center;width:16px;height:19px;padding:0;border:0;border-radius:4px;background:transparent;color:rgb(var(--faint));visibility:hidden;cursor:default}} #outline li.has-kids>.row .tw{{visibility:visible}} #outline .tw:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}}
 #outline .tw svg{{width:12px;height:12px;transform:rotate(90deg);transition:transform .12s}} #outline li.shut>.row .tw svg{{transform:none}} #outline li.shut>ul{{display:none}} #outline.filtering li.shut>ul{{display:block}} #outline li.miss{{display:none}}
 #outline .h:focus-visible,#outline .tw:focus-visible{{outline:2px solid rgb(var(--accent));outline-offset:-2px}} #outline .none{{padding:6px 10px;color:rgb(var(--muted));font-size:12.5px}}
-/* Related: the pages nearest this one by meaning. The map above the list places each at its distance from the centre —
-   the score, on a scale fixed across pages, so a tight neighbourhood looks tight; the angle scatters, and means nothing.
-   The ring is the floor, so the disc is the neighbourhood and everything drawn inside it is related. */
+/* Related: the pages nearest this one by meaning. The map above the list puts the nearest by the centre and the ones
+   alike to each other together (relLayout), each with its score over it; the list below carries the rest. */
 #related{{display:none;flex:1;flex-direction:column;min-height:0}} #related:not([hidden]){{display:flex}}
-#rel-map{{display:block;flex:none;width:100%;max-width:210px;height:auto;margin:2px auto 12px;aspect-ratio:1;overflow:visible}} #related.no-map #rel-map{{display:none}}
+#rel-map{{display:block;flex:none;width:100%;max-width:210px;height:auto;margin:10px auto 12px;aspect-ratio:1;overflow:visible}} #related.no-map #rel-map{{display:none}}
 #rel-map circle{{transition:r .12s,fill-opacity .12s}} .rel-here{{fill:rgb(var(--accent)/.5);stroke:rgb(var(--accent));stroke-width:1.4}}
-.rel-edge{{fill:none;stroke:rgb(var(--ink)/.2);stroke-width:.6;stroke-dasharray:2 2.6}}
 .rel-dot{{fill:rgb(var(--bg-elevated));stroke:rgb(var(--secondary));stroke-width:1.1;cursor:default}}
 .rel-dot.on{{r:4.4;fill:rgb(var(--accent)/.28);stroke:rgb(var(--accent))}} .rel-dot.dupe{{stroke-dasharray:2.2 1.6}}
+.rel-lab{{fill:rgb(var(--muted));font-size:4.4px;font-variant-numeric:tabular-nums;text-anchor:middle;pointer-events:none;transition:fill .12s}} .rel-lab.on{{fill:rgb(var(--accent))}}
 #rel-list{{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:0 6px 2px;display:flex;flex-direction:column;gap:1px}}
 .rel-row{{display:flex;flex-direction:column;gap:1px;width:100%;padding:5px 8px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default;transition:background-color .1s}}
 .rel-row:hover,.rel-row.on{{background:rgb(var(--ink)/.06)}}
@@ -516,11 +515,9 @@ let outFilterTimer; outFilter.oninput=()=>{{clearTimeout(outFilterTimer);outFilt
 function outlineLoaded(){{try{{const w=reader.contentWindow;w.addEventListener('keydown',outKey);w.addEventListener('scroll',outScrolled,{{passive:true}});w.addEventListener('resize',outScrolled);w.addEventListener('mousemove',outEdgeMove,{{passive:true}})}}catch(e){{}}outAtEdge=false;outShut.clear();outSig='';outFilter.value='';watchReader();buildOutline();relPageChanged();pillRoom()}}
 // MARK: related — the pages nearest the one being read (/api/related, search.py): the index ⌘P searches, read from a
 // page's own direction instead of from a query. Nothing is embedded for it, so it answers while Ollama is off. The map
-// puts each neighbour at its distance from the centre — the radius is its score on a scale fixed across pages, so a
-// tight neighbourhood looks tight and two pages' maps compare; the angle turns by the golden angle each rank, so no
-// dot lands on another and scores that are alike don't draw a dial, and means nothing. Only pages past a floor are
-// shown at all, so everything here is related by design and nothing needs dimming or excusing: a page with no
-// neighbour shows none rather than twenty of its own tail.
+// above the list draws the neighbourhood (relLayout, below). Only pages past a floor are shown at all, so everything
+// here is related by design and nothing needs dimming or excusing: a page with no neighbour shows none rather than
+// twenty of its own tail.
 const PANE_KEY='askw:vault:pane', relPane=$('#related'), relList=$('#rel-list'), relMap=$('#rel-map'), tabOut=$('#tab-outline'), tabRel=$('#tab-related');
 let relOn=recall(PANE_KEY)==='related', relFor=null, relSeq=0, relRows=[];
 let relFloor=0.45;  // until the first answer says; the server owns it
@@ -537,37 +534,81 @@ if(relFor===here.path)return;
 relPane.classList.add('no-map');relList.innerHTML='<div class=none>Looking…</div>';
 let d;try{{d=await api('/api/related?vault='+here.vault+'&path='+encodeURIComponent(here.path))}}catch(e){{d={{items:[],reason:e.message}}}}
 if(seq!==relSeq||d.superseded)return;relFor=here.path;drawRelated(d)}}
-// The floor is the map's outer edge and 1 is its centre, so the disc IS the neighbourhood: everything drawn is inside
-// it, and how far out a dot sits is how much of the page it shares. The same scale on every page, so two maps compare.
+// The map is a radial stress layout (Brandes & Pich, "More Flexible Radial Layout", 2011). A dot's distance from the
+// centre is its score, stretched over this page's own neighbours: the nearest on the inner ring, the furthest on the
+// outer, so the disc fills whatever band they score in. On one scale for every page they drew as a ring, since a
+// page's neighbours score within a few hundredths of each other. The angle carries the rest of the meaning: each dot
+// turns round its ring until the distances between dots match how related the pages are to one another (`near`, from
+// search.py), so neighbours on one subject sit together. Measured over 80 of the author's pages, the drawn distances
+// rank-agree exactly with the scores and 0.65 with those relations; Smart Connections' layout, four k-means corners
+// pulled on by forces, manages 0.36, and angles picked at random 0.14.
+const REL_MAP=12, REL_IN=9, REL_OUT=45, REL_SPREAD=.6;
+// What one dot occupies: the dot, and its score printed on its outward side — above it in the map's top half, below
+// it in the bottom half — so no score ever points at the page in the middle. Two dots whose boxes meet get pushed apart.
+const REL_BOX_W=11, REL_LAB=8.5, REL_DOT=3.5, REL_HERE=4.5;
+function relRings(scores){{const lo=Math.min(...scores),hi=Math.max(...scores);
+return scores.map(s=>REL_IN+(1-(hi>lo?(s-lo)/(hi-lo):.5))*(REL_OUT-REL_IN))}}
+// Where each dot starts round its ring: its angle in a classical MDS of the neighbours alone, so the stress pass begins
+// near its answer. Power iteration from a fixed vector, so a page draws the same way every time it opens.
+function relStart(D){{const n=D.length,sq=D.map(r=>r.map(d=>d*d)),rm=sq.map(r=>r.reduce((a,b)=>a+b,0)/n),gm=rm.reduce((a,b)=>a+b,0)/n,axes=[];
+let B=sq.map((r,i)=>r.map((d,j)=>-.5*(d-rm[i]-rm[j]+gm)));
+for(let k=0;k<2;k++){{let v=D.map((_,i)=>Math.sin(1+2.4*i+k)),lam=0;
+for(let it=0;it<200;it++){{const w=B.map(r=>r.reduce((a,b,j)=>a+b*v[j],0));lam=Math.hypot(...w)||1e-12;v=w.map(x=>x/lam)}}
+lam=v.reduce((a,x,i)=>a+x*B[i].reduce((t,b,j)=>t+b*v[j],0),0);axes.push(v.map(x=>x*Math.sqrt(Math.max(lam,1e-12))));
+B=B.map((r,i)=>r.map((b,j)=>b-lam*v[i]*v[j]))}}
+const mx=axes[0].reduce((a,b)=>a+b,0)/n,my=axes[1].reduce((a,b)=>a+b,0)/n;return D.map((_,i)=>Math.atan2(axes[1][i]-my,axes[0][i]-mx))}}
+// Stress majorization with each dot held to its ring: a dot moves to where its distances to the others best match
+// their targets, then back onto its ring. A pair's target is stretched over this page's pairs as the rings are over
+// its scores: the most related pair shares an angle, as close as their rings let them be; the least related pair sits
+// on opposite sides of the centre; the rest fall between, in order. So the whole disc is used whatever band the
+// relations fall in. Fitting one scale to the layout instead let a page whose neighbours were all alike shrink into
+// one corner of the disc, a feedback that rank agreement alone did not see.
 //
-// The radius is the ROOT of the score's place between those two ends, because the scores don't fall evenly along it:
-// measured over 913 neighbours of 112 pages of the author's vault, the median one sits 0.18 of the way from the floor
-// to 1, and a radius linear in that fraction pinned 47% of every map's dots into the outer sixth of the disc — seven
-// neighbours scoring 0.45 to 0.53 drew a ring 5 units wide, which is the bug. The root moves neither end and keeps
-// the order, and spends the 37 units between them where the scores are: the median neighbour lands halfway out, a
-// tenth of dots stay near the rim, and those same seven spread over 14. So distance is not the score times a constant
-// — the row carries the number — it is where the page stands among what a vault's neighbours actually score.
-function relRadius(score){{return 46-37*Math.sqrt(Math.max(0,Math.min(1,(score-relFloor)/Math.max(.05,1-relFloor))))}}
+// "In order" leans outward by REL_SPREAD, a power under 1, because the two things the map is for pull against each
+// other. Measured over 80 pages: stretched straight (power 1) the dots rank-agree 0.69 with the relations but the
+// median page leaves a 144° wedge of the disc empty; at 0.6 they agree 0.65 and leave 84°, which fills the disc as
+// evenly as Smart Connections' map (88°) while showing the relations nearly twice as well (0.36). Below 0.5 the
+// agreement falls faster than the disc fills.
+function relStress(R,D){{const n=R.length,P=relStart(D).map((a,i)=>[50+R[i]*Math.cos(a),50+R[i]*Math.sin(a)]);let lo=Infinity,hi=-Infinity;
+for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){{lo=Math.min(lo,D[i][j]);hi=Math.max(hi,D[i][j])}}
+const T=D.map((row,i)=>row.map((d,j)=>{{const t=Math.pow(hi>lo?(d-lo)/(hi-lo):.5,REL_SPREAD),near=Math.abs(R[i]-R[j]);return Math.max(4,near+t*(R[i]+R[j]-near))}}));
+for(let it=0;it<300;it++)for(let i=0;i<n;i++){{let x=0,y=0,sum=0;
+for(let j=0;j<n;j++){{if(j===i)continue;const t=T[i][j],w=1/(t*t),dx=P[i][0]-P[j][0],dy=P[i][1]-P[j][1],d=Math.hypot(dx,dy)||1e-9;
+x+=w*(P[j][0]+t*dx/d);y+=w*(P[j][1]+t*dy/d);sum+=w}}
+x/=sum;y/=sum;const l=Math.hypot(x-50,y-50)||1e-9;P[i]=[50+R[i]*(x-50)/l,50+R[i]*(y-50)/l]}}
+return P}}
+// Stress alone lets two dots, or a dot and a score, land on each other. Each pair that meets is turned apart round its
+// own two rings, by as much as they overlap, until every box is clear; so a dot's distance from the centre, its score,
+// never moves.
+function relBox(p){{return p[1]<50?[p[1]-REL_LAB,p[1]+REL_DOT]:[p[1]-REL_DOT,p[1]+REL_LAB]}}
+function relClash(a,b){{const dx=REL_BOX_W-Math.abs(a[0]-b[0]);if(dx<=0)return 0;const s=relBox(a),t=relBox(b),dy=Math.min(s[1],t[1])-Math.max(s[0],t[0]);return dy>0?Math.min(dx,dy):0}}
+function relSeparate(P,R){{const n=P.length,ang=P.map(p=>Math.atan2(p[1]-50,p[0]-50)),at=i=>[50+R[i]*Math.cos(ang[i]),50+R[i]*Math.sin(ang[i])];
+for(let round=0;round<200;round++){{let moved=false;
+for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){{const a=at(i),b=at(j),depth=relClash(a,b);if(!depth)continue;moved=true;
+const side=Math.sign((a[0]-50)*(b[1]-50)-(a[1]-50)*(b[0]-50))||1,step=depth/2+.25;ang[i]-=side*step/R[i];ang[j]+=side*step/R[j]}}
+if(!moved)break}}
+return P.map((_,i)=>at(i))}}
+// Where each of a page's first REL_MAP neighbours goes, from their scores and how related they are to one another.
+function relLayout(scores,near){{const n=scores.length,R=relRings(scores);if(n===1)return [[50,50-R[0]]];
+const D=scores.map((_,i)=>scores.map((_,j)=>i===j?0:Math.max(.001,1-((near[i]||[])[j]??.5))));
+return relSeparate(relStress(R,D),R)}}
 function relWhere(r){{return [GROUPS[r.vault]].concat(r.folder?r.folder.split('/'):[]).join(' › ')}}
 function relScoreTitle(s){{return s.toFixed(2)+' — 0 would be no closer than any two pages in the vault, 1 the same text'}}
-// Each dot a golden angle on from the one before, as a sunflower sets its seeds: 137.5° never comes back round, so a
-// page whose neighbours all score alike scatters them instead of drawing the regular polygon 360/n would, and no two
-// of twelve come within 20° — 16 of the map's 100 units apart out at the rim, where a dot is 6 across.
-const REL_TURN=137.507;
-function relDots(items){{const n=Math.min(items.length,12),out=['<circle class=rel-edge cx=50 cy=50 r=47></circle>'];
-out.push(`<circle class=rel-here cx=50 cy=50 r=4.5><title>${{esc(document.title.replace(/ — [^—]*$/,''))}}</title></circle>`);
-for(let i=0;i<n;i++){{const a=(-90+i*REL_TURN)*Math.PI/180,r=relRadius(items[i].score);
-out.push(`<circle class="rel-dot${{items[i].dupe?' dupe':''}}" data-i=${{i}} cx=${{(50+r*Math.cos(a)).toFixed(1)}} cy=${{(50+r*Math.sin(a)).toFixed(1)}} r=3><title>${{esc(items[i].title)}} — ${{relScoreTitle(items[i].score)}}</title></circle>`)}}
-return out.join('')}}
+function relDots(items,near){{const n=Math.min(items.length,REL_MAP),P=relLayout(items.slice(0,n).map(r=>r.score),near||[]),dots=[],labs=[];
+dots.push(`<circle class=rel-here cx=50 cy=50 r=${{REL_HERE}}><title>${{esc(document.title.replace(/ — [^—]*$/,''))}}</title></circle>`);
+P.forEach(([x,y],i)=>{{const r=items[i];
+dots.push(`<circle class="rel-dot${{r.dupe?' dupe':''}}" data-i=${{i}} cx=${{x.toFixed(1)}} cy=${{y.toFixed(1)}} r=3><title>${{esc(r.title)}} — ${{relScoreTitle(r.score)}}</title></circle>`);
+labs.push(`<text class=rel-lab data-i=${{i}} x=${{x.toFixed(1)}} y=${{(y<50?y-4.6:y+7.8).toFixed(1)}}>${{r.score.toFixed(2)}}</text>`)}});
+return dots.concat(labs).join('')}}
 function drawRelated(d){{const items=d.items||[];relRows=items;relPane.classList.toggle('no-map',!items.length);
 if(typeof d.floor==='number')relFloor=d.floor;
 if(!items.length){{relMap.innerHTML='';const why=d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1):'Nothing in the vault is near this page — its subject appears nowhere else';relList.innerHTML='<div class=none>'+esc(why.replace(/\\.?$/,'.'))+'</div>';return}}
-relMap.innerHTML=relDots(items);
+relMap.innerHTML=relDots(items,d.near);
 relList.innerHTML=items.map((r,i)=>`<button class=rel-row type=button data-i=${{i}} title="${{esc(r.title)}}${{r.section?' — '+esc(r.section):''}}">`
 +`<span class=rel-t><span class=rel-score title="${{esc(relScoreTitle(r.score))}}">${{r.score.toFixed(2)}}</span><span class=rel-name>${{esc(r.title)}}</span>${{r.dupe?'<span class=rel-dupe>same?</span>':''}}</span>`
 +`<span class=rel-where>${{esc(relWhere(r))}}</span></button>`).join('')}}
 function relMark(i){{for(const el of relPane.querySelectorAll('.on'))el.classList.remove('on');if(i<0)return;
-const row=relList.querySelector(`.rel-row[data-i="${{i}}"]`),dot=relMap.querySelector(`.rel-dot[data-i="${{i}}"]`);if(row)row.classList.add('on');if(dot)dot.classList.add('on')}}
+const row=relList.querySelector(`.rel-row[data-i="${{i}}"]`);if(row)row.classList.add('on');for(const el of relMap.querySelectorAll(`[data-i="${{i}}"]`))el.classList.add('on')}}
 function relOpen(r){{if(!r)return;if(KIND!=='library'&&r.vault!==KIND)switchVault(r.vault,true);if(currentSrc()!==r.path)navigate(viewHref(r.path,r.vault))}}
 relList.addEventListener('mousemove',e=>{{const b=e.target.closest('.rel-row');relMark(b?+b.dataset.i:-1)}});
 relMap.addEventListener('mousemove',e=>{{const c=e.target.closest('.rel-dot');relMark(c?+c.dataset.i:-1)}});
