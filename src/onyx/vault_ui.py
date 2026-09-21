@@ -219,11 +219,14 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
 .foot-btn{{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms}} .foot-btn:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .foot-btn svg{{width:14px;height:14px}}
 main,body.native main{{position:relative;display:grid;padding:0;overflow:hidden}}
 /* The reader's place: one frame per tab (tabs_ui.py), stacked in one cell, and only the tab showing (#reader) is seen.
-   The rest are hidden twice. visibility alone left the app's WebKit (17.5) drawing a hidden frame's composited layers — a
-   note's backdrop-filter is one — over the tab brought forward (seen 2026-09-21; a software snapshot and both Playwright
-   engines drew it right). Opacity reaches those layers; visibility still keeps the frame out of hit-testing. */
+   The rest are hidden and moved below the window, at full size so their pages keep their place. Hiding alone did not do
+   it in the app's WebKit (17.5), whose compositor and scrolling ignore visibility: a hidden frame's composited layers (a
+   note's backdrop-filter) stayed drawn over the tab brought forward, and the trackpad kept scrolling the tab that had
+   been showing (both seen 2026-09-21 in a real window; both Playwright engines and a software snapshot got it right).
+   Opacity is what hid the layers; moving the frames is what gave the scrolling back. Down, not sideways, where no
+   sidebar or panel lies to be scrolled in their place. */
 #stage{{position:relative;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}}
-#stage>iframe{{grid-area:1/1;display:block;width:100%;height:100%;border:0;background:transparent}} #stage>iframe:not(#reader){{visibility:hidden;opacity:0}}
+#stage>iframe{{grid-area:1/1;display:block;width:100%;height:100%;border:0;background:transparent}} #stage>iframe:not(#reader){{visibility:hidden;opacity:0;transform:translateY(calc(100% + 40px))}}
 #reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
 /* Library's home, in the reader's place while no page is open: open something, what you had open, what you asked. */
 #home{{position:absolute;inset:0;z-index:1;overflow:auto;padding:40px 44px 56px}} body.native #home{{padding-top:52px}} #home[hidden]{{display:none}}
