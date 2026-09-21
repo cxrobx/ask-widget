@@ -218,9 +218,12 @@ body:not(.kind-html) #add-toggle,body:not(.kind-html) #add-panel{{display:none}}
 .aside-foot{{position:static;display:flex;align-items:center;gap:2px;margin-top:8px;padding:0 2px 0 8px}} #vault-count{{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
 .foot-btn{{display:grid;flex:none;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:rgb(var(--faint));transition:background-color 75ms,color 75ms}} .foot-btn:hover{{background:rgb(var(--ink)/.08);color:rgb(var(--ink))}} .foot-btn svg{{width:14px;height:14px}}
 main,body.native main{{position:relative;display:grid;padding:0;overflow:hidden}}
-/* The reader's place: one frame per tab (tabs_ui.py), stacked in one cell, and only the tab showing (#reader) is seen. */
+/* The reader's place: one frame per tab (tabs_ui.py), stacked in one cell, and only the tab showing (#reader) is seen.
+   The rest are hidden twice. visibility alone left the app's WebKit (17.5) drawing a hidden frame's composited layers — a
+   note's backdrop-filter is one — over the tab brought forward (seen 2026-09-21; a software snapshot and both Playwright
+   engines drew it right). Opacity reaches those layers; visibility still keeps the frame out of hit-testing. */
 #stage{{position:relative;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}}
-#stage>iframe{{grid-area:1/1;display:block;width:100%;height:100%;border:0;background:transparent}} #stage>iframe:not(#reader){{visibility:hidden}}
+#stage>iframe{{grid-area:1/1;display:block;width:100%;height:100%;border:0;background:transparent}} #stage>iframe:not(#reader){{visibility:hidden;opacity:0}}
 #reader-empty{{position:absolute;inset:0;display:grid;place-items:center;padding:24px;color:rgb(var(--muted));font-size:14px;text-align:center;pointer-events:none}} #reader-empty[hidden]{{display:none}} #reader-empty a{{pointer-events:auto;color:rgb(var(--accent))}}
 /* Library's home, in the reader's place while no page is open: open something, what you had open, what you asked. */
 #home{{position:absolute;inset:0;z-index:1;overflow:auto;padding:40px 44px 56px}} body.native #home{{padding-top:52px}} #home[hidden]{{display:none}}

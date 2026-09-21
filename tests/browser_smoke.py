@@ -3072,6 +3072,11 @@ class BrowserSmokeTests(unittest.TestCase):
                     page.wait_for_function("() => document.querySelector('#reader').contentDocument?.title === 'Two'")
                     self.assertEqual(frames.nth(1).get_attribute("id"), "reader")
                     self.assertTrue(frames.nth(0).evaluate("f => f.inert && getComputedStyle(f).visibility === 'hidden'"))
+                    # And transparent: the app's WebKit 17.5 kept drawing a hidden frame's composited layers (a note's
+                    # backdrop-filter) over the tab brought forward. Neither Playwright engine shows that, so the rule
+                    # itself is what is checked here; the fix was confirmed on screen in a system-WebKit window.
+                    self.assertEqual(frames.nth(0).evaluate("f => getComputedStyle(f).opacity"), "0")
+                    self.assertEqual(frames.nth(1).evaluate("f => getComputedStyle(f).opacity"), "1")
                     self.assertTrue(src_of(0).endswith("one.html"))
                     page.locator("#tree a.file.active[data-path$='two.html']").wait_for()
                     self.assertIn("two.html", page.url)
