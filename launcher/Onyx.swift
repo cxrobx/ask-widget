@@ -1141,6 +1141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 self.zoomOut()
             case "0":
                 self.resetZoom()
+            case "w":
+                // ⌘W hides Onyx, like ⌘H. ⇧⌘W arrives as "W" and still closes the window.
+                NSApp.hide(nil)
             default:
                 return event
             }
@@ -1170,8 +1173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     @objc private func newTab() { shellCall("onyxShell.newTab()", fallback: "/") }
     @objc private func nextTab() { onShell("onyxShell.nextTab()") }
     @objc private func previousTab() { onShell("onyxShell.prevTab()") }
-    /// ⌘W closes the tab showing. The shell answers false for its lone home tab, and off the shell there are no
-    /// tabs: then, as in any Mac app, ⌘W closes the window. A panel or alert that is key closes itself instead.
+    /// File ▸ Close Tab (no shortcut: ⌘W hides Onyx, like ⌘H). The shell answers false for its lone home tab, and
+    /// off the shell there are no tabs: then it closes the window. A panel or alert that is key closes itself instead.
     @objc private func closeTab() {
         guard let webView, NSApp.keyWindow == nil || NSApp.keyWindow === window,
               ["/", "/vault"].contains(webView.url?.path ?? "") else {
@@ -1370,7 +1373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         fileMenu.addItem(.separator())
         fileMenu.addItem(menuItem("Recent Conversations", #selector(openRecentConversations), "y"))
         fileMenu.addItem(.separator())
-        fileMenu.addItem(menuItem("Close Tab", #selector(closeTab), "w"))
+        fileMenu.addItem(menuItem("Close Tab", #selector(closeTab), ""))
         fileMenu.addItem(NSMenuItem(
             title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "W"
         ))

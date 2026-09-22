@@ -120,7 +120,7 @@ document.addEventListener('click',e=>{const a=e.target instanceof Element?e.targ
 const tabBar=$('#tab-bar'),tabGroup=tabBar.querySelector('.tab-group'),tabStrip=$('#tab-strip'),tabPin=$('#tab-pin'),tabList=$('#tab-list');
 function tabLabel(t){return t.title||(t.src?t.src.split('/').pop():t.href?'Loading…':'New Tab')}
 function drawTabs(){const had=tabStrip.contains(document.activeElement);tabStrip.innerHTML=TABS.list.map(t=>{const on=t===TABS.active,l=esc(tabLabel(t));
-return `<div class=tab role=tab id=tab-${t.id} data-id=${t.id} aria-selected=${on} tabindex=${on?0:-1} title="${l}"><span class=tab-title>${l}</span><button class=tab-x type=button tabindex=-1 title="Close tab (⌘W)" aria-label="Close ${l}">${TAB_X}</button></div>`}).join('');
+return `<div class=tab role=tab id=tab-${t.id} data-id=${t.id} aria-selected=${on} tabindex=${on?0:-1} title="${l}"><span class=tab-title>${l}</span><button class=tab-x type=button tabindex=-1 title="Close tab" aria-label="Close ${l}">${TAB_X}</button></div>`}).join('');
 fitTabs();if(had){const p=TABS.active&&document.getElementById('tab-'+TABS.active.id);if(p)p.focus()}}
 // Past what the bar holds (a pill gives up width down to 88 px), pills spill into the ⌄ list, which lists every tab:
 // those furthest from the tab showing go first, so it always has its pill. Measured again as the bar changes width.
