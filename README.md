@@ -537,8 +537,12 @@ ONYX_NOTARY_PROFILE="onyx-notary" \
 ./launcher/build-app.sh --no-install
 ```
 
-Without those variables, the script creates a verified ad-hoc-signed local
-build.
+Without those variables, a local build signs with your keychain's Apple
+Development identity when you have one. macOS then keeps the app's Documents
+and Google Drive permissions across rebuilds. With no such identity (as in CI),
+or with `ONYX_SIGN_IDENTITY=-`, it signs ad hoc. An ad-hoc signature changes
+with every build, so macOS asks for those permissions again after each install,
+and the vault sidebar waits until they are answered.
 
 ## Project layout
 

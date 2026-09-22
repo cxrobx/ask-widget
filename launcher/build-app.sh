@@ -6,6 +6,8 @@
 # Release signing is opt-in:
 #   ONYX_SIGN_IDENTITY="Developer ID Application: …" ./launcher/build-app.sh
 #   ONYX_NOTARY_PROFILE="notary-profile" ONYX_SIGN_IDENTITY="…" ./launcher/build-app.sh
+# Otherwise a local build signs with the keychain's Apple Development identity,
+# or ad hoc when there is none (as in CI). ONYX_SIGN_IDENTITY=- forces ad hoc.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,7 +19,7 @@ BUNDLE="$BUILD/$APP_NAME.app"
 BUILDER_VENV="$DIR/.build-venv"
 SERVER_DIST="$BUILD/server-dist"
 BUILD_LOCK="$ROOT/requirements-build.lock"
-SIGN_IDENTITY="${ONYX_SIGN_IDENTITY:--}"
+SIGN_IDENTITY="${ONYX_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${ONYX_NOTARY_PROFILE:-}"
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DIR/Info.plist")"
 
@@ -81,12 +83,27 @@ echo "→ Assembling bundle…"
 cp "$DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
 
 echo "→ Signing…"
-if [ "$SIGN_IDENTITY" = "-" ]; then
-  # Ad-hoc signing gives a local development build a stable code identity.
-  codesign --force --deep --sign - "$BUNDLE"
-else
+if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then
   codesign --force --deep --options runtime --timestamp \
     --sign "$SIGN_IDENTITY" "$BUNDLE"
+else
+  # macOS keeps a permission (Documents, Google Drive) against the app's designated
+  # requirement. Signed ad hoc that is the build's cdhash, so every rebuild voided
+  # the grants and the service's first vault walk sat in open() on a consent prompt
+  # for minutes. A certificate makes it identifier + certificate, which a rebuild keeps.
+  DEV_IDENTITY=""
+  if [ -z "$SIGN_IDENTITY" ]; then
+    DEV_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+      | awk '/"Apple Development: /{print $2; exit}' || true)"
+  fi
+  if [ -n "$DEV_IDENTITY" ] && codesign --force --deep --sign "$DEV_IDENTITY" "$BUNDLE"; then
+    echo "  Signed with the Apple Development identity $DEV_IDENTITY"
+  else
+    if [ -n "$DEV_IDENTITY" ]; then
+      echo "  Couldn't sign with $DEV_IDENTITY; signing ad hoc, so macOS will ask for its permissions again." >&2
+    fi
+    codesign --force --deep --sign - "$BUNDLE"
+  fi
 fi
 codesign --verify --deep --strict --verbose=2 "$BUNDLE"
 
@@ -96,7 +113,7 @@ echo "→ Creating release archive…"
 ditto -c -k --sequesterRsrc --keepParent "$BUNDLE" "$ARCHIVE"
 
 if [ -n "$NOTARY_PROFILE" ]; then
-  if [ "$SIGN_IDENTITY" = "-" ]; then
+  if [ -z "$SIGN_IDENTITY" ] || [ "$SIGN_IDENTITY" = "-" ]; then
     echo "ONYX_NOTARY_PROFILE requires ONYX_SIGN_IDENTITY." >&2
     exit 1
   fi
