@@ -115,6 +115,15 @@ showing. Don't "simplify" that into renaming the frames. The app's WebKit 17
 files joint history under frame names, so after a rename Back loads one tab's
 page into another, while Chromium and Playwright's WebKit pass.
 
+**The back/forward swipe is WebKit's, with a cover held over its end.** WebKit
+lifts its swipe snapshot once the main frame has painted, but every Back and
+Forward here moves the reader frame, so the page just left used to flash after
+each swipe. `SwipeCover` in `launcher/Onyx.swift` holds a picture of the
+destination until the shell sends `askwPainted` (`tellPainted` in `tabs_ui.py`,
+a frame after each reader load or popstate). `tellPainted` has no JS caller, so
+it looks dead; it isn't. Keeping the slide, rather than an instant swipe without
+WebKit's snapshot, was the owner's call (2026-09-22).
+
 **Comments here carry reasons, not restatements.** Several explain a measurement
 or a failure that motivated the code. If you change such code, update the reason
 or delete it — do not leave a comment describing behaviour that no longer exists.

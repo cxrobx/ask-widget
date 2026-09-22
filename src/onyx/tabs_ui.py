@@ -78,7 +78,12 @@ const TABS={list:[],active:null},TAB_RUN=Date.now().toString(36),TAB_X=__X__;let
 function makeTab(o){const id=++tabSeq,t=Object.assign({id,name:'reader-'+TAB_RUN+'-'+id,frame:null,href:'',src:'',folder:'',kind:KIND,title:'',loaded:false,used:Date.now()},o);
 if(t.href&&!t.src){const q=new URLSearchParams((t.href.split('?')[1]||'').split('#')[0]);t.src=q.get('src')||'';t.folder=q.get('folder')||''}return t}
 function tabById(id){return TABS.list.find(t=>t.id===id)||null}
-function wireFrame(t,f){t.frame=f;f.addEventListener('load',()=>{if(t.frame===f)frameLoaded(t)})}
+function wireFrame(t,f){t.frame=f;f.addEventListener('load',()=>{tellPainted();try{f.contentWindow.addEventListener('popstate',tellPainted)}catch(e){}if(t.frame===f)frameLoaded(t)})}
+// A frame after a page lands in a tab, the app hears it is on screen: a back/forward swipe holds a picture of it over
+// the window until then (SwipeCover in Onyx.swift), because WebKit lifts its own once the shell has painted, before the
+// frame has. A traversal inside one page loads nothing, so it says so on popstate.
+function tellPainted(){const h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.askwPainted;
+if(h)requestAnimationFrame(()=>requestAnimationFrame(()=>Promise.resolve(h.postMessage({})).catch(()=>{})))}
 // A tab's frame, made when the tab is opened or first shown. Its src is set before it joins the page, so the load that
 // follows is the page's own and adds nothing to history.
 function tabFrame(t,href){const f=document.createElement('iframe');f.name=t.name;f.setAttribute('aria-label','Reader');f.inert=true;f.src=href||'about:blank';

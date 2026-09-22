@@ -228,6 +228,32 @@ private extension Int {
     }
 }
 
+// MARK: - Swipe cover
+
+/// A picture of the page a back/forward swipe landed on, held over the WebView
+/// until the reader has painted it.
+///
+/// WebKit's swipe slides in a snapshot of the page it is going to and lifts the
+/// snapshot once the MAIN frame has painted. Every Back and Forward in Onyx moves
+/// the reader frame, so WebKit lifted it while the reader still held the page
+/// just left: after every swipe that page showed for a frame, 70–600 ms after
+/// the slide ended, and read as a reload. Measured on the real window at 45 fps.
+/// It never takes a click: the page underneath keeps the mouse, as it keeps the
+/// scroll, and is only transparent while covered.
+private final class SwipeCover: NSView {
+    init(image: CGImage, frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.contents = image
+        layer?.contentsGravity = .resize
+        autoresizingMask = [.width, .height]
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     WKUIDelegate, WKScriptMessageHandlerWithReply
 {
@@ -243,6 +269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     private var pendingQuickText: String?
     private var keyDownMonitor: Any?
     private let glass = WindowGlass()
+    private var swipeCover: SwipeCover?
+    private var swipeCoverDeadline: DispatchWorkItem?
     private let zoomLevels: [CGFloat] = [
         0.50, 0.67, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00,
     ]
@@ -733,6 +761,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         configuration.userContentController.addScriptMessageHandler(
             self, contentWorld: .page, name: "askwDrag"
         )
+        configuration.userContentController.addScriptMessageHandler(
+            self, contentWorld: .page, name: "askwPainted"
+        )
         // WebKit does not consistently expose the Clipboard API to localhost
         // pages. Give interactive local HTML a browser-compatible writeText()
         // backed by the native pasteboard. The message handler replies with a
@@ -907,6 +938,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             }
             return
         }
+        if message.name == "askwPainted" {
+            // The shell, a frame after a reader page has loaded: the page a swipe went to is on screen now.
+            if message.frameInfo.isMainFrame { liftSwipeCover() }
+            replyHandler(true, nil)
+            return
+        }
         if message.name == "askwAppearance" {
             // Only the shell page sets the window's appearance: a document in the reader frame, asking for the
             // app theme, would otherwise undo the vault look's mode.
@@ -1030,6 +1067,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             webView.load(URLRequest(url: url))
         }
         return nil
+    }
+
+    /// WebKit's private navigation-delegate call, made as a swipe's slide ends and before it navigates; `item` is nil
+    /// when the swipe was abandoned. What is on screen then is WebKit's snapshot of the destination, fully in.
+    @objc(_webViewDidEndNavigationGesture:withNavigationToBackForwardListItem:)
+    func webViewDidEndNavigationGesture(_ webView: WKWebView, navigatingTo item: WKBackForwardListItem?) {
+        guard item != nil else { return }
+        holdSwipeCover(over: webView)
+    }
+
+    private func holdSwipeCover(over webView: WKWebView) {
+        guard swipeCover == nil, let window, let container = webView.superview,
+              let screen = NSScreen.screens.first else { return }
+        let rect = window.convertToScreen(webView.convert(webView.bounds, to: nil))
+        // CoreGraphics counts from the top of the menu-bar screen; AppKit from its bottom.
+        let captureRect = CGRect(x: rect.minX, y: screen.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+        guard let image = CGWindowListCreateImage(
+            captureRect, .optionIncludingWindow, CGWindowID(window.windowNumber),
+            [.boundsIgnoreFraming, .bestResolution]
+        ) else { return }
+        let cover = SwipeCover(image: image, frame: webView.frame)
+        container.addSubview(cover, positioned: .above, relativeTo: webView)
+        // With glass on, the panes are translucent: the page left would show through the picture's.
+        webView.alphaValue = 0
+        swipeCover = cover
+        // A back or forward that loads nothing (an anchor in the same page) sends no word; don't hold the page still.
+        let deadline = DispatchWorkItem { [weak self] in self?.liftSwipeCover() }
+        swipeCoverDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: deadline)
+    }
+
+    private func liftSwipeCover() {
+        swipeCoverDeadline?.cancel()
+        swipeCoverDeadline = nil
+        guard let cover = swipeCover else { return }
+        swipeCover = nil
+        webView?.alphaValue = 1
+        cover.removeFromSuperview()
     }
 
     // MARK: - Menu

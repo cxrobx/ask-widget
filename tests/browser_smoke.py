@@ -3127,6 +3127,49 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_the_app_hears_a_page_is_on_screen_only_once_the_reader_shows_it(self) -> None:
+        # A back/forward swipe lands with WebKit's snapshot lifted before the reader frame has painted, so the app holds
+        # a picture over the window until the shell says the page is on screen (askwPainted; SwipeCover in Onyx.swift).
+        # Said too early, the page just left flashes again. What the swipe itself does was measured on the real window.
+        artifacts = self._tab_pages()
+        one = artifacts / "Pages" / "one.html"
+        page_errors: list[str] = []
+        stub = """if (window.top === window) window.webkit = {messageHandlers: {askwPainted: {postMessage() {
+            const f = document.querySelector('#reader');
+            (window.__painted = window.__painted || []).push(f && f.contentDocument ? f.contentDocument.title : '');
+            return Promise.resolve(true) }}}}"""
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.add_init_script(stub)
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(one))}", wait_until="networkidle")
+                    page.frame_locator("#reader").locator("h1").wait_for()
+                    page.wait_for_function("() => (window.__painted || []).includes('One')")
+
+                    def told_since(mark: int, title: str) -> list[str]:
+                        page.wait_for_function(f"() => window.__painted.slice({mark}).includes({title!r})")
+                        return page.evaluate(f"window.__painted.slice({mark})")
+
+                    # A row's page, and Back to the one before it: each is reported with the reader already showing it.
+                    mark = page.evaluate("window.__painted.length")
+                    page.locator("#tree a.file", has_text="Two").click()
+                    self.assertEqual(set(told_since(mark, "Two")), {"Two"})
+                    mark = page.evaluate("window.__painted.length")
+                    page.evaluate("history.back()")
+                    self.assertEqual(set(told_since(mark, "One")), {"One"})
+                    # A step inside one page loads nothing, and still says so, or the picture would stay up its full time.
+                    page.frame_locator("#reader").locator("body").evaluate("() => { location.hash = 'further' }")
+                    page.wait_for_function("() => document.querySelector('#reader').contentWindow.location.hash === '#further'")
+                    mark = page.evaluate("window.__painted.length")
+                    page.evaluate("history.back()")
+                    self.assertEqual(set(told_since(mark, "One")), {"One"})
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_tab_bar_comes_out_at_the_top_edge_and_pins_as_a_band(self) -> None:
         # The bar behaves as the sidebar and the outline do: away until the pointer rests in the top 24 px of the
         # reader's middle 60 %, gone 400 ms after it leaves unless its list is open, and pinned it is a band that
