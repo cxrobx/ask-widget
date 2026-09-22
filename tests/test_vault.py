@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from onyx import vault as vault_mod
 from onyx.vault import VaultCache, VaultIndex, is_inside, normalize, read_attachment_folder
@@ -165,6 +167,39 @@ class VaultIndexTests(unittest.TestCase):
         cache.invalidate()
         self.assertIsNot(cache.get(self.vault), current)
         self.assertIsNot(cache.get(self.outside), current)
+
+    def test_a_cloud_placeholder_folder_is_listed_off_the_walk(self) -> None:
+        # Opening a placeholder folder waits on its provider — Google Drive behind ~/Documents/CX/Areas/AIN kept the
+        # first walk after a restart in open() for minutes (T181). The walk steps round it and asks in the background.
+        placeholder = os.stat(self.outside).st_ino
+        with mock.patch.object(vault_mod, "_placeholder", side_effect=lambda st: st.st_ino == placeholder), \
+                mock.patch.object(vault_mod, "_fetch_listings") as fetch:
+            index = VaultIndex.build(self.vault)
+        rels = {item.rel for item in index.files}
+        self.assertIn("notes/A.md", rels)
+        self.assertNotIn("linked/L.md", rels)
+        self.assertEqual(index.placeholders, [str(self.vault / "linked")])
+        fetch.assert_called_once_with([str(self.vault / "linked")])
+        self.assertIn("linked/L.md", self.rels())  # once it is local, it is walked like any folder
+
+    def test_fetching_a_placeholder_never_runs_on_the_callers_thread(self) -> None:
+        listing, release = threading.Event(), threading.Event()
+
+        def slow_walk(path, onerror=None):
+            listing.set()
+            release.wait(5)
+            return iter(())
+
+        with mock.patch.object(vault_mod.os, "walk", side_effect=slow_walk):
+            started = time.monotonic()
+            vault_mod._fetch_listings([str(self.outside)])
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertTrue(listing.wait(2))
+            vault_mod._fetch_listings([str(self.outside)])  # already being fetched: no second thread
+            release.set()
+        for thread in threading.enumerate():
+            if thread.name == "onyx-vault-fetch":
+                thread.join(2)
 
 
 def make_html_vault(base: Path) -> tuple[Path, Path]:
@@ -386,6 +421,48 @@ class HtmlVaultIndexTests(unittest.TestCase):
         self.assertIs(cache.get(self.vault, "html"), html_index)
         self.assertEqual(notes_index.kind, "notes")
         self.assertIn("Scratch/readme.md", {item.rel for item in notes_index.files})
+
+    def test_the_artifacts_tree_never_waits_behind_a_notes_walk(self) -> None:
+        # T181: one lock across both kinds left the Artifacts sidebar on "Loading…" for minutes after a restart,
+        # while the Notes walk sat in open() on a Google Drive folder.
+        cache = VaultCache(ttl=60)
+        walking, release = threading.Event(), threading.Event()
+        real_build = VaultIndex.build.__func__
+
+        def build(cls, root, kind="notes"):
+            if kind == "notes":
+                walking.set()
+                release.wait(10)
+            return real_build(cls, root, kind)
+
+        with mock.patch.object(VaultIndex, "build", classmethod(build)):
+            stale: list[VaultIndex] = []
+            notes = threading.Thread(target=lambda: stale.append(cache.get(self.vault, "notes")))
+            notes.start()
+            try:
+                self.assertTrue(walking.wait(5))
+                answered: list[VaultIndex] = []
+                html = threading.Thread(target=lambda: answered.append(cache.get(self.vault, "html")))
+                html.start()
+                html.join(2)
+                self.assertEqual(len(answered), 1, "the Artifacts tree waited on the Notes walk")
+                started = time.monotonic()
+                cache.invalidate()  # the mutation routes call this on the event loop
+                self.assertLess(time.monotonic() - started, 0.5)
+            finally:
+                release.set()
+                notes.join(5)
+        self.assertEqual(len(stale), 1)
+        self.assertIsNot(cache.get(self.vault, "notes"), stale[0])  # a walk from before invalidate() isn't kept
+
+    def test_a_placeholder_page_is_listed_without_being_read(self) -> None:
+        page = self.vault / "Scratch" / "zeta.html"
+        placeholder = os.stat(page).st_ino
+        with mock.patch.object(vault_mod, "_placeholder", side_effect=lambda st: st.st_ino == placeholder):
+            index = VaultIndex.build(self.vault, kind="html")
+        row = index.at("Scratch/zeta.html")
+        self.assertFalse(row.missing)
+        self.assertEqual((row.title, row.summary, row.label), ("", "", "zeta"))
 
 
 if __name__ == "__main__":

@@ -65,6 +65,45 @@ _TITLE_SCAN_BYTES = 64 * 1024
 _TITLE_CACHE: dict[tuple[str, int, int], str] = {}
 _TITLE_CACHE_MAX = 10_000
 
+# SF_DATALESS from <sys/stat.h>: a cloud placeholder (Google Drive, iCloud)
+# whose listing or bytes are still with its file provider. Its stat answers at
+# once; opening it waits on the provider, over the network, and after the app
+# is rebuilt it can wait on a macOS consent prompt as well. Behind
+# ~/Documents/CX/Areas/AIN that left the first walk after a restart in open()
+# for minutes, so the walks step round placeholders (see _fetch_listings).
+SF_DATALESS = 0x40000000
+_FETCHING: set[str] = set()
+_FETCHING_LOCK = threading.Lock()
+
+
+def _placeholder(st: os.stat_result) -> bool:
+    return bool(getattr(st, "st_flags", 0) & SF_DATALESS)
+
+
+def _fetch_listings(paths: list[str]) -> None:
+    """Have the file provider list placeholder folders, on a thread no request waits on.
+
+    A later build then walks them like any other folder, so a linked cloud
+    folder fills in once the provider (or the person, at a consent prompt)
+    answers, instead of the sidebar waiting for it.
+    """
+    with _FETCHING_LOCK:
+        todo = [path for path in paths if path not in _FETCHING]
+        _FETCHING.update(todo)
+    if not todo:
+        return
+
+    def run() -> None:
+        try:
+            for path in todo:
+                for _walked in os.walk(path, onerror=lambda _e: None):
+                    pass
+        finally:
+            with _FETCHING_LOCK:
+                _FETCHING.difference_update(todo)
+
+    threading.Thread(target=run, name="onyx-vault-fetch", daemon=True).start()
+
 
 def normalize(path: Path | str) -> Path:
     """Collapse ``.``/``..`` segments without touching symlinks."""
@@ -94,6 +133,8 @@ def html_page_meta(path: Path) -> tuple[str, float] | None:
         st = os.stat(path)
     except OSError:
         return None
+    if _placeholder(st):
+        return "", st.st_mtime  # listed by its name until it is downloaded; reading it would download it
     key = (str(path), st.st_mtime_ns, st.st_size)
     title = _TITLE_CACHE.get(key)
     if title is None:
@@ -501,6 +542,8 @@ def html_page_summary(path: Path) -> str:
         st = os.stat(path)
     except OSError:
         return ""
+    if _placeholder(st):
+        return ""
     key = (str(path), st.st_mtime_ns, st.st_size)
     cached = _SUMMARY_CACHE.get(key)
     if cached is not None:
@@ -586,6 +629,8 @@ class VaultIndex:
     listed_dirs: list[str] = field(default_factory=list)
     # Artifacts: each of its own folders' pinned entry names (PINS_FILE), by folder rel.
     pins: dict[str, list[str]] = field(default_factory=dict)
+    # Cloud placeholder folders the walk stepped round (SF_DATALESS), being fetched in the background.
+    placeholders: list[str] = field(default_factory=list)
     _by_rel: dict[str, VaultFile] = field(default_factory=dict, repr=False)
     _by_stem: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)
     _by_name: dict[str, list[VaultFile]] = field(default_factory=dict, repr=False)
@@ -628,6 +673,9 @@ class VaultIndex:
                 if key in seen:
                     continue  # symlink loop or a second link to a folder already walked
                 seen.add(key)
+                if _placeholder(st):
+                    index.placeholders.append(child)
+                    continue
                 if os.path.islink(child):
                     index.symlinked_dirs.add(f"{rel_dir}/{name}" if rel_dir else name)
                 keep.append(name)
@@ -659,6 +707,8 @@ class VaultIndex:
                 )
             if index.truncated:
                 break
+        if index.placeholders:
+            _fetch_listings(index.placeholders)
         index.built_at = time.time()
         index._finish()
         return index
@@ -727,6 +777,9 @@ class VaultIndex:
                 if key in seen:
                     continue
                 seen.add(key)
+                if _placeholder(st):
+                    index.placeholders.append(child)
+                    continue
                 if os.path.islink(child):
                     index.symlinked_dirs.add(f"{rel_dir}/{name}" if rel_dir else name)
                 keep.append(name)
@@ -760,6 +813,8 @@ class VaultIndex:
                     break
             if index.truncated:
                 break
+        if index.placeholders:
+            _fetch_listings(index.placeholders)
         index.built_at = time.time()
         index._finish()
         return index
@@ -990,19 +1045,31 @@ class VaultIndex:
 
 
 class VaultCache:
-    """Rebuilds the index at most once per ``ttl`` seconds; thread-safe."""
+    """Rebuilds each index at most once per ``ttl`` seconds; thread-safe.
+
+    Each kind builds under a lock of its own. A Notes walk can wait on the disk
+    for minutes, and with one lock shared by both kinds the Artifacts tree
+    queued behind it: the sidebar sat on "Loading…" after a restart.
+    """
 
     def __init__(self, ttl: float = 5.0) -> None:
         self.ttl = ttl
-        self._lock = threading.Lock()
+        self._building = {kind: threading.Lock() for kind in VAULT_KINDS}
+        # Guards the two fields below and is never held across a build, so
+        # invalidate(), which the mutation routes call on the event loop, never
+        # waits on a walk.
+        self._state = threading.Lock()
         # One slot per vault kind, so switching between Notes and HTML does not
         # throw the other index away.
         self._indexes: dict[str, VaultIndex] = {}
+        self._generation = 0
 
     def get(self, root: Path, kind: str = "notes") -> VaultIndex:
         root = normalize(root)
-        with self._lock:
-            cached = self._indexes.get(kind)
+        with self._building[kind]:
+            with self._state:
+                cached = self._indexes.get(kind)
+                generation = self._generation
             if (
                 cached is not None
                 and cached.root == root
@@ -1010,9 +1077,13 @@ class VaultCache:
             ):
                 return cached
             index = VaultIndex.build(root, kind=kind)
-            self._indexes[kind] = index
+            with self._state:
+                # A walk that began before an invalidate() may predate the change; its caller gets it, the cache doesn't.
+                if generation == self._generation:
+                    self._indexes[kind] = index
             return index
 
     def invalidate(self) -> None:
-        with self._lock:
+        with self._state:
+            self._generation += 1
             self._indexes.clear()
