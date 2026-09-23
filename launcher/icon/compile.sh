@@ -13,6 +13,8 @@
 # which then replaces the transparent gem there. A classic AppIcon.appiconset of the same
 # name doesn't stop it, and neither does MIN_TARGET=26.0: both tried 2026-09-23 on
 # macOS 14, and both showed the tile. Shipping this car means the tile on every macOS.
+# Chosen 2026-09-23: system-dark, MIN_TARGET 13.0, committed as launcher/icon/Assets.car
+# with its source in launcher/icon/AppIcon.icon.
 set -euo pipefail
 
 FILL="${1:?fill: none | system-light | system-dark}"

@@ -89,6 +89,9 @@ swiftc -framework Cocoa -framework WebKit -framework UniformTypeIdentifiers -O \
 
 echo "→ Assembling bundle…"
 cp "$DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
+# The app icon on every macOS: the gem on a dark square, Liquid Glass on 26+ and flat
+# before it. Compiled on macOS 26 by .github/workflows/icon.yml; see launcher/icon/compile.sh.
+cp "$DIR/icon/Assets.car" "$BUNDLE/Contents/Resources/Assets.car"
 
 echo "→ Signing…"
 if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then

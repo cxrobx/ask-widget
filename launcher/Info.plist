@@ -11,9 +11,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.cx.onyx</string>
     <key>CFBundleVersion</key>
-    <string>0.6.1</string>
+    <string>0.6.2</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.6.1</string>
+    <string>0.6.2</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSApplicationCategoryType</key>
@@ -21,6 +21,8 @@
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Christopher Robinson</string>
     <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>

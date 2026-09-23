@@ -12,8 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fill: [none, system-dark]
-        min: ["13.0", "26.0"]
+        # system-dark / 13.0 is the one shipped; the others are kept for comparison.
+        fill: [system-dark, none]
+        min: ["13.0"]
     steps:
       - uses: actions/checkout@v4
       - run: xcodebuild -version

@@ -20,6 +20,15 @@ class VersioningTests(unittest.TestCase):
         self.assertEqual(plist["CFBundleShortVersionString"], __version__)
         self.assertEqual(plist["CFBundleVersion"], __version__)
 
+    def test_the_app_carries_its_macos_26_icon(self) -> None:
+        # Without Assets.car and CFBundleIconName, macOS 26 puts the gem in a grey square of its own.
+        root = Path(__file__).resolve().parent.parent
+        with (root / "launcher" / "Info.plist").open("rb") as handle:
+            plist = plistlib.load(handle)
+        self.assertEqual(plist["CFBundleIconName"], "AppIcon")
+        self.assertTrue((root / "launcher" / "icon" / "Assets.car").is_file())
+        self.assertIn('icon/Assets.car', (root / "launcher" / "build-app.sh").read_text(encoding="utf-8"))
+
     def test_obsidian_manifest_and_versions_json_agree(self) -> None:
         plugin = Path(__file__).resolve().parent.parent / "integrations" / "obsidian"
         manifest = json.loads((plugin / "manifest.json").read_text(encoding="utf-8"))
