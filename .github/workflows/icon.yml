@@ -1,0 +1,23 @@
+name: icon
+
+# Compiles the app icon's Assets.car on macOS 26, whose Xcode is the first that reads
+# Icon Composer (.icon) files. Run by hand; the chosen Assets.car is committed as
+# launcher/icon/Assets.car. See launcher/icon/compile.sh.
+on:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        fill: [none, system-light, system-dark]
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - run: ./launcher/icon/compile.sh ${{ matrix.fill }} out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: icon-${{ matrix.fill }}
+          path: out
