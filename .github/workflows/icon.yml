@@ -12,12 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fill: [none, system-light, system-dark]
+        fill: [none, system-dark]
+        min: ["13.0", "26.0"]
     steps:
       - uses: actions/checkout@v4
       - run: xcodebuild -version
-      - run: ./launcher/icon/compile.sh ${{ matrix.fill }} out
+      - run: MIN_TARGET=${{ matrix.min }} ./launcher/icon/compile.sh ${{ matrix.fill }} out
       - uses: actions/upload-artifact@v4
         with:
-          name: icon-${{ matrix.fill }}
+          name: icon-${{ matrix.fill }}-min${{ matrix.min }}
           path: out

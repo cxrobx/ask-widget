@@ -8,10 +8,11 @@
 # as launcher/icon/Assets.car, and build-app.sh copies that in.
 #
 # Tahoe draws every app icon as a rounded square; an icon without one sits in a grey
-# square macOS adds. So the app carries two icons under one name, AppIcon: the .icon for
-# 26+, and a classic AppIcon.appiconset for older macOS. Older macOS reads Assets.car
-# before CFBundleIconFile, so without that appiconset it would show actool's flattened
-# fallback of the .icon, tile and all, instead of the transparent gem.
+# square macOS adds. Older macOS reads Assets.car before CFBundleIconFile, and a car
+# compiled for older targets carries actool's flattened copy of the .icon, tile and all,
+# which then replaces the transparent gem there. A classic AppIcon.appiconset of the same
+# name doesn't stop it (tried 2026-09-23: actool prefers the .icon). MIN_TARGET=26.0
+# leaves the flattened copy out, so older macOS falls back to AppIcon.icns.
 set -euo pipefail
 
 FILL="${1:?fill: none | system-light | system-dark}"
@@ -58,7 +59,7 @@ JSON
 
 xcrun actool "$WORK/Assets.xcassets" "$ICON" \
   --compile "$OUT" --platform macosx --target-device mac \
-  --minimum-deployment-target 13.0 --app-icon AppIcon \
+  --minimum-deployment-target "${MIN_TARGET:-13.0}" --app-icon AppIcon \
   --output-partial-info-plist "$OUT/partial-info.plist" \
   --output-format human-readable-text --notices --warnings --errors
 xcrun assetutil --info "$OUT/Assets.car" > "$OUT/assetutil.json"
