@@ -10,6 +10,27 @@ from onyx.storage import Storage
 
 
 class StorageTests(unittest.TestCase):
+    def test_highlight_and_note_survive_reopening_the_database(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            data = Path(raw)
+            store = Storage(data)
+            store.add_highlight(
+                id="saved-passage", source="guide.md", selection="A useful passage",
+                context="A useful passage", prefix="Before ", suffix=" after", page=None,
+            )
+            store.update_highlight_note("saved-passage", "Check the source")
+            store.close()
+
+            reopened = Storage(data)
+            self.assertEqual(reopened.highlights("other.md"), [])
+            saved = reopened.highlights("guide.md")
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["note"], "Check the source")
+            self.assertEqual(saved[0]["prefix"], "Before ")
+            self.assertTrue(reopened.delete_highlight("saved-passage"))
+            self.assertEqual(reopened.highlights("guide.md"), [])
+            reopened.close()
+
     def test_first_start_adopts_the_ask_widget_database_and_leaves_it_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()  # Storage resolves /var → /private/var

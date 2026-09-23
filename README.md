@@ -73,7 +73,10 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
 - **Chats on this page**, a chat bubble in the reader's bottom-right corner on
   any page with saved answers, with how many there are. It lists every
   conversation about the page, newest first; pick one to continue it in the
-  answer panel.
+  answer panel. Its **Show highlights** toggle reveals subtle marks on passages
+  discussed in those chats; marks stay off until you turn it on. Select text and
+  choose **Save highlight** to keep a passage without asking a model. Saved
+  highlights and their optional notes live in the same popover.
 - **Settings**, a dialog behind the cog at the sidebar's foot (or ⌘,), as in
   cxtasks: window glass, provider, model, reasoning effort, response detail,
   caching, history, timeouts, private URL access, and trusted context roots.

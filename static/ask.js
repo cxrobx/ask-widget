@@ -27,6 +27,7 @@
   var MAX_SEL = 4000;
   var MAX_CTX = 600;
   var MAX_PAGE_CTX = 4000;
+  var MAX_HIGHLIGHT_INDEX = 250000;
   var PANEL_W = 380;
 
   // ---- state ----
@@ -57,7 +58,8 @@
   var panelEl, panelTitle, panelSel, panelTools, panelBody, claudeBtn, stopBtn, retryBtn, historyBtn;
   var followWrap, followInput, followGo;
   var pillEl, pillLabel, pickerEl, toastEl;
-  var chatsEl, chatsCount, chatsListEl, chatsRows;
+  var chatsEl, chatsCount, chatsListEl, chatsRows, highlightsSection, highlightsRows, highlightsToggle;
+  var pageChats = [], savedHighlights = [], highlightsOn = false, markedPassages = [], highlightOverlay = null;
 
   // ============================================================ styles
   var CSS = [
@@ -177,6 +179,23 @@
     '.askw-chats-q{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
     '.askw-chats-sel{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:2px;font-size:11.5px;line-height:1.4;color:#5d5d5d;}',
     '.askw-chats-meta{display:block;margin-top:3px;font-size:10px;color:#a8a29e;}',
+    '.askw-highlights-switch{display:flex;align-items:center;gap:8px;margin:0 6px 5px;padding:6px 4px;color:#5d5d5d;font-size:11.5px;cursor:pointer;}',
+    '.askw-highlights-switch[hidden],.askw-highlights-section[hidden]{display:none;}',
+    '.askw-highlights-switch input{width:15px;height:15px;margin:0;accent-color:var(--askw-accent);}',
+    '.askw-highlights-section{border-top:1px solid var(--askw-line);padding-top:5px;overflow-y:auto;min-height:0;}',
+    '.askw-highlights-heading{margin:3px 10px 5px;color:#78716c;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}',
+    '.askw-highlight-card{position:relative;padding:5px 28px 7px 5px;border-radius:7px;}',
+    '.askw-highlight-card:hover{background:rgba(13,13,13,.05);}',
+    '.askw-highlight-jump{display:block;width:100%;padding:3px 4px;border:0;background:transparent;color:inherit;text-align:left;font:inherit;line-height:1.4;cursor:pointer;}',
+    '.askw-highlight-note{display:block;margin:2px 4px 0;padding:2px 0;border:0;background:transparent;color:var(--askw-accent);font:inherit;font-size:11px;text-align:left;cursor:pointer;}',
+    '.askw-highlight-remove{position:absolute;top:8px;right:5px;width:20px;height:20px;border:0;border-radius:5px;background:transparent;color:#a8a29e;cursor:pointer;}',
+    '.askw-highlight-remove:hover{background:rgba(13,13,13,.08);color:#b91c1c;}',
+    '.askw-highlight-editor{padding:4px;}.askw-highlight-editor textarea{display:block;width:100%;min-height:54px;resize:vertical;padding:6px;border:1px solid var(--askw-line);border-radius:6px;background:#fff;color:#0d0d0d;font:inherit;}',
+    '.askw-highlight-editor button{margin-top:4px;padding:4px 8px;border:0;border-radius:5px;background:var(--askw-accent);color:#fff;font:inherit;cursor:pointer;}',
+    'html[data-askw-color="dark"] .askw-highlights-switch{color:#cdcdcd;}html[data-askw-color="dark"] .askw-highlight-card:hover{background:rgba(255,255,255,.08);}',
+    'html[data-askw-color="dark"] .askw-highlight-editor textarea{background:#292929;color:#fff;}',
+    '.askw-highlight-overlay{position:fixed;inset:0;z-index:2147483590;pointer-events:none;overflow:hidden;}.askw-highlight-overlay i{position:absolute;background:rgba(58,131,247,.12);border-bottom:1px solid rgba(58,131,247,.72);}',
+    '::highlight(askw-passages){background-color:rgba(58,131,247,.14);text-decoration:underline;text-decoration-color:rgba(58,131,247,.72);}',
     'html[data-askw-color="dark"] .askw-chats-list{background:rgba(35,35,35,.84);box-shadow:0 26px 70px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.10);}',
     'html[data-askw-color="dark"] .askw-chats-row{color:#fff;}html[data-askw-color="dark"] .askw-chats-row:hover{background:rgba(255,255,255,.10);}html[data-askw-color="dark"] .askw-chats-sel{color:#cdcdcd;}',
     '@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.askw-chats-list{background:#fff}.askw-chats{--askw-glass:#fff;--askw-frost:#fff}html[data-askw-color="dark"] .askw-chats-list{background:#242424}html[data-askw-page="dark"] .askw-chats{--askw-glass:#242424;--askw-frost:#242424}}',
@@ -395,7 +414,8 @@
       text: text.slice(0, MAX_SEL),
       context: surroundingContext(range),
       rect: range.getBoundingClientRect(),
-      page: pageEl ? Number(pageEl.getAttribute('data-askw-page')) || null : null
+      page: pageEl ? Number(pageEl.getAttribute('data-askw-page')) || null : null,
+      range: range.cloneRange()
     };
   }
 
@@ -412,6 +432,94 @@
       length += part.length + 1;
     }
     return parts.join(' ').slice(0, MAX_PAGE_CTX);
+  }
+
+  function normalizedPassage(text) { return String(text || '').replace(/\s+/g, ' ').trim(); }
+
+  // Keep positions in text nodes rather than wrapping authored HTML. A quote is
+  // marked only when its text and saved surroundings identify one place.
+  function passageIndex() {
+    var text = '', points = [], lastBlock = null;
+    var blocks = 'p,li,td,th,blockquote,pre,h1,h2,h3,h4,h5,h6,div,section,article,figure';
+    var walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), node;
+    function put(ch, n, offset) {
+      if (ch === ' ' && (!text || text[text.length - 1] === ' ')) return;
+      text += ch;
+      points.push(n ? { node: n, offset: offset } : null);
+    }
+    while ((node = walk.nextNode()) && text.length < MAX_HIGHLIGHT_INDEX) {
+      var parent = node.parentElement;
+      if (!parent || parent.closest('.askw-root,script,style,template,noscript,[hidden]')) continue;
+      var block = parent.closest(blocks) || document.body;
+      if (lastBlock && block !== lastBlock) put(' ', null, 0);
+      lastBlock = block;
+      var value = node.nodeValue || '';
+      for (var i = 0; i < value.length && text.length < MAX_HIGHLIGHT_INDEX; i++) {
+        put(/\s/.test(value[i]) ? ' ' : value[i], node, i);
+      }
+    }
+    return { text: text, points: points };
+  }
+
+  function passageMatches(index, item) {
+    var quote = normalizedPassage(item.selection);
+    if (!quote) return [];
+    var matches = [], start = index.text.indexOf(quote);
+    while (start >= 0 && matches.length < 100) {
+      var end = start + quote.length, a = index.points[start], b = index.points[end - 1];
+      if (a && b) {
+        var range = document.createRange();
+        try {
+          range.setStart(a.node, a.offset); range.setEnd(b.node, b.offset + 1);
+          var page = a.node.parentElement.closest('[data-askw-page]');
+          if (normalizedPassage(range.toString()) === quote &&
+              (!item.document_page || page && Number(page.getAttribute('data-askw-page')) === Number(item.document_page))) {
+            matches.push({ start: start, end: end, range: range });
+          }
+        } catch (e) {}
+      }
+      start = index.text.indexOf(quote, start + 1);
+    }
+    return matches;
+  }
+
+  function passageRange(index, item) {
+    var matches = passageMatches(index, item);
+    if (!matches.length) return null;
+    var prefix = item.prefix || '', suffix = item.suffix || '';
+    if (prefix || suffix) matches = matches.filter(function (m) {
+      return (!prefix || index.text.slice(m.start - prefix.length, m.start) === prefix) &&
+        (!suffix || index.text.slice(m.end, m.end + suffix.length) === suffix);
+    });
+    if (matches.length === 1) return matches[0].range;
+    var context = normalizedPassage(item.context);
+    if (!context) return null;
+    matches = matches.filter(function (m) {
+      var block = m.range.startContainer.parentElement.closest('p,li,td,th,blockquote,pre,h1,h2,h3,h4,h5,h6,div,section,article,figure');
+      return block && normalizedPassage(block.innerText || block.textContent).slice(0, 600) === context;
+    });
+    return matches.length === 1 ? matches[0].range : null;
+  }
+
+  function selectionAnchors(captured) {
+    var index = passageIndex(), matches = passageMatches(index, {
+      selection: captured.text, document_page: captured.page
+    }), selected = captured.range;
+    var match = matches.filter(function (m) {
+      return selected && selected.comparePoint(m.range.startContainer, m.range.startOffset) === 0 &&
+        selected.comparePoint(m.range.endContainer, m.range.endOffset) === 0;
+    })[0];
+    if (!match && captured.rect) match = matches.filter(function (m) {
+      return Array.prototype.some.call(m.range.getClientRects(), function (r) {
+        return Math.min(r.right, captured.rect.right) - Math.max(r.left, captured.rect.left) > 1 &&
+          Math.min(r.bottom, captured.rect.bottom) - Math.max(r.top, captured.rect.top) > 1;
+      });
+    })[0];
+    if (!match && matches.length === 1) match = matches[0];
+    return match ? {
+      prefix: index.text.slice(Math.max(0, match.start - 48), match.start),
+      suffix: index.text.slice(match.end, match.end + 48)
+    } : { prefix: '', suffix: '' };
   }
 
   // ============================================================ build DOM
@@ -444,6 +552,7 @@
       '<button type="button" class="askw-item" data-act="eli5"><span class="askw-ico" aria-hidden="true">○</span>ELI5</button>' +
       '<button type="button" class="askw-item" data-act="prove"><span class="askw-ico" aria-hidden="true">✓</span>Prove it</button>' +
       '<button type="button" class="askw-item" data-act="ask"><span class="askw-ico" aria-hidden="true">…</span>Ask a question…</button>' +
+      '<button type="button" class="askw-item" data-act="save-highlight"><span class="askw-ico" aria-hidden="true">⌑</span>Save highlight</button>' +
       '<div class="askw-ask-wrap"><textarea class="askw-ask-input" aria-label="Question about the highlighted text" placeholder="Ask about the highlighted text…"></textarea>' +
       '<button type="button" class="askw-ask-go">Go</button><div style="clear:both"></div></div>';
     document.body.appendChild(menuEl);
@@ -459,6 +568,8 @@
           var r = menuEl.getBoundingClientRect();
           placeMenu(r.left, r.top);   // the field it opens stays inside the window
           askInput.focus();
+        } else if (act === 'save-highlight') {
+          saveHighlight();
         } else {
           start(act);
         }
@@ -626,10 +737,22 @@
     chatsListEl.setAttribute('role', 'dialog');
     chatsListEl.setAttribute('aria-label', 'Chats on this page');
     chatsListEl.setAttribute('aria-hidden', 'true');
-    chatsListEl.innerHTML = '<p class="askw-chats-title"></p><div class="askw-chats-rows"></div>';
+    chatsListEl.innerHTML = '<p class="askw-chats-title"></p>' +
+      '<label class="askw-highlights-switch" hidden><input type="checkbox" aria-label="Show highlights">Show highlights</label>' +
+      '<div class="askw-chats-rows"></div><section class="askw-highlights-section" hidden>' +
+      '<p class="askw-highlights-heading">Saved highlights</p><div class="askw-highlights-rows"></div></section>';
     chatsRows = chatsListEl.querySelector('.askw-chats-rows');
+    highlightsSection = chatsListEl.querySelector('.askw-highlights-section');
+    highlightsRows = chatsListEl.querySelector('.askw-highlights-rows');
+    highlightsToggle = chatsListEl.querySelector('.askw-highlights-switch input');
+    highlightsToggle.addEventListener('change', function () {
+      highlightsOn = highlightsToggle.checked;
+      highlightsSection.hidden = !highlightsOn || !savedHighlights.length;
+      paintHighlights();
+    });
     document.body.appendChild(chatsListEl);
     chatsListEl.addEventListener('keydown', function (e) {
+      if (!e.target.classList.contains('askw-chats-row')) return;
       var rows = Array.prototype.slice.call(chatsRows.querySelectorAll('.askw-chats-row'));
       if (!rows.length || ['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;
       e.preventDefault();
@@ -695,6 +818,27 @@
     var q = askInput.value.trim();
     if (!q) return;
     start('ask', q);
+  }
+
+  function saveHighlight() {
+    if (!sel || !sel.text) return;
+    var captured = sel;
+    hideMenu();
+    var anchors = selectionAnchors(captured);
+    fetch(SERVER + '/api/highlights', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, document_source: documentSource(), selection: captured.text,
+        context: captured.context || '', document_page: captured.page || null,
+        prefix: anchors.prefix, suffix: anchors.suffix })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || 'Could not save highlight.');
+      highlightsLoad++;
+      savedHighlights.unshift(d.highlight);
+      renderHighlights();
+      renderBubble();
+      paintHighlights();
+      toast('Highlight saved. Open Chats on this page to add a note.');
+    }).catch(function (e) { toast(e.message || 'Could not save highlight.'); });
   }
 
   // ============================================================ panel
@@ -1445,11 +1589,169 @@
   }
 
   // ============================================================ chats on this page
-  // Every saved answer about this page: the History button's list without its
-  // passage. The bubble shows once there is one, with how many; a row continues
-  // that conversation in the panel, as Recent conversations' Continue does.
+  // The corner bubble holds saved answers and manual highlights for this page.
+  // A chat row continues its conversation; passage marks are opt-in here so
+  // authored pages stay visually untouched until the reader asks to see them.
   var CHAT_LABEL = { eli5: 'ELI5', prove: 'Prove it', ask: 'Question' };
-  var chatsLoad = 0;
+  var chatsLoad = 0, highlightsLoad = 0, highlightObserver = null, highlightTimer = 0, overlayFrame = 0;
+  function loadSavedHighlights() {
+    var mine = ++highlightsLoad;
+    fetch(SERVER + '/api/highlights?source=' + encodeURIComponent(documentSource()), { cache: 'no-store' })
+      .then(function (r) { return r.json(); }).then(function (d) {
+        if (mine !== highlightsLoad || !d || !d.ok) return;
+        savedHighlights = d.highlights || [];
+        renderHighlights(); renderBubble(); paintHighlights();
+      }).catch(function () { /* Saved chats still work if highlights cannot load. */ });
+  }
+  function renderBubble() {
+    var chats = pageChats.length, saved = savedHighlights.length, total = chats + saved;
+    var label = (chats ? chats + (chats === 1 ? ' chat' : ' chats') : '') +
+      (saved ? (chats ? ' and ' : '') + saved + (saved === 1 ? ' highlight' : ' highlights') : '') + ' on this page';
+    var title = chats ? chats + (chats === 1 ? ' chat' : ' chats') : '';
+    if (saved) title += (title ? ' · ' : '') + saved + (saved === 1 ? ' highlight' : ' highlights');
+    chatsListEl.querySelector('.askw-chats-title').textContent = title + ' on this page';
+    chatsEl.hidden = !total;
+    chatsCount.textContent = total > 99 ? '99+' : String(total);
+    chatsEl.setAttribute('aria-label', label);
+    chatsEl.title = title + ' on this page';
+    chatsListEl.querySelector('.askw-highlights-switch').hidden =
+      !saved && !pageChats.some(function (c) { return !!c.selection; });
+    if (!total) closeChats();
+  }
+  function jumpToHighlight(item) {
+    var range = passageRange(passageIndex(), item);
+    if (!range) { toast('This passage no longer matches the page.'); return false; }
+    for (var d = range.startContainer.parentElement.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+    range.startContainer.parentElement.scrollIntoView({ block: 'center' });
+    return true;
+  }
+  function editHighlightNote(item, card) {
+    var editor = card.querySelector('.askw-highlight-editor');
+    editor.hidden = false;
+    var field = editor.querySelector('textarea');
+    field.value = item.note || '';
+    field.focus();
+    function save() {
+      fetch(SERVER + '/api/highlights/' + item.id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, note: field.value })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) throw new Error(d.error || 'Could not save note.');
+        item.note = d.highlight.note;
+        renderHighlights();
+        toast('Note saved.');
+      }).catch(function (e) { toast(e.message || 'Could not save note.'); });
+    }
+    editor.querySelector('button').onclick = save;
+    field.onkeydown = function (e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); } };
+  }
+  function renderHighlights() {
+    highlightsRows.innerHTML = '';
+    highlightsSection.hidden = !highlightsOn || !savedHighlights.length;
+    savedHighlights.forEach(function (item) {
+      var card = document.createElement('div');
+      card.className = 'askw-highlight-card';
+      card.dataset.highlightId = item.id;
+      var jump = document.createElement('button'); jump.type = 'button'; jump.className = 'askw-highlight-jump';
+      jump.textContent = '“' + normalizedPassage(item.selection) + '”';
+      jump.addEventListener('click', function () { jumpToHighlight(item); });
+      var note = document.createElement('button'); note.type = 'button'; note.className = 'askw-highlight-note';
+      note.textContent = item.note || 'Add note';
+      note.addEventListener('click', function () { editHighlightNote(item, card); });
+      var remove = document.createElement('button'); remove.type = 'button'; remove.className = 'askw-highlight-remove';
+      remove.setAttribute('aria-label', 'Remove highlight'); remove.title = 'Remove highlight'; remove.textContent = '×';
+      remove.addEventListener('click', function () {
+        fetch(SERVER + '/api/highlights/' + item.id, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: TOKEN })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          if (!d.ok) throw new Error(d.error || 'Could not remove highlight.');
+          savedHighlights = savedHighlights.filter(function (h) { return h.id !== item.id; });
+          renderHighlights(); renderBubble(); paintHighlights();
+        }).catch(function (e) { toast(e.message || 'Could not remove highlight.'); });
+      });
+      var editor = document.createElement('div'); editor.className = 'askw-highlight-editor'; editor.hidden = true;
+      var field = document.createElement('textarea'); field.maxLength = 2000; field.setAttribute('aria-label', 'Highlight note');
+      var save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save note';
+      editor.appendChild(field); editor.appendChild(save);
+      card.appendChild(jump); card.appendChild(note); card.appendChild(remove); card.appendChild(editor);
+      highlightsRows.appendChild(card);
+    });
+  }
+  function redrawHighlightOverlay() {
+    if (!highlightOverlay) return;
+    highlightOverlay.innerHTML = '';
+    markedPassages.forEach(function (mark) {
+      Array.prototype.forEach.call(mark.range.getClientRects(), function (r) {
+        if (!r.width || !r.height) return;
+        var line = document.createElement('i');
+        line.style.left = r.left + 'px'; line.style.top = r.top + 'px';
+        line.style.width = r.width + 'px'; line.style.height = r.height + 'px';
+        highlightOverlay.appendChild(line);
+      });
+    });
+  }
+  function laterHighlightPaint() {
+    if (highlightTimer || !highlightsOn) return;
+    highlightTimer = setTimeout(function () { highlightTimer = 0; paintHighlights(); }, 250);
+  }
+  function paintHighlights() {
+    if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('askw-passages');
+    if (highlightOverlay) { highlightOverlay.remove(); highlightOverlay = null; }
+    markedPassages = [];
+    if (!highlightsOn) {
+      if (highlightObserver) { highlightObserver.disconnect(); highlightObserver = null; }
+      clearTimeout(highlightTimer); highlightTimer = 0;
+      return;
+    }
+    var index = passageIndex();
+    var entries = savedHighlights.map(function (item) { return { kind: 'saved', item: item }; })
+      .concat(pageChats.filter(function (item) { return !!item.selection; }).map(function (item) {
+        return { kind: 'chat', item: item };
+      }));
+    entries.slice(0, 200).forEach(function (entry) {
+      var range = passageRange(index, entry.item);
+      if (range && range.getClientRects().length) markedPassages.push({ range: range, kind: entry.kind, item: entry.item });
+    });
+    if (window.CSS && window.CSS.highlights && window.Highlight) {
+      window.CSS.highlights.set('askw-passages', new window.Highlight(...markedPassages.map(function (m) { return m.range; })));
+    } else {
+      highlightOverlay = document.createElement('div');
+      highlightOverlay.className = 'askw-root askw-highlight-overlay';
+      document.body.appendChild(highlightOverlay);
+      redrawHighlightOverlay();
+    }
+    if (!highlightObserver) {
+      highlightObserver = new MutationObserver(function (records) {
+        var changed = records.some(function (r) {
+          if (isOurs(r.target)) return false;
+          if (r.type !== 'childList') return true;
+          return Array.prototype.some.call(r.addedNodes, function (n) { return !isOurs(n); }) ||
+            Array.prototype.some.call(r.removedNodes, function (n) { return !isOurs(n); });
+        });
+        if (changed) laterHighlightPaint();
+      });
+      highlightObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    }
+  }
+  function markedPassageClick(e) {
+    if (!highlightsOn || isOurs(e.target) || e.defaultPrevented || e.target.closest('a,button,input,textarea,select,[contenteditable]')) return;
+    var selected = window.getSelection();
+    if (selected && !selected.isCollapsed) return;
+    for (var i = 0; i < markedPassages.length; i++) {
+      var mark = markedPassages[i], rects = mark.range.getClientRects();
+      var hit = Array.prototype.some.call(rects, function (r) {
+        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      });
+      if (!hit) continue;
+      if (mark.kind === 'chat') openChat(mark.item);
+      else {
+        if (!chatsListEl.classList.contains('open')) toggleChats();
+        var row = highlightsRows.querySelector('[data-highlight-id="' + mark.item.id + '"] .askw-highlight-jump');
+        if (row) row.focus();
+      }
+      return;
+    }
+  }
   function loadChats() {
     if (!chatsEl) return;
     var mine = ++chatsLoad;
@@ -1460,11 +1762,7 @@
       }).catch(function () { /* Keep what the bubble last showed while offline. */ });
   }
   function renderChats(items) {
-    var n = items.length, label = n + (n === 1 ? ' chat' : ' chats') + ' on this page';
-    chatsEl.hidden = !n;
-    chatsCount.textContent = n > 99 ? '99+' : String(n);
-    chatsEl.setAttribute('aria-label', label);
-    chatsListEl.querySelector('.askw-chats-title').textContent = label;
+    pageChats = items;
     chatsRows.innerHTML = '';
     items.forEach(function (item) {
       var row = document.createElement('button'); row.type = 'button'; row.className = 'askw-chats-row';
@@ -1479,7 +1777,8 @@
       row.addEventListener('click', function () { openChat(item); });
       chatsRows.appendChild(row);
     });
-    if (!n) closeChats();
+    renderBubble();
+    paintHighlights();
   }
   // How long ago, in the Library home page's words: 5m, 3h, 2d, 3w, then the month.
   function ago(ts) {
@@ -1500,7 +1799,7 @@
     // the list. A pointer click leaves it be: WebKit would ring the first row as
     // though it had been picked.
     var first = chatsRows.querySelector('.askw-chats-row');
-    if (first && e && e.detail === 0) first.focus();
+    if (e && e.detail === 0) (first || highlightsToggle).focus();
   }
   function closeChats() {
     if (!chatsListEl) return;
@@ -1987,6 +2286,14 @@
       closeChats();
     });
 
+    document.addEventListener('click', markedPassageClick);
+    function moveOverlay() {
+      if (!highlightOverlay || overlayFrame) return;
+      overlayFrame = requestAnimationFrame(function () { overlayFrame = 0; redrawHighlightOverlay(); });
+    }
+    window.addEventListener('scroll', moveOverlay, true);
+    window.addEventListener('resize', moveOverlay);
+
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Alt') { setProviderLabel(true); return; }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
@@ -2045,6 +2352,7 @@
     initPosition();
     initLanding();
     loadChats();
+    loadSavedHighlights();
     initAutoSelection();
   }
   if (document.body) boot();

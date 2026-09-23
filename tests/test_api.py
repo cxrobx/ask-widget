@@ -56,6 +56,28 @@ class ApiTests(unittest.TestCase):
         self.client_context.__exit__(None, None, None)
         self.temp.cleanup()
 
+    def test_highlights_are_scoped_to_a_page_and_mutations_require_the_token(self) -> None:
+        source = str(self.document)
+        body = {"document_source": source, "selection": "The server is local.",
+                "context": "The server is local.", "prefix": "", "suffix": ""}
+        self.assertEqual(self.client.post("/api/highlights", json=body).status_code, 403)
+        self.assertEqual(self.client.get("/api/highlights", params={"source": source}).json()["highlights"], [])
+
+        created = self.client.post("/api/highlights", json={**body, "token": self.config.token})
+        self.assertEqual(created.status_code, 200)
+        item = created.json()["highlight"]
+        self.assertEqual(item["selection"], body["selection"])
+        self.assertEqual(len(self.client.get("/api/highlights", params={"source": source}).json()["highlights"]), 1)
+        self.assertEqual(self.client.get("/api/highlights", params={"source": "another.md"}).json()["highlights"], [])
+
+        url = "/api/highlights/" + item["id"]
+        self.assertEqual(self.client.patch(url, json={"note": "Remember this"}).status_code, 403)
+        updated = self.client.patch(url, json={"token": self.config.token, "note": "Remember this"})
+        self.assertEqual(updated.json()["highlight"]["note"], "Remember this")
+        self.assertEqual(self.client.request("DELETE", url, json={}).status_code, 403)
+        self.assertEqual(self.client.request("DELETE", url, json={"token": self.config.token}).status_code, 200)
+        self.assertEqual(self.client.get("/api/highlights", params={"source": source}).json()["highlights"], [])
+
     def test_sidebar_logo_is_the_transparent_gem(self) -> None:
         mark = self.client.get("/onyx-mark.png")
         self.assertEqual(mark.status_code, 200)

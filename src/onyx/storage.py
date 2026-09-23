@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Extra browser origins allowed to reach /ask and the JSON APIs, beyond the
 # built-in localhost set. The Obsidian plugin's renderer origin is the default.
@@ -185,6 +185,20 @@ class Storage:
                 ON conversations(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_conversations_document
                 ON conversations(document_source, selection_hash, started_at DESC);
+            CREATE TABLE IF NOT EXISTS highlights (
+                id TEXT PRIMARY KEY,
+                document_source TEXT NOT NULL,
+                selection TEXT NOT NULL,
+                context TEXT NOT NULL DEFAULT '',
+                prefix TEXT NOT NULL DEFAULT '',
+                suffix TEXT NOT NULL DEFAULT '',
+                document_page INTEGER,
+                note TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_highlights_document
+                ON highlights(document_source, created_at DESC);
             """
         )
         columns = {
@@ -564,6 +578,43 @@ class Storage:
                 "SELECT * FROM conversations WHERE request_id=?", (request_id,)
             ).fetchone()
         return self._conversation(row) if row is not None else None
+
+    def highlights(self, source: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM highlights WHERE document_source=? ORDER BY created_at DESC", (source,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_highlight(
+        self, *, id: str, source: str, selection: str, context: str,
+        prefix: str, suffix: str, page: int | None,
+    ) -> dict[str, Any]:
+        now = time.time()
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO highlights(id, document_source, selection, context, prefix, suffix, "
+                "document_page, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, source, selection, context, prefix, suffix, page, now, now),
+            )
+            self._db.commit()
+            row = self._db.execute("SELECT * FROM highlights WHERE id=?", (id,)).fetchone()
+        return dict(row)
+
+    def update_highlight_note(self, id: str, note: str) -> dict[str, Any] | None:
+        with self._lock:
+            cursor = self._db.execute(
+                "UPDATE highlights SET note=?, updated_at=? WHERE id=?", (note, time.time(), id)
+            )
+            self._db.commit()
+            row = self._db.execute("SELECT * FROM highlights WHERE id=?", (id,)).fetchone() if cursor.rowcount else None
+        return dict(row) if row is not None else None
+
+    def delete_highlight(self, id: str) -> bool:
+        with self._lock:
+            cursor = self._db.execute("DELETE FROM highlights WHERE id=?", (id,))
+            self._db.commit()
+        return bool(cursor.rowcount)
 
     def recent_conversations(
         self,

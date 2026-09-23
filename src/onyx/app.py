@@ -787,6 +787,80 @@ def create_app(config: AppConfig) -> FastAPI:
             headers=cors(request.headers.get("origin")),
         )
 
+    @app.get("/api/highlights")
+    async def highlights_api(request: Request, source: str):
+        if denied := api_forbidden(request):
+            return denied
+        if not source or len(source) > 4000:
+            return JSONResponse({"ok": False, "error": "invalid source"}, status_code=400)
+        return JSONResponse(
+            {"ok": True, "highlights": app.state.storage.highlights(source)},
+            headers=cors(request.headers.get("origin")),
+        )
+
+    @app.post("/api/highlights")
+    async def add_highlight_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict) or body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        source = body.get("document_source")
+        selection = body.get("selection")
+        if (not isinstance(source, str) or not 0 < len(source) <= 4000 or
+                not isinstance(selection, str) or not selection.strip() or len(selection) > MAX_SELECTION):
+            return JSONResponse({"ok": False, "error": "invalid highlight"}, status_code=400)
+        context = body.get("context") if isinstance(body.get("context"), str) else ""
+        prefix = body.get("prefix") if isinstance(body.get("prefix"), str) else ""
+        suffix = body.get("suffix") if isinstance(body.get("suffix"), str) else ""
+        page = body.get("document_page")
+        if page is not None and (not isinstance(page, int) or isinstance(page, bool) or not 1 <= page <= 100000):
+            return JSONResponse({"ok": False, "error": "invalid page"}, status_code=400)
+        item = app.state.storage.add_highlight(
+            id=uuid.uuid4().hex, source=source, selection=selection.strip(),
+            context=context[:MAX_CONTEXT], prefix=prefix[-64:], suffix=suffix[:64], page=page,
+        )
+        return JSONResponse({"ok": True, "highlight": item}, headers=cors(request.headers.get("origin")))
+
+    @app.patch("/api/highlights/{highlight_id}")
+    async def update_highlight_api(request: Request, highlight_id: str):
+        if denied := api_forbidden(request):
+            return denied
+        if not re.fullmatch(r"[a-f0-9]{32}", highlight_id):
+            return JSONResponse({"ok": False, "error": "invalid highlight id"}, status_code=400)
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict) or body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        note = body.get("note")
+        if not isinstance(note, str) or len(note) > 2000:
+            return JSONResponse({"ok": False, "error": "invalid note"}, status_code=400)
+        item = app.state.storage.update_highlight_note(highlight_id, note.strip())
+        if item is None:
+            return JSONResponse({"ok": False, "error": "highlight not found"}, status_code=404)
+        return JSONResponse({"ok": True, "highlight": item}, headers=cors(request.headers.get("origin")))
+
+    @app.delete("/api/highlights/{highlight_id}")
+    async def delete_highlight_api(request: Request, highlight_id: str):
+        if denied := api_forbidden(request):
+            return denied
+        if not re.fullmatch(r"[a-f0-9]{32}", highlight_id):
+            return JSONResponse({"ok": False, "error": "invalid highlight id"}, status_code=400)
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict) or body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        if not app.state.storage.delete_highlight(highlight_id):
+            return JSONResponse({"ok": False, "error": "highlight not found"}, status_code=404)
+        return JSONResponse({"ok": True}, headers=cors(request.headers.get("origin")))
+
     @app.get("/api/document")
     async def document_api(request: Request, source: str):
         if denied := api_forbidden(request):

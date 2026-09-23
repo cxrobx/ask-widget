@@ -1589,6 +1589,91 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_page_highlights_are_opt_in_and_notes_persist(self) -> None:
+        document = self.root / "highlights.html"
+        document.write_text(
+            '<!doctype html><title>Highlights</title><p id=chat>Answered passage.</p>'
+            '<p id=manual>Keep this <strong>important passage</strong> for later.</p>',
+            encoding="utf-8",
+        )
+        source = str(document.resolve())
+        storage: Storage = self.app.state.storage
+        doc_id = storage.upsert_document(source=source, title="Highlights", kind="html", folder=str(self.root))
+        storage.start_conversation(
+            request_id="highlight-chat", document_id=doc_id, document_source=source,
+            document_title="Highlights", document_page=None, selection="Answered passage.",
+            context="Answered passage.", action="ask", question="Why?", folder=str(self.root),
+            provider="claude", model="sonnet",
+        )
+        storage.finish_conversation("highlight-chat", status="complete", answer="Because.")
+
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page()
+                    page.on("pageerror", lambda error, engine=engine: errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/view?src={urllib.parse.quote(source)}", wait_until="networkidle")
+                    marks = "() => window.CSS && CSS.highlights ? (CSS.highlights.get('askw-passages')?.size || 0) : document.querySelectorAll('.askw-highlight-overlay i').length"
+                    self.assertEqual(page.evaluate(marks), 0)
+                    bubble = page.locator(".askw-chats")
+                    bubble.click()
+                    listing = page.get_by_role("dialog", name="Chats on this page")
+                    toggle = listing.get_by_label("Show highlights")
+                    expect(toggle).not_to_be_checked()
+                    toggle.check()
+                    page.wait_for_function(marks, timeout=1000)
+                    self.assertEqual(page.evaluate(marks), 1)
+                    toggle.uncheck()
+                    self.assertEqual(page.evaluate(marks), 0)
+                    page.keyboard.press("Escape")
+
+                    paragraph = page.locator("#manual")
+                    paragraph.select_text()
+                    paragraph.dispatch_event("mouseup", {"button": 0})
+                    page.get_by_role("button", name="Ask about the selected text").click()
+                    page.get_by_role("button", name="Save highlight").click()
+                    expect(bubble).to_have_attribute("aria-label", "1 chat and 1 highlight on this page")
+                    self.assertEqual(page.evaluate(marks), 0)
+                    bubble.click()
+                    toggle.check()
+                    expect(listing.locator(".askw-highlight-card")).to_have_count(1)
+                    self.assertEqual(page.evaluate(marks), 2)
+                    listing.get_by_role("button", name="Add note").click()
+                    listing.get_by_label("Highlight note").fill("Read this again")
+                    listing.get_by_role("button", name="Save note").click()
+                    expect(listing.get_by_role("button", name="Read this again")).to_be_visible()
+                    page.reload(wait_until="networkidle")
+                    self.assertEqual(page.evaluate(marks), 0)
+                    page.locator(".askw-chats").click()
+                    listing = page.get_by_role("dialog", name="Chats on this page")
+                    listing.get_by_label("Show highlights").check()
+                    expect(listing.get_by_role("button", name="Read this again")).to_be_visible()
+                    self.assertEqual(page.evaluate(marks), 2)
+                    listing.get_by_role("button", name="Remove highlight").click()
+                    expect(listing.locator(".askw-highlight-card")).to_have_count(0)
+                    self.assertEqual(page.evaluate(marks), 1)
+
+                    # A saved passage alone gets the bubble, and a duplicate quote marks only its selected occurrence.
+                    standalone = self.root / f"manual-only-{engine}.html"
+                    standalone.write_text(
+                        '<!doctype html><title>Repeated</title><p id=one>Repeated line.</p>'
+                        '<p id=two>Repeated line.</p>', encoding="utf-8",
+                    )
+                    page.goto(f"{self.base_url}/view?src={urllib.parse.quote(str(standalone))}", wait_until="networkidle")
+                    page.locator("#two").select_text()
+                    page.locator("#two").dispatch_event("mouseup", {"button": 0})
+                    page.get_by_role("button", name="Ask about the selected text").click()
+                    page.get_by_role("button", name="Save highlight").click()
+                    expect(page.get_by_role("button", name="1 highlight on this page")).to_be_visible()
+                    page.locator(".askw-chats").click()
+                    page.get_by_role("dialog", name="Chats on this page").get_by_label("Show highlights").check()
+                    self.assertEqual(page.evaluate(marks), 1)
+                    self.assertEqual(page.evaluate("() => CSS.highlights ? [...CSS.highlights.get('askw-passages')][0].startContainer.parentElement.id : 'two'"), "two")
+                    browser.close()
+        self.assertEqual(errors, [])
+
     def test_chat_bubble_lists_the_pages_chats_and_continues_one(self) -> None:
         # A page with saved answers shows a chat bubble in its bottom-right corner, with how many. It lists every chat
         # about the page, newest first, and a row continues that conversation in the answer panel. A page with none
