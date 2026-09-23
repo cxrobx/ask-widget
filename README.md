@@ -107,8 +107,10 @@ The build installs `/Applications/Onyx.app`, refreshes macOS Services, and
 also produces:
 
 ```text
-launcher/build/Onyx-0.5.0-macOS.zip
-launcher/build/Onyx-0.5.0-macOS.zip.sha256
+launcher/build/Onyx-0.6.0-macOS-arm64.zip
+launcher/build/Onyx-0.6.0-macOS-arm64.zip.sha256
+launcher/build/Onyx-0.6.0-macOS-arm64.dmg
+launcher/build/Onyx-0.6.0-macOS-arm64.dmg.sha256
 launcher/build/Open-in-Onyx.alfredworkflow
 ```
 
@@ -536,14 +538,19 @@ CI runs the Python suite on Python 3.11 and 3.14, type-checks the Swift launcher
 validates the plist, builds the frozen service, and smoke-tests its health and
 configuration contracts.
 
-For a distributable release, provide a Developer ID identity and optional
-notarytool keychain profile:
+For a distributable release, provide a Developer ID identity and a notarytool
+keychain profile:
 
 ```bash
 ONYX_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
-ONYX_NOTARY_PROFILE="onyx-notary" \
+ONYX_NOTARY_PROFILE="notary-profile" \
 ./launcher/build-app.sh --no-install
 ```
+
+The build notarizes the ZIP, staples the app, then creates and notarizes a DMG
+with an Applications shortcut. It staples the DMG and writes a SHA-256 file for
+each download. The frozen Python service uses the build machine's architecture;
+the arm64 release requires an Apple Silicon Mac.
 
 Without those variables, a local build signs with your keychain's Apple
 Development identity when you have one. macOS then keeps the app's Documents

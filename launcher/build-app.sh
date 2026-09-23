@@ -22,6 +22,7 @@ BUILD_LOCK="$ROOT/requirements-build.lock"
 SIGN_IDENTITY="${ONYX_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${ONYX_NOTARY_PROFILE:-}"
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DIR/Info.plist")"
+BUILD_ARCH="$(uname -m)"
 
 if [ ! -x "$BUILDER_VENV/bin/python" ]; then
   echo "→ Creating isolated bundler environment…"
@@ -84,7 +85,17 @@ cp "$DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
 
 echo "→ Signing…"
 if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then
-  codesign --force --deep --options runtime --timestamp \
+  # --deep never reaches Mach-O files under Contents/Resources, so the frozen service
+  # went to the notary unsigned and was rejected. Sign each of its binaries first,
+  # innermost first, the executable last, then seal the bundle around them.
+  find "$BUNDLE/Contents/Resources/Server" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) \
+    -print0 | while IFS= read -r -d '' f; do
+      if file -b "$f" | grep -q 'Mach-O'; then echo "$f"; fi
+    done | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2- \
+    | while IFS= read -r f; do
+      codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$f"
+    done
+  codesign --force --options runtime --timestamp \
     --sign "$SIGN_IDENTITY" "$BUNDLE"
 else
   # macOS keeps a permission (Documents, Google Drive) against the app's designated
@@ -107,8 +118,8 @@ else
 fi
 codesign --verify --deep --strict --verbose=2 "$BUNDLE"
 
-ARCHIVE="$BUILD/Onyx-$APP_VERSION-macOS.zip"
-CHECKSUM="$ARCHIVE.sha256"
+ARCHIVE="$BUILD/Onyx-$APP_VERSION-macOS-$BUILD_ARCH.zip"
+DMG="$BUILD/Onyx-$APP_VERSION-macOS-$BUILD_ARCH.dmg"
 echo "→ Creating release archive…"
 ditto -c -k --sequesterRsrc --keepParent "$BUNDLE" "$ARCHIVE"
 
@@ -120,17 +131,38 @@ if [ -n "$NOTARY_PROFILE" ]; then
   echo "→ Submitting release archive for notarization…"
   xcrun notarytool submit "$ARCHIVE" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$BUNDLE"
+  xcrun stapler validate "$BUNDLE"
   rm -f "$ARCHIVE"
   ditto -c -k --sequesterRsrc --keepParent "$BUNDLE" "$ARCHIVE"
 fi
+
+echo "→ Creating drag-to-Applications disk image…"
+DMG_CONTENTS="$BUILD/dmg-contents"
+mkdir -p "$DMG_CONTENTS"
+ditto "$BUNDLE" "$DMG_CONTENTS/$APP_NAME.app"
+ln -s /Applications "$DMG_CONTENTS/Applications"
+hdiutil create -volname "$APP_NAME $APP_VERSION" -srcfolder "$DMG_CONTENTS" \
+  -format UDZO -ov "$DMG"
+if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+fi
+
+if [ -n "$NOTARY_PROFILE" ]; then
+  echo "→ Submitting disk image for notarization…"
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  xcrun stapler validate "$DMG"
+fi
 (
   cd "$BUILD"
-  LC_ALL=C shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$CHECKSUM")"
+  LC_ALL=C shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256"
+  LC_ALL=C shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256"
 )
 
 if [ "${1:-}" = "--no-install" ]; then
   echo "✓ Built: $BUNDLE"
   echo "✓ Archive: $ARCHIVE"
+  echo "✓ Disk image: $DMG"
   echo "✓ Alfred workflow: $ALFRED_WORKFLOW"
   exit 0
 fi
@@ -171,5 +203,6 @@ if pgrep -xq "$APP_NAME"; then
   echo "  $APP_NAME is open: quit and reopen it to run this build."
 fi
 echo "  Archive: $ARCHIVE"
+echo "  Disk image: $DMG"
 echo "  Alfred workflow: $ALFRED_WORKFLOW"
 echo "  Open it from Spotlight/Launchpad as 'Onyx', or:  open -a 'Onyx'"
