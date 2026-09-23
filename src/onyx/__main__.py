@@ -100,6 +100,7 @@ def main() -> None:
         port=args.port,
         allow_any=args.allow_any,
         data_dir=Path(args.data_dir).expanduser().resolve() if args.data_dir else None,
+        first_run=True,
     )
     app = create_app(config)
 

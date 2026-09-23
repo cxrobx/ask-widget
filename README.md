@@ -26,18 +26,31 @@ selection → Onyx → local FastAPI service → Claude CLI (claude.ai subscript
 
 ## Quickstart
 
-Requirements for building: macOS 13 or newer, Xcode command-line tools, and
-Python 3.11 or newer. The built app needs at least one supported CLI installed:
-Claude Code signed into claude.ai, or Codex signed in with ChatGPT.
+Download the latest `Onyx-<version>-macOS-arm64.dmg` from
+[Releases](https://github.com/cxrobx/onyx/releases/latest), open it, and drag
+Onyx to Applications. The app is signed and notarized. It runs on Apple Silicon
+Macs with macOS 13 or newer.
 
-```bash
-git clone https://github.com/cxrobx/onyx.git
-cd onyx
-./launcher/build-app.sh
-open -a "Onyx"
-```
+On first launch Onyx opens **Settings ▸ Setup**, a checklist with a fix beside
+each step:
 
-More build output, a checkout-only run, and a headless daemon are in [docs/install.md](docs/install.md).
+1. **Claude or Codex, signed in.** Install the
+   [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) and run
+   `claude` once to sign in with a paid claude.ai plan, or install the Codex
+   CLI and sign in with ChatGPT. Onyx never uses an API key.
+2. **Obsidian vault.** Onyx picks the vault Obsidian has open. Choose another
+   one here if you like.
+3. **Artifacts folder.** Onyx creates `~/Documents/Artifacts` for HTML pages.
+4. **Onyx plugin in Obsidian.** Press **Install plugin**, then quit and reopen
+   Obsidian. If Obsidian shows Restricted mode, turn it off in Settings ▸
+   Community plugins.
+5. **Vault look.** Arrives from the plugin within a few seconds, and Onyx then
+   matches your vault's colours and fonts.
+
+Setup stops opening on its own once every step passes, or after you press
+**Don't open Setup on launch**. It stays in Settings either way.
+
+To build the app yourself, or run the service from a checkout, see [docs/install.md](docs/install.md).
 
 Then open a document from **Library**, select a passage, right-click, and choose
 **ELI5**, **Prove it**, or **Ask a question…**.

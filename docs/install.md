@@ -2,10 +2,10 @@
 
 The [README quickstart](../README.md#quickstart) is the short path. This page has the rest.
 
-## Install the macOS app
+## Build the macOS app from source
 
 Requirements for building: macOS 13 or newer, Xcode command-line tools, and
-Python 3.11 or newer. The built app needs at least one supported CLI installed:
+Python 3.11 or newer, and Node.js for the Obsidian plugin the app carries. The built app needs at least one supported CLI installed:
 Claude Code signed into claude.ai, or Codex signed in with ChatGPT.
 
 ```bash
@@ -19,10 +19,10 @@ The build installs `/Applications/Onyx.app`, refreshes macOS Services, and
 also produces:
 
 ```text
-launcher/build/Onyx-0.6.0-macOS-arm64.zip
-launcher/build/Onyx-0.6.0-macOS-arm64.zip.sha256
-launcher/build/Onyx-0.6.0-macOS-arm64.dmg
-launcher/build/Onyx-0.6.0-macOS-arm64.dmg.sha256
+launcher/build/Onyx-0.6.1-macOS-arm64.zip
+launcher/build/Onyx-0.6.1-macOS-arm64.zip.sha256
+launcher/build/Onyx-0.6.1-macOS-arm64.dmg
+launcher/build/Onyx-0.6.1-macOS-arm64.dmg.sha256
 launcher/build/Open-in-Onyx.alfredworkflow
 ```
 

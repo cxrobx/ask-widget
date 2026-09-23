@@ -46,6 +46,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # The key (like kind="html") predates the name: it was "HTML Vault" until 2026-09-11.
     "html_vault_root": str(Path.home() / "Documents" / "Artifacts"),
     "allowed_origins": ["app://obsidian.md"],
+    # The Setup section opens by itself on launch until every step passes or this is set.
+    "setup_dismissed": False,
 }
 
 
@@ -225,6 +227,11 @@ class Storage:
         )
         self._db.commit()
 
+    def stored_setting_keys(self) -> set[str]:
+        """The settings someone has set, as opposed to ones still on their shipped default."""
+        with self._lock:
+            return {row["key"] for row in self._db.execute("SELECT key FROM settings").fetchall()}
+
     def settings(self, *, model_default: str = "sonnet") -> dict[str, Any]:
         values = dict(DEFAULT_SETTINGS)
         values["model"] = model_default
@@ -307,6 +314,7 @@ class Storage:
             "markdown_follow_obsidian",
             "sidebar_follow_obsidian",
             "web_lookups",
+            "setup_dismissed",
         ):
             if key in patch:
                 clean[key] = bool(patch[key])

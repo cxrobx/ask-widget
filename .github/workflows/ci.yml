@@ -61,5 +61,9 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+      # The app carries the Obsidian plugin, built from integrations/obsidian.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - run: ./launcher/build-app.sh --no-install
       - run: ./scripts/smoke-bundle.sh

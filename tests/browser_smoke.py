@@ -122,7 +122,10 @@ class BrowserSmokeTests(unittest.TestCase):
         (defaults / "notes").mkdir(parents=True)
         (defaults / "artifacts").mkdir()
         self.app.state.storage.update_settings(
-            {"vault_root": str(defaults / "notes"), "html_vault_root": str(defaults / "artifacts")},
+            # These vaults have no Obsidian plugin, so Setup would open over the shell on every load:
+            # the suite is a set-up user. test_setup_opens_on_a_new_mac_until_dismissed covers the other one.
+            {"vault_root": str(defaults / "notes"), "html_vault_root": str(defaults / "artifacts"),
+             "setup_dismissed": True},
             model_default="sonnet",
         )
         catalogs = [
@@ -188,6 +191,24 @@ class BrowserSmokeTests(unittest.TestCase):
         self.thread.join(timeout=10)
         self.catalog_patch.stop()
         self.temp.cleanup()
+
+    def test_setup_opens_on_a_new_mac_until_dismissed(self) -> None:
+        self.app.state.storage.update_settings({"setup_dismissed": False}, model_default="sonnet")
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.goto(self.base_url + "/")
+                page.wait_for_selector("#settings-modal[open] #setup-steps .status")
+                self.assertIn("Onyx plugin in Obsidian", page.inner_text("#setup-steps"))
+                page.click("#setup-dismiss")
+                page.wait_for_function("document.getElementById('setup-dismiss').hidden")
+                page.reload()
+                page.wait_for_selector("#open-settings")
+                page.wait_for_timeout(500)
+                self.assertFalse(page.evaluate("document.getElementById('settings-modal').open"))
+            finally:
+                browser.close()
 
     def test_markdown_theme_updates_in_place_and_can_be_disabled(self) -> None:
         storage = self.app.state.storage

@@ -43,6 +43,10 @@ echo "→ Cleaning…"
 rm -rf "$BUILD"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
+echo "→ Building the Obsidian plugin the app installs…"
+PLUGIN="$ROOT/integrations/obsidian"
+(cd "$PLUGIN" && npm ci --silent && npm run build --silent)
+
 echo "→ Bundling self-contained local service…"
 "$BUILDER_VENV/bin/pyinstaller" \
   --noconfirm \
@@ -51,6 +55,9 @@ echo "→ Bundling self-contained local service…"
   --name onyx-server \
   --paths "$ROOT/src" \
   --add-data "$ROOT/static:static" \
+  --add-data "$PLUGIN/manifest.json:obsidian-plugin" \
+  --add-data "$PLUGIN/main.js:obsidian-plugin" \
+  --add-data "$PLUGIN/styles.css:obsidian-plugin" \
   --collect-all markdown_it \
   --collect-all uvicorn \
   --collect-all pypdf \

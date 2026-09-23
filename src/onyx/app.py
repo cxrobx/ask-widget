@@ -45,7 +45,7 @@ from .prompts import append_system_for, build_handoff_prompt, build_user_prompt
 from .providers import find_claude, find_codex, provider_catalogs, provider_status
 from .storage import Storage
 from .vault_ui import vault_page
-from . import handoff, markdown_theme, search, sidebar_theme, vault, vault_look, viewer
+from . import first_run, handoff, markdown_theme, search, sidebar_theme, vault, vault_look, viewer
 from . import __version__
 
 logger = logging.getLogger("onyx.app")
@@ -301,6 +301,8 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.vault = vault.VaultCache(ttl=5.0)
     # ⌘P's passages: vault-mcp's index, read where it lies (search.py).
     app.state.passages = search.PassageIndex(search.index_path(), ollama=search.ollama_url())
+    if config.first_run:
+        first_run.adopt_folders(storage, model_default=config.model)
     _register_vault_root(app)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENT)
     app.state.recent_folders = [str(config.default_folder)]
@@ -1491,6 +1493,45 @@ def create_app(config: AppConfig) -> FastAPI:
             probe=probe,
         )
         return JSONResponse(result)
+
+    def setup_state() -> dict:
+        settings = app.state.storage.settings(model_default=config.model)
+        root = _vault_root(app)
+        artifacts = _vault_root(app, "html")
+        return {
+            "ok": True,
+            "dismissed": bool(settings.get("setup_dismissed")),
+            "vault": {"ok": root is not None, "path": str(root) if root else str(settings.get("vault_root") or "")},
+            "artifacts": {"ok": artifacts is not None, "path": str(artifacts) if artifacts
+                          else str(settings.get("html_vault_root") or "")},
+            "plugin": first_run.plugin_status(root),
+            "theme": {"ok": root is not None and app.state.storage.markdown_theme(root) is not None},
+        }
+
+    @app.get("/api/setup")
+    async def setup_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        return JSONResponse(await asyncio.to_thread(setup_state), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/setup/obsidian-plugin")
+    async def install_obsidian_plugin_api(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict) or body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        root = _vault_root(app)
+        if root is None:
+            return JSONResponse({"ok": False, "error": "Choose your Obsidian vault first."}, status_code=400)
+        try:
+            await asyncio.to_thread(first_run.install_plugin, root)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse(await asyncio.to_thread(setup_state))
 
     @app.post("/api/position")
     async def update_position_api(request: Request):

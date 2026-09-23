@@ -23,6 +23,9 @@ class AppConfig:
     port: int = 8899
     allow_any: bool = False
     data_dir: Path | None = None
+    # Adopt a vault and create the Artifacts folder on a new Mac (first_run.adopt_folders). Only the real entry
+    # point turns it on, so a test's app never creates folders in the home directory.
+    first_run: bool = False
     # Per-server random secret, baked into ask.js at serve time and required in
     # the /ask body. Defense-in-depth behind the Origin + Host checks.
     token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
