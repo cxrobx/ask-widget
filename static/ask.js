@@ -4,7 +4,8 @@
  *   <script src="http://localhost:8899/ask.js"></script>
  *
  * Highlight text, then use the nearby Ask button or right-click for ELI5 /
- * Prove it / Ask a question. Each answer
+ * Prove it / Ask a question. Right-click the page without a selection to ask
+ * about the page. Each answer
  * streams from a subscription-backed provider CLI on the local server with full context of a
  * folder you point it at. Single self-contained file (no CDN/deps): it injects
  * its own CSS, renders Markdown with a built-in renderer, and builds all DOM
@@ -25,6 +26,7 @@
 
   var MAX_SEL = 4000;
   var MAX_CTX = 600;
+  var MAX_PAGE_CTX = 4000;
   var PANEL_W = 380;
 
   // ---- state ----
@@ -35,6 +37,7 @@
   var appearanceTheme = 'system';
   var vaultLook = null;  // Match vault appearance: {mode, reader_css} while the app wears the vault
   var sel = null;              // { text, context, rect }
+  var rightClickSelection = null; // whether the press began on an existing selection
   var abort = null;            // AbortController for the active stream
   var activeAction = null;     // 'eli5' | 'prove' | 'ask'
   var userPinned = false;      // user dragged/resized the panel → stop auto-positioning
@@ -396,6 +399,21 @@
     };
   }
 
+  function pageContext() {
+    var root = document.querySelector('main') || document.body;
+    var walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var parts = [], length = 0, node;
+    while ((node = walk.nextNode()) && length < MAX_PAGE_CTX) {
+      var parent = node.parentElement;
+      if (!parent || parent.closest('.askw-root,script,style,template,noscript,[hidden]')) continue;
+      var part = (node.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!part) continue;
+      parts.push(part);
+      length += part.length + 1;
+    }
+    return parts.join(' ').slice(0, MAX_PAGE_CTX);
+  }
+
   // ============================================================ build DOM
   function build() {
     // --- automatic selection affordance ---
@@ -471,12 +489,15 @@
       if (menuMoved) { e.preventDefault(); e.stopPropagation(); }
     }, true);
     menuEl.addEventListener('keydown', function (e) {
-      var items = Array.prototype.slice.call(menuEl.querySelectorAll('.askw-item'));
+      var items = Array.prototype.slice.call(menuEl.querySelectorAll('.askw-item')).filter(function (item) {
+        return item.style.display !== 'none';
+      });
       var index = items.indexOf(document.activeElement);
       if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation(); hideMenu();
-        if (sel) { showTrigger(sel); triggerEl.focus(); }
+        if (sel && sel.text) { showTrigger(sel); triggerEl.focus(); }
       } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+        if (!items.length) return;
         e.preventDefault();
         if (e.key === 'Home') index = 0;
         else if (e.key === 'End') index = items.length - 1;
@@ -642,15 +663,20 @@
     triggerEl.style.display = 'none';
     triggerEl.setAttribute('aria-hidden', 'true');
   }
-  function showMenu(x, y) {
+  function showMenu(x, y, pageAsk) {
     hideTrigger();
-    askWrap.classList.remove('open');
+    askWrap.classList.toggle('open', !!pageAsk);
+    menuEl.querySelectorAll('.askw-item').forEach(function (item) { item.style.display = pageAsk ? 'none' : ''; });
+    menuEl.setAttribute('aria-label', pageAsk ? 'Ask about this page' : 'Ask about selected text');
+    askInput.setAttribute('aria-label', pageAsk ? 'Question about this page' : 'Question about the highlighted text');
+    askInput.placeholder = pageAsk ? 'Ask about this page…' : 'Ask about the highlighted text…';
     askInput.value = '';
     menuEl.style.display = 'block';
     menuEl.setAttribute('aria-hidden', 'false');
     placeMenu(x, y);
     var firstItem = menuEl.querySelector('.askw-item');
-    if (firstItem) firstItem.focus();
+    if (pageAsk) askInput.focus();
+    else if (firstItem) firstItem.focus();
   }
   // Put the menu's top-left corner at (x, y), kept whole inside the window.
   function placeMenu(x, y) {
@@ -677,7 +703,7 @@
   function openPanel(action) {
     activeAction = action;
     panelTitle.textContent = EYEBROW[action] || 'Answer';
-    panelSel.textContent = sel ? '“' + sel.text + '”' : '';
+    panelSel.textContent = sel ? (sel.text ? '“' + sel.text + '”' : 'About this page') : '';
     panelTools.innerHTML = '';
     panelBody.innerHTML = '';
     stopBtn.style.display = 'none';
@@ -964,7 +990,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        folder: folder, action: lastAction, selection: sel.text,
+        folder: folder, action: lastAction, selection: sel.text, context: sel.context,
         question: lastQuestion, answer: lastAnswer, provider: serverConfig.provider, mode: copy ? 'copy' : 'open', token: TOKEN
       })
     }).then(function (r) { return r.json(); }).then(function (d) {
@@ -1393,10 +1419,11 @@
 
   function loadSelectionHistory() {
     if (!sel) return;
-    fetch(SERVER + '/api/history?source=' + encodeURIComponent(documentSource()) + '&selection=' + encodeURIComponent(sel.text) + '&limit=10')
+    fetch(SERVER + '/api/history?source=' + encodeURIComponent(documentSource()) +
+      (sel.text ? '&selection=' + encodeURIComponent(sel.text) : '&page_only=1') + '&limit=10')
       .then(function (r) { return r.json(); }).then(function (d) {
         var items = d.conversations || [];
-        if (!items.length) { toast('No saved answers for this passage yet.'); return; }
+        if (!items.length) { toast(sel.text ? 'No saved answers for this passage yet.' : 'No saved page questions yet.'); return; }
         panelTitle.textContent = 'Saved history';
         panelBody.innerHTML = '';
         items.forEach(function (item) {
@@ -1445,7 +1472,7 @@
       var q = document.createElement('span'); q.className = 'askw-chats-q';
       q.textContent = item.question || CHAT_LABEL[item.action] || 'Question';
       var passage = document.createElement('span'); passage.className = 'askw-chats-sel';
-      passage.textContent = '“' + String(item.selection || '').replace(/\s+/g, ' ').trim() + '”';
+      passage.textContent = item.selection ? '“' + String(item.selection).replace(/\s+/g, ' ').trim() + '”' : 'About this page';
       var meta = document.createElement('span'); meta.className = 'askw-chats-meta';
       meta.textContent = [ago(item.started_at), item.provider || 'claude', item.model].filter(Boolean).join(' · ');
       row.appendChild(q); row.appendChild(passage); row.appendChild(meta);
@@ -1925,15 +1952,34 @@
     });
 
     document.addEventListener('contextmenu', function (e) {
-      if (isOurs(e.target)) return;              // allow native menu inside our UI
-      var captured = captureFromSelection();
-      if (!captured) { hideMenu(); hideTrigger(); return; } // no selection -> native menu
+      if (isOurs(e.target)) { rightClickSelection = null; return; } // native menu inside our UI
+      var captured = rightClickSelection === false ? null : captureFromSelection();
+      rightClickSelection = null;
+      if (!captured) {
+        // Keep the browser's controls on authored links, media, and editable fields.
+        if (e.target.closest('a,button,input,textarea,select,img,video,audio,iframe,[contenteditable],[role="button"]')) {
+          hideMenu(); hideTrigger(); return;
+        }
+        window.getSelection().removeAllRanges();
+        sel = { text: '', context: pageContext(), rect: { left: e.clientX, right: e.clientX,
+          top: e.clientY, bottom: e.clientY, width: 0, height: 0 }, page: null };
+        e.preventDefault();
+        showMenu(e.clientX, e.clientY, true);
+        return;
+      }
       sel = captured;
       e.preventDefault();
       showMenu(e.clientX, e.clientY);
     });
 
     document.addEventListener('mousedown', function (e) {
+      if (e.button === 2 || (e.button === 0 && e.ctrlKey)) {
+        var current = window.getSelection();
+        var rects = current && !current.isCollapsed && current.rangeCount ? current.getRangeAt(0).getClientRects() : [];
+        rightClickSelection = Array.prototype.some.call(rects, function (r) {
+          return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        });
+      }
       if (isOurs(e.target)) return;
       hideMenu();
       hideTrigger();

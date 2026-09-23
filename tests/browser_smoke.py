@@ -594,6 +594,61 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_right_click_without_selection_opens_page_question(self) -> None:
+        prompts: list[str] = []
+
+        async def short_stream(*args, **kwargs):
+            prompts.append(args[1])
+            yield _sse("token", {"text": "A guide about the local server."})
+            yield _sse("done", {"elapsed_ms": 5})
+
+        errors: list[str] = []
+        with patch("onyx.app.stream_answer", short_stream), sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1100, "height": 640})
+                    page.on("pageerror", lambda error: errors.append(f"{engine}: {error}"))
+                    query = urllib.parse.urlencode({"src": str(self.document), "folder": str(self.root)})
+                    page.goto(f"{self.base_url}/view?{query}", wait_until="networkidle")
+                    page.locator("main").click(button="right", position={"x": 20, "y": 20})
+                    menu = page.get_by_role("dialog", name="Ask about this page")
+                    expect(menu).to_be_visible()
+                    expect(menu.get_by_role("button", name="ELI5")).to_be_hidden()
+                    field = menu.get_by_role("textbox", name="Question about this page")
+                    expect(field).to_be_focused()
+                    field.press("Escape")
+                    expect(menu).to_be_hidden()
+                    expect(page.get_by_role("button", name="Ask about the selected text")).to_be_hidden()
+                    page.locator("main").click(button="right", position={"x": 20, "y": 20})
+                    field = page.get_by_role("textbox", name="Question about this page")
+                    field.fill("What is this page about?")
+                    field.press("Enter")
+                    panel = page.get_by_role("dialog", name="Onyx answer")
+                    expect(panel).to_have_attribute("aria-busy", "false", timeout=15000)
+                    expect(panel.locator(".askw-selq")).to_have_text("About this page")
+                    self.assertIn("Question about this document", prompts[-1])
+                    self.assertIn("Select this passage to ask a question", prompts[-1])
+                    self.assertNotIn("Highlighted passage:", prompts[-1])
+                    panel.get_by_role("button", name="Close answer").click()
+                    paragraph = page.locator("main p").first
+                    paragraph.select_text()
+                    selected = page.evaluate("""() => { const r=getSelection().getRangeAt(0).getClientRects()[0];
+                        return {x:r.left+r.width/2, y:r.top+r.height/2} }""")
+                    page.mouse.click(selected["x"], selected["y"], button="right")
+                    selected_menu = page.get_by_role("dialog", name="Ask about selected text")
+                    expect(selected_menu.get_by_role("button", name="ELI5")).to_be_visible()
+                    expect(selected_menu.get_by_role("textbox", name="Question about the highlighted text")).to_be_hidden()
+                    interactive = urllib.parse.urlencode({"src": str(self.interactive_document), "folder": str(self.root)})
+                    page.goto(f"{self.base_url}/view?{interactive}", wait_until="networkidle")
+                    page.locator("#state").click(button="right")
+                    expect(page.get_by_role("textbox", name="Question about this page")).to_be_visible()
+                    page.keyboard.press("Escape")
+                    page.locator("#level").click(button="right")
+                    expect(page.get_by_role("dialog", name="Ask about this page")).to_be_hidden()
+                    browser.close()
+        self.assertEqual(errors, [])
+
     def test_ask_menu_moves_by_dragging_it(self) -> None:
         # The menu stayed where it opened, over the passage it asks about. Both
         # engines: the app is WebKit.

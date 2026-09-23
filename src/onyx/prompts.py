@@ -1,8 +1,8 @@
 """Server-side prompt construction.
 
 Two halves per request:
-  * the **user prompt** (``build_user_prompt``) — the highlighted passage, its
-    surrounding context, and the task; and
+  * the **user prompt** (``build_user_prompt``) — the highlighted passage or
+    page context, and the task; and
   * the **provider instruction** (``append_system_for``) — a per-action
     instruction passed to Claude as an appended system prompt and to Codex as a
     clearly delimited instruction block.
@@ -11,8 +11,8 @@ Two halves per request:
 from __future__ import annotations
 
 SHARED_PREAMBLE = (
-    "You are a reading companion answering a question about a passage the user "
-    "highlighted in a document they are reading. A context folder's CLAUDE.md and "
+    "You are a reading companion answering a question about a document the user "
+    "is reading, sometimes about a highlighted passage. A context folder's CLAUDE.md and "
     "files are available to you through the Read, Grep, and Glob tools. Be concise "
     "and answer in plain Markdown (no raw HTML)."
 )
@@ -94,6 +94,7 @@ def build_handoff_prompt(
     selection: str,
     question: str | None = None,
     answer: str | None = None,
+    context: str | None = None,
 ) -> str:
     """Seed prompt for a dedicated provider session scoped to ``folder``."""
     from pathlib import Path  # local import keeps module import-light
@@ -104,15 +105,14 @@ def build_handoff_prompt(
     q = (question or "").strip()
 
     lines = [
-        f"I was reading a document and highlighted a passage. Continue with me in a dedicated "
+        f"I was reading a document and {'highlighted a passage' if sel else 'asked about the page'}. Continue with me in a dedicated "
         f"session grounded in the **{name}** folder — you're running inside it, so its CLAUDE.md "
         f"and files are available to you (Read/Grep/Glob).",
-        "",
-        "Highlighted passage:",
-        '"""',
-        sel,
-        '"""',
     ]
+    if sel:
+        lines += ["", "Highlighted passage:", '"""', sel, '"""']
+    elif context:
+        lines += ["", "Page text (excerpt):", '"""', context[:4000], '"""']
     if action == "ask" and q:
         lines += ["", f"My question was: {q}"]
     else:
@@ -169,9 +169,12 @@ def build_user_prompt(
         if document_page:
             location += f" (page {document_page})"
         blocks.append(location)
-    blocks.append('Highlighted passage:\n"""\n' + sel + '\n"""')
-    if ctx and ctx != sel:
-        blocks.append('Surrounding text (for reference only):\n"""\n' + ctx + '\n"""')
+    if sel:
+        blocks.append('Highlighted passage:\n"""\n' + sel + '\n"""')
+        if ctx and ctx != sel:
+            blocks.append('Surrounding text (for reference only):\n"""\n' + ctx + '\n"""')
+    elif ctx:
+        blocks.append('Page text (excerpt):\n"""\n' + ctx + '\n"""')
 
     convo = _conversation_block(history)
     if convo:
@@ -187,7 +190,9 @@ def build_user_prompt(
         )
     elif action == "ask":
         q = (question or "").strip()
-        label = "My follow-up question: " if convo else "Question about the highlighted passage: "
+        label = "My follow-up question: " if convo else (
+            "Question about the highlighted passage: " if sel else "Question about this document: "
+        )
         blocks.append(label + q)
 
     return "\n\n".join(blocks)

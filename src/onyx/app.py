@@ -761,11 +761,12 @@ def create_app(config: AppConfig) -> FastAPI:
         return JSONResponse({"ok": True, **data}, headers=cors(request.headers.get("origin")))
 
     @app.get("/api/history")
-    async def history(request: Request, source: str, selection: str = "", limit: int = 20):
+    async def history(request: Request, source: str, selection: str = "", limit: int = 20, page_only: bool = False):
         if denied := api_forbidden(request):
             return denied
         items = app.state.storage.recent_conversations(
-            limit=limit, source=source[:4000], selection=selection[:MAX_SELECTION] or None
+            limit=limit, source=source[:4000],
+            selection="" if page_only else selection[:MAX_SELECTION] or None,
         )
         return JSONResponse(
             {"ok": True, "conversations": items, "document": app.state.storage.document(source)},
@@ -1547,6 +1548,7 @@ def create_app(config: AppConfig) -> FastAPI:
             body.get("selection") or "",
             body.get("question") or "",
             body.get("answer") or "",
+            body.get("context") or "",
         )
         if body.get("mode") == "copy":
             return reply({"ok": True, "prompt": prompt})
@@ -1580,7 +1582,8 @@ def create_app(config: AppConfig) -> FastAPI:
             return err_stream("Unknown action.", origin)
 
         selection = (body.get("selection") or "").strip()
-        if not selection:
+        document_source = str(body.get("document_source") or "")[:4000] or None
+        if not selection and (action != "ask" or not document_source):
             return err_stream("No text was selected.", origin)
         selection = selection[:MAX_SELECTION]
         context = (body.get("context") or "")[:MAX_CONTEXT]
@@ -1604,7 +1607,6 @@ def create_app(config: AppConfig) -> FastAPI:
         _remember_folder(app, str(folder))
 
         history = _sanitize_history(body.get("history"))
-        document_source = str(body.get("document_source") or "")[:4000] or None
         document_title = str(body.get("document_title") or "")[:500] or None
         try:
             document_page = int(body.get("document_page")) if body.get("document_page") else None

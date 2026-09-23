@@ -158,6 +158,11 @@ Then:
 5. Ask a follow-up, open a citation, copy the answer, view prior answers for the
    selection, or hand the conversation to the selected provider in a terminal.
 
+To ask about the page without selecting a passage, right-click its text or blank
+space. The question box opens directly, using an excerpt of the page and its
+source as context. Links, media, and editable fields keep their usual
+right-click menus.
+
 **Prove it** asks the selected provider to verify the passage against the selected folder and
 return a Supported, Partially supported, Not supported, or No evidence verdict.
 

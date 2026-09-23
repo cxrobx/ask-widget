@@ -582,7 +582,7 @@ class Storage:
         if source:
             clauses.append("document_source=?")
             params.append(source)
-        if selection:
+        if selection is not None:
             clauses.append("selection_hash=?")
             params.append(selection_hash(selection))
         if provider:

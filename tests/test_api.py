@@ -211,6 +211,40 @@ class ApiTests(unittest.TestCase):
                 self.assertIs(seen["web"], enabled)
                 self.assertEqual("search the web" in seen["append_system"], enabled)
 
+    def test_page_question_without_selection_uses_page_context_and_saves_history(self) -> None:
+        prompts = []
+
+        async def fake_stream(*args, **kwargs):
+            prompts.append(args[1])
+            yield _sse("token", {"text": "It describes the local server."})
+            yield _sse("done", {"elapsed_ms": 1})
+
+        body = {
+            "token": self.config.token,
+            "action": "ask",
+            "selection": "",
+            "context": "Guide: The server is local.",
+            "question": "What is this page about?",
+            "document_source": str(self.document),
+            "document_title": "Guide",
+            "folder": str(self.root),
+        }
+        with patch("onyx.app.stream_answer", fake_stream):
+            response = self.client.post("/ask", json=body)
+        self.assertIn("event: done", response.text)
+        self.assertIn("Page text (excerpt):", prompts[0])
+        self.assertIn("Question about this document: What is this page about?", prompts[0])
+        self.assertNotIn("Highlighted passage:", prompts[0])
+
+        page_asks = self.client.get("/api/history", params={"source": str(self.document), "page_only": 1})
+        self.assertEqual(len(page_asks.json()["conversations"]), 1)
+        self.assertEqual(page_asks.json()["conversations"][0]["selection"], "")
+
+        rejected = self.client.post("/ask", json={**body, "action": "prove"})
+        self.assertIn("No text was selected", rejected.text)
+        rejected = self.client.post("/ask", json={**body, "document_source": ""})
+        self.assertIn("No text was selected", rejected.text)
+
     def test_stream_is_traced_and_saved(self) -> None:
         async def fake_stream(*args, **kwargs):
             yield _sse("tool_trace", {"tool": "Read", "input": {"file_path": "src/app.py"}})
