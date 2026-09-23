@@ -34,6 +34,34 @@ private let baseRGB: (light: [Double], dark: [Double]) = ([247, 247, 247], [24, 
 private let appearanceDefaultsKey = "appearanceTheme"
 /// The ground the shell last gave the glass: the first paint at launch, before any page has spoken.
 private let launchBaseDefaultsKey = "launchBaseRGB"
+/// `defaults write com.cx.onyx customIcon -bool false` keeps the shipped icon (and removes the custom one).
+private let customIconDefaultsKey = "customIcon"
+
+/// Gives the app the transparent gem as its custom icon, the one Finder's Get Info paste sets.
+///
+/// The shipped icon (Assets.car) is the gem on a dark square, because macOS 26 draws every
+/// bundle icon as a rounded square and puts a free-standing one in a grey square of its own.
+/// A custom icon overrides that on every macOS, so the gem stands alone again. It is set on the
+/// installed app after Gatekeeper has opened it, never in the download: it writes `Icon\r` and a
+/// Finder-info attribute into the bundle, which `codesign --verify` then reports, as it does for any
+/// custom app icon. When the bundle isn't writable (a shared /Applications, App Translocation), the
+/// call fails and the dark square stays: that is the fallback. An update replaces the bundle and
+/// its first launch sets the icon again.
+private func adoptCustomIcon() -> String {
+    let bundle = Bundle.main.bundleURL
+    guard bundle.pathExtension == "app" else { return "not an app bundle" }
+    let marker = bundle.appendingPathComponent("Icon\r")
+    let present = FileManager.default.fileExists(atPath: marker.path)
+    if UserDefaults.standard.object(forKey: customIconDefaultsKey) as? Bool == false {
+        if present { NSWorkspace.shared.setIcon(nil, forFile: bundle.path, options: []) }
+        return present ? "removed" : "off"
+    }
+    guard let icns = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+          let gem = NSImage(contentsOf: icns) else { return "no AppIcon.icns" }
+    NSApp.applicationIconImage = gem
+    if present { return "already set" }
+    return NSWorkspace.shared.setIcon(gem, forFile: bundle.path, options: []) ? "set" : "couldn't set; keeping the shipped icon"
+}
 
 private func srgb(_ components: [Double]) -> NSColor {
     NSColor(
@@ -302,6 +330,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         installKeyboardShortcuts()
         buildLoadingWindow()
         beginStartup()
+        DispatchQueue.main.async { [weak self] in
+            // The system log too: onyx.log is open only when this app started the service itself.
+            let outcome = adoptCustomIcon()
+            NSLog("Onyx custom icon: %@", outcome)
+            self?.writeLog("Custom icon: \(outcome)\n")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

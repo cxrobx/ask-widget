@@ -8,9 +8,6 @@
 #   ONYX_NOTARY_PROFILE="notary-profile" ONYX_SIGN_IDENTITY="…" ./launcher/build-app.sh
 # Otherwise a local build signs with the keychain's Apple Development identity,
 # or ad hoc when there is none (as in CI). ONYX_SIGN_IDENTITY=- forces ad hoc.
-#
-# App icon: a release build (a Developer ID identity) carries the macOS 26 icon, the gem
-# on a dark square; a local build keeps the transparent gem. ONYX_ICON=tahoe|gem overrides.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,9 +21,6 @@ SERVER_DIST="$BUILD/server-dist"
 BUILD_LOCK="$ROOT/requirements-build.lock"
 SIGN_IDENTITY="${ONYX_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${ONYX_NOTARY_PROFILE:-}"
-if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then DEFAULT_ICON=tahoe; else DEFAULT_ICON=gem; fi
-ICON="${ONYX_ICON:-$DEFAULT_ICON}"
-case "$ICON" in tahoe|gem) ;; *) echo "ONYX_ICON must be tahoe or gem." >&2; exit 1 ;; esac
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DIR/Info.plist")"
 BUILD_ARCH="$(uname -m)"
 
@@ -95,16 +89,10 @@ swiftc -framework Cocoa -framework WebKit -framework UniformTypeIdentifiers -O \
 
 echo "→ Assembling bundle…"
 cp "$DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
-# One bundle can't have both icons: any Assets.car replaces AppIcon.icns on every macOS
-# (launcher/icon/compile.sh). "tahoe" is the gem on a dark square, Liquid Glass on 26+ and
-# flat before it, compiled on macOS 26 by .github/workflows/icon.yml. "gem" is the
-# transparent gem alone, which macOS 26 shows inside a grey square of its own.
-if [ "$ICON" = tahoe ]; then
-  cp "$DIR/icon/Assets.car" "$BUNDLE/Contents/Resources/Assets.car"
-else
-  /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$BUNDLE/Contents/Info.plist"
-fi
-echo "  App icon: $ICON"
+# The shipped icon: the gem on a dark square, Liquid Glass on 26+ and flat before it, compiled
+# on macOS 26 by .github/workflows/icon.yml (launcher/icon/compile.sh). It is the fallback: at
+# launch the app gives itself the transparent gem as a custom icon (adoptCustomIcon in Onyx.swift).
+cp "$DIR/icon/Assets.car" "$BUNDLE/Contents/Resources/Assets.car"
 
 echo "→ Signing…"
 if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then

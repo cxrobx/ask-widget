@@ -19,10 +19,10 @@ The build installs `/Applications/Onyx.app`, refreshes macOS Services, and
 also produces:
 
 ```text
-launcher/build/Onyx-0.6.2-macOS-arm64.zip
-launcher/build/Onyx-0.6.2-macOS-arm64.zip.sha256
-launcher/build/Onyx-0.6.2-macOS-arm64.dmg
-launcher/build/Onyx-0.6.2-macOS-arm64.dmg.sha256
+launcher/build/Onyx-0.6.3-macOS-arm64.zip
+launcher/build/Onyx-0.6.3-macOS-arm64.zip.sha256
+launcher/build/Onyx-0.6.3-macOS-arm64.dmg
+launcher/build/Onyx-0.6.3-macOS-arm64.dmg.sha256
 launcher/build/Open-in-Onyx.alfredworkflow
 ```
 
