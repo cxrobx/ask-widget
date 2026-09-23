@@ -27,6 +27,17 @@ private struct ServerLaunch {
     let label: String
 }
 
+private struct DockRecentItem: Decodable {
+    let title: String
+    let path: String
+    let folder: String
+}
+
+private struct DockRecentResponse: Decodable {
+    let artifacts: [DockRecentItem]
+    let notes: [DockRecentItem]
+}
+
 /// Each theme's opaque window colour, as sRGB 0–255. Must track `--bg-primary`
 /// in `launcher_ui.py`: this paints the window before any page exists, and the
 /// page sends the same triple whenever glass goes off.
@@ -299,6 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     private let glass = WindowGlass()
     private var swipeCover: SwipeCover?
     private var swipeCoverDeadline: DispatchWorkItem?
+    private var dockArtifacts: [DockRecentItem] = []
+    private var dockNotes: [DockRecentItem] = []
+    private var dockRefreshTimer: Timer?
+    private var dockRefreshInFlight = false
     private let zoomLevels: [CGFloat] = [
         0.50, 0.67, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00,
     ]
@@ -340,6 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
     func applicationWillTerminate(_ notification: Notification) {
         startupID = nil
+        dockRefreshTimer?.invalidate()
         if let keyDownMonitor { NSEvent.removeMonitor(keyDownMonitor) }
         keyDownMonitor = nil
         stopOwnedServer()
@@ -355,6 +371,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     ) -> Bool {
         if !hasVisibleWindows { window?.makeKeyAndOrderFront(nil) }
         return true
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        refreshDockRecents()
+        let menu = NSMenu(title: "Onyx")
+        menu.autoenablesItems = false
+        menu.addItem(dockAction("Open Onyx", symbol: "rectangle.on.rectangle", action: #selector(showOnyx)))
+        menu.addItem(.separator())
+        addDockSection("RECENT ARTIFACTS", symbol: "curlybraces.square", items: dockArtifacts, to: menu)
+        menu.addItem(.separator())
+        addDockSection("RECENT NOTES", symbol: "note.text", items: dockNotes, to: menu)
+        menu.addItem(.separator())
+        menu.addItem(dockAction("Search…", symbol: "magnifyingglass", action: #selector(openSearch)))
+        menu.addItem(dockAction("Open Document…", symbol: "doc.badge.plus", action: #selector(openDocument)))
+        return menu
+    }
+
+    private func dockAction(_ title: String, symbol: String, action: Selector) -> NSMenuItem {
+        let item = menuItem(title, action, "")
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        return item
+    }
+
+    private func addDockSection(_ title: String, symbol: String, items: [DockRecentItem], to menu: NSMenu) {
+        let heading = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        menu.addItem(heading)
+        if items.isEmpty {
+            let empty = NSMenuItem(title: "No recent items", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for recent in items {
+            let item = dockAction(recent.title, symbol: symbol, action: #selector(openDockDocument(_:)))
+            item.representedObject = recent.path
+            item.toolTip = recent.folder.isEmpty ? recent.path : "\(recent.folder) · \(recent.path)"
+            menu.addItem(item)
+        }
+    }
+
+    private func refreshDockRecents() {
+        guard webView != nil, !dockRefreshInFlight,
+              let url = URL(string: "\(baseURL)/api/dock/recent") else { return }
+        dockRefreshInFlight = true
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            let recent = (response as? HTTPURLResponse)?.statusCode == 200
+                ? data.flatMap { try? JSONDecoder().decode(DockRecentResponse.self, from: $0) }
+                : nil
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.dockRefreshInFlight = false
+                if let recent {
+                    self.dockArtifacts = recent.artifacts
+                    self.dockNotes = recent.notes
+                }
+            }
+        }.resume()
+    }
+
+    @objc private func showOnyx() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openDockDocument(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        openDocumentURL(URL(fileURLWithPath: path))
+        refreshDockRecents()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -875,6 +963,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        refreshDockRecents()
+        dockRefreshTimer?.invalidate()
+        dockRefreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshDockRecents()
+        }
 
         if !providerAvailable {
             writeLog("WARNING: neither claude nor codex was found by the local service.\n")

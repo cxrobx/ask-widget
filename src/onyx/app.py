@@ -762,6 +762,32 @@ def create_app(config: AppConfig) -> FastAPI:
         await asyncio.to_thread(_tag_vaults, data["conversations"], "document_source")
         return JSONResponse({"ok": True, **data}, headers=cors(request.headers.get("origin")))
 
+    @app.get("/api/dock/recent")
+    async def dock_recent(request: Request):
+        if denied := api_forbidden(request):
+            return denied
+        # The Dock only needs a handful of viewed vault pages. Keep this separate
+        # from Library search, which also returns conversation content.
+        documents = await asyncio.to_thread(app.state.storage.recent_documents, 100)
+        await asyncio.to_thread(_tag_vaults, documents, "source")
+        items: dict[str, list[dict[str, str]]] = {"html": [], "notes": []}
+        for document in documents:
+            kind = document.get("vault")
+            path = document.get("vault_path")
+            if kind not in items or not path or len(items[kind]) >= 4:
+                continue
+            if not Path(path).is_file():
+                continue
+            items[kind].append({
+                "title": str(document["title"]),
+                "path": str(document["source"]),
+                "folder": str(document.get("vault_folder") or ""),
+            })
+            if all(len(group) >= 4 for group in items.values()):
+                break
+        return JSONResponse({"ok": True, "artifacts": items["html"], "notes": items["notes"]},
+                            headers={**cors(request.headers.get("origin")), "Cache-Control": "no-store"})
+
     @app.get("/api/history")
     async def history(request: Request, source: str, selection: str = "", limit: int = 20, page_only: bool = False):
         if denied := api_forbidden(request):

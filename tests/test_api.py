@@ -556,6 +556,35 @@ class HtmlVaultApiTests(unittest.TestCase):
     def post(self, url: str, body: dict, token: bool = True):
         return self.client.post(url, json={**({"token": self.config.token} if token else {}), **body})
 
+    def test_dock_recents_include_only_viewed_artifacts_and_notes(self) -> None:
+        notes = self.base / "Notes"
+        notes.mkdir()
+        note = notes / "Field notes.md"
+        note.write_text("# Field notes\n", encoding="utf-8")
+        self.assertEqual(self.post("/api/settings", {"settings": {"vault_root": str(notes)}}).status_code, 200)
+        loose = self.context / "loose.md"
+        loose.write_text("# Loose\n", encoding="utf-8")
+        for source, title, kind in (
+            (self.guide / "index.html", "Who holds the plan", "html"),
+            (note, "Field notes", "markdown"),
+            (loose, "Loose", "markdown"),
+            (notes / "gone.md", "Gone", "markdown"),
+        ):
+            self.app.state.storage.upsert_document(
+                source=str(source), title=title, kind=kind, folder=str(source.parent)
+            )
+        response = self.client.get("/api/dock/recent")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.json()["artifacts"], [{
+            "title": "Who holds the plan", "path": str(self.guide / "index.html"),
+            "folder": "Architect/guides",
+        }])
+        self.assertEqual(response.json()["notes"], [{
+            "title": "Field notes", "path": str(note), "folder": "",
+        }])
+        self.assertEqual(self.client.get("/api/dock/recent", headers={"Origin": "https://evil.example"}).status_code, 403)
+
     def test_tree_search_and_shell_use_titles_and_the_html_kind(self) -> None:
         tree = self.client.get("/api/vault/tree", params={"vault": "html"}).json()
         self.assertTrue(tree["ok"])
