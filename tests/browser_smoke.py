@@ -1943,6 +1943,12 @@ class BrowserSmokeTests(unittest.TestCase):
 
             menu, items = page.get_by_role("menu"), page.get_by_role("menu").get_by_role("menuitem")
 
+            # The sidebar title is usable even when the note tree fills the scroll area.
+            page.locator(".brand-name").click(button="right")
+            expect(menu).to_have_attribute("aria-label", "Vault actions")
+            expect(items).to_have_text(["Reveal Current Note", "Collapse All"])
+            page.keyboard.press("Escape")
+
             def empty_space() -> None:
                 box = page.locator("#tree").bounding_box()
                 page.mouse.click(box["x"] + 20, box["y"] + box["height"] - 12, button="right")
@@ -1989,6 +1995,16 @@ class BrowserSmokeTests(unittest.TestCase):
             page.keyboard.press("Escape")
             page.locator(".vault-switch a", has_text="Library").click()
             page.locator("#tree li.group summary", has_text="Mine").wait_for()
+            page.locator("#tree .group-head", has_text="Notes").click(button="right")
+            expect(menu).to_have_attribute("aria-label", "Library actions")
+            expect(items).to_have_text(["Reveal Current Note", "Collapse All"])
+            page.keyboard.press("Escape")
+            # A gap still belongs to the tree even when its DOM target is a list item.
+            page.locator("#tree li.group").first.evaluate(
+                "e => e.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 150, clientY: 200}))"
+            )
+            expect(menu).to_be_visible()
+            page.keyboard.press("Escape")
             empty_space()
             menu.get_by_role("menuitem", name="Collapse All").click()
             expect(page.locator("#tree li.group > details[open]")).to_have_count(2)

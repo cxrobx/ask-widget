@@ -21,8 +21,8 @@ points a link at the frame of the tab showing (``tabs_ui.py``: each open tab
 reads in a frame of its own). The rest of the script builds the tree, keeps
 the highlight in sync with whatever the reader currently shows, drives the
 filter box, the right-click menus
-(``static/app-menu.js``: a row's Reveal in Finder and ⌥ Copy Path; the empty
-space below the rows carries what the tree itself does — Reveal Current Note
+(``static/app-menu.js``: a row's Reveal in Finder and ⌥ Copy Path; blank
+sidebar space and Library headings carry what the tree itself does — Reveal Current Note
 and Collapse All), and, in Artifacts, the add panel and reorganising: drag a
 row onto a folder, and the menu's New Folder, Rename, Pin to Top and Remove
 from Artifacts.
@@ -420,7 +420,7 @@ tree.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{{if
 function currentSrc(){{try{{const l=reader.contentWindow.location;if(!l||!l.href||l.href==='about:blank')return '';return new URLSearchParams(l.search).get('src')||''}}catch(e){{return ''}}}}
 function readerPage(){{try{{const h=reader.contentWindow.location.href;return h&&h!=='about:blank'?h:''}}catch(e){{return ''}}}}
 function highlight(src,block){{tree.querySelectorAll('a.active').forEach(a=>a.classList.remove('active'));if(!src)return;const a=tree.querySelector(`a[data-path="${{CSS.escape(src)}}"]`);if(!a)return;a.classList.add('active');let p=a.parentElement;while(p&&p!==tree){{if(p.tagName==='DETAILS'&&!p.open)p.open=true;p=p.parentElement}}a.scrollIntoView({{block:block||'nearest'}})}}
-// The two commands on the tree's empty space (the menu is further down). Reveal is the same walk the reader's own page
+// The tree menu's Reveal and Collapse commands (the menu is further down). Reveal is the same walk the reader's own page
 // changes take, asked for by hand and centred: after a Collapse All, or after the filter took the tree somewhere else.
 // It is offered only for a page this tree actually holds. Collapse All leaves Library's two headings open — shutting
 // those would hide both trees rather than fold them — and the rows' own `toggle` listener remembers the result.
@@ -673,10 +673,13 @@ document.addEventListener('keydown',e=>{{const typing=/^(INPUT|SELECT|TEXTAREA)$
 // MARK: row menu — the app's rendered menu (static/app-menu.js). The server says what a row really is (its real file, and
 // the link on the way); ⌥ turns each Reveal into a Copy. A mousedown while the answer is in flight means it came too late.
 let menuSeq=0; document.addEventListener('mousedown',()=>{{menuSeq++}},true);
-tree.addEventListener('contextmenu',async e=>{{const row=e.target.closest('#tree .file, #tree summary');if(!window.OnyxMenu)return;
-// The tree's empty space: what the tree itself can do — reveal the page being read, fold every folder, and, in
-// Artifacts, a new folder at the top level. The word follows the page's own vault, so an artifact is a Page.
-if(!row){{if(e.target.closest('#tree li'))return;e.preventDefault();const tgt=revealTarget(),rk=tgt?vaultOf(tgt):(HTML?'html':'notes');
+side.addEventListener('contextmenu',async e=>{{const inTree=tree.contains(e.target);
+// Blank sidebar chrome and gaps between rows belong to the tree menu too. Leave the switch, fields and buttons alone.
+if(!inTree&&e.target.closest('button, a, input, select, .vault-switch, .add-panel, #side-grip'))return;
+const row=e.target.closest('#tree .file, #tree summary:not(.group-head)');if(!window.OnyxMenu)return;
+// The tree's background (including Library's headings): reveal the page being read, fold every folder, and, in
+// Artifacts, make a new folder at the top level. The word follows the page's own vault, so an artifact is a Page.
+if(!row){{e.preventDefault();const tgt=revealTarget(),rk=tgt?vaultOf(tgt):(HTML?'html':'notes');
 const items=[{{id:'reveal-current',label:'Reveal Current '+(rk==='html'?'Page':'Note'),enabled:!!tgt}},{{id:'collapse-all',label:'Collapse All',enabled:!collapsed()}}];
 if(HTML&&rootOf('html'))items.push({{separator:true}},{{id:'new-folder',label:'New Folder'}});
 OnyxMenu.open({{items,x:e.clientX,y:e.clientY,label:VAULT.name+' actions',onSelect:id=>{{if(id==='reveal-current')revealCurrent();else if(id==='collapse-all')collapseAll();else if(id==='new-folder')newFolder('')}}}});return}}
