@@ -379,9 +379,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         menu.autoenablesItems = false
         menu.addItem(dockAction("Open Onyx", symbol: "rectangle.on.rectangle", action: #selector(showOnyx)))
         menu.addItem(.separator())
-        addDockSection("RECENT ARTIFACTS", symbol: "curlybraces.square", items: dockArtifacts, to: menu)
+        addDockSection("Recent Artifacts", symbol: "curlybraces.square", items: dockArtifacts, to: menu)
         menu.addItem(.separator())
-        addDockSection("RECENT NOTES", symbol: "note.text", items: dockNotes, to: menu)
+        addDockSection("Recent Notes", symbol: "note.text", items: dockNotes, to: menu)
         menu.addItem(.separator())
         menu.addItem(dockAction("Search…", symbol: "magnifyingglass", action: #selector(openSearch)))
         menu.addItem(dockAction("Open Document…", symbol: "doc.badge.plus", action: #selector(openDocument)))
