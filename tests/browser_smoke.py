@@ -3163,6 +3163,96 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_the_editor_saves_as_its_page_goes_and_can_take_the_version_on_disk(self) -> None:
+        # Two ways out of the editor that no other test takes. Typing and leaving at once (a sidebar click, a closed
+        # tab) sends the save as the page goes, before the pause autosave waits for. And when the note changed on disk
+        # under unsaved typing, "Use the one on disk" drops the typing for the disk's text and goes on from there.
+        filler = "".join(f"Paragraph {i}.\n\n" for i in range(5))
+        note, other = self.root / "leave.md", self.root / "elsewhere.md"
+        other.write_text("# Elsewhere\n", encoding="utf-8")
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    note.write_text(f"# Leave\n\n{filler}", encoding="utf-8")
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/?{urllib.parse.urlencode({'src': str(note)})}", wait_until="networkidle")
+                    frame = page.frame_locator("iframe[name=reader]")
+                    status = frame.locator(".askw-ed-status")
+
+                    # Typed, and the page left straight away: the save goes with it.
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+e")
+                    expect(status).to_have_text("Editing · Saved")
+                    frame.locator(".cm-line", has_text="Paragraph 2.").click(position={"x": 1, "y": 8})
+                    page.keyboard.type("Left at once. ")
+                    page.evaluate("src => { document.querySelector('iframe[name=reader]').src = '/view?src=' + encodeURIComponent(src) }", str(other))
+                    expect(frame.locator("main > h1", has_text="Elsewhere")).to_be_visible()
+                    for _ in range(50):
+                        if "Left at once. Paragraph 2." in note.read_text(encoding="utf-8"):
+                            break
+                        time.sleep(0.1)
+                    self.assertIn("\nLeft at once. Paragraph 2.\n", note.read_text(encoding="utf-8"))
+
+                    # Unsaved typing, the note changed on disk meanwhile, and the disk's version taken.
+                    page.evaluate("src => { document.querySelector('iframe[name=reader]').src = '/view?src=' + encodeURIComponent(src) }", str(note))
+                    expect(frame.locator("main > h1", has_text="Leave")).to_be_visible()
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+e")
+                    expect(status).to_have_text("Editing · Saved")
+                    frame.locator(".cm-line", has_text="Paragraph 4.").click(position={"x": 1, "y": 8})
+                    page.keyboard.type("Mine, to drop. ")
+                    disk = note.read_text(encoding="utf-8").replace("Paragraph 0.", "Paragraph zero, from Obsidian.")
+                    note.write_text(disk, encoding="utf-8")
+                    expect(frame.locator(".askw-ed-conflict")).to_be_visible(timeout=5000)
+                    frame.locator(".askw-ed-conflict button", has_text="Use the one on disk").click()
+                    expect(frame.locator(".askw-ed-conflict")).to_be_hidden()
+                    expect(frame.locator(".cm-line", has_text="Paragraph zero, from Obsidian.")).to_have_count(1)
+                    expect(frame.locator(".cm-line", has_text="Mine, to drop.")).to_have_count(0)
+                    expect(status).to_have_text("Editing · Saved")
+                    self.assertEqual(note.read_text(encoding="utf-8"), disk)
+                    # And typing goes on over the disk's version, not the dropped one.
+                    frame.locator(".cm-line", has_text="Paragraph 1.").click(position={"x": 1, "y": 8})
+                    page.keyboard.type("After. ")
+                    expect(status).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertEqual(note.read_text(encoding="utf-8"), disk.replace("Paragraph 1.", "After. Paragraph 1."))
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_live_reload_keeps_the_place_being_read(self) -> None:
+        # A note rewritten on disk (by Obsidian, an agent, a sync) reloads where it was being read, with nothing
+        # jumping on the way: the reload's own place wins over the remembered one (ask.js, reloadRestoring).
+        note = self.root / "reloading.md"
+        filler = "".join(f"Filler {i} of the note.\n\n" for i in range(80))
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    note.write_text(f"# Reloading\n\n{filler}", encoding="utf-8")
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/?{urllib.parse.urlencode({'src': str(note)})}", wait_until="networkidle")
+                    frame = page.frame_locator("iframe[name=reader]")
+                    expect(frame.locator("main > h1")).to_be_visible()
+                    page.frame(name="reader").evaluate("scrollTo(0, 1500)")
+                    time.sleep(1.2)  # the place is remembered, and the live-reload baseline taken
+                    note.write_text(note.read_text(encoding="utf-8").replace("Filler 3 ", "Filler three "), encoding="utf-8")
+                    expect(frame.locator("main > p", has_text="Filler three")).to_be_attached(timeout=12000)
+                    reader = page.frame(name="reader")
+                    # Taken at once and after the load settles: it never shows the top, or anywhere else, on the way.
+                    places = [reader.evaluate("scrollY")]
+                    reader.wait_for_load_state("load")
+                    time.sleep(0.5)
+                    places.append(page.frame(name="reader").evaluate("scrollY"))
+                    self.assertEqual(places, [1500, 1500])
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_the_reader_and_the_answer_panel_wear_the_vault_look(self) -> None:
         # Match vault appearance dresses the reader too: a text page takes the vault's reading styles and the answer
         # panel its palette, in the vault's mode whatever the app theme says; off, they are Onyx's own again, live.
