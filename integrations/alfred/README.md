@@ -12,11 +12,10 @@ Onyx** action to Alfred's Universal Actions panel.
 Every word typed must match. ↩ opens the pick in Onyx, ⌘C copies its path, ⌘Y
 previews it, and → offers Alfred's file actions.
 
-Build Onyx first, then double-click:
-
-```text
-launcher/build/Open-in-Onyx.alfredworkflow
-```
+Install it on any Mac by downloading
+[`Open-in-Onyx.alfredworkflow`](https://github.com/cxrobx/onyx/releases/latest/download/Open-in-Onyx.alfredworkflow)
+from the latest release and double-clicking it. From a checkout, build Onyx and
+double-click `launcher/build/Open-in-Onyx.alfredworkflow` instead.
 
 Everything opens by Onyx's bundle identifier, so the app must be installed but
 does not have to be running.

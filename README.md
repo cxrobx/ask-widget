@@ -50,6 +50,11 @@ each step:
 Setup stops opening on its own once every step passes, or after you press
 **Don't open Setup on launch**. It stays in Settings either way.
 
+If you use Alfred, download
+[`Open-in-Onyx.alfredworkflow`](https://github.com/cxrobx/onyx/releases/latest/download/Open-in-Onyx.alfredworkflow) from the same
+release and double-click it. It adds `onx` and `onxc` search and an **Open in
+Onyx** action; see [docs/integrations.md](docs/integrations.md#open-from-finder-or-alfred).
+
 To build the app yourself, or run the service from a checkout, see [docs/install.md](docs/install.md).
 
 Then open a document from **Library**, select a passage, right-click, and choose

@@ -9,8 +9,12 @@ Onyx** for HTML, Markdown, text, and PDF files. If the Service is hidden,
 enable it under **System Settings ▸ Keyboard ▸ Keyboard Shortcuts ▸ Services ▸
 Files and Folders**.
 
-For a first-class Alfred action, double-click
-`launcher/build/Open-in-Onyx.alfredworkflow` and approve the import. Then
+For a first-class Alfred action, download
+[`Open-in-Onyx.alfredworkflow`](https://github.com/cxrobx/onyx/releases/latest/download/Open-in-Onyx.alfredworkflow)
+from the latest release, double-click it, and approve the import. The link
+always points at the newest copy, so it is also the way to update the workflow.
+A build from source writes the same file to
+`launcher/build/Open-in-Onyx.alfredworkflow`. Then
 select a supported file in Alfred, open Universal Actions (right arrow by
 default), and choose **Open in Onyx**.
 

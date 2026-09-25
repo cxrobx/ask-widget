@@ -24,6 +24,7 @@ launcher/build/Onyx-0.6.3-macOS-arm64.zip.sha256
 launcher/build/Onyx-0.6.3-macOS-arm64.dmg
 launcher/build/Onyx-0.6.3-macOS-arm64.dmg.sha256
 launcher/build/Open-in-Onyx.alfredworkflow
+launcher/build/Open-in-Onyx.alfredworkflow.sha256
 ```
 
 Use `./launcher/build-app.sh --no-install` to build without replacing the

@@ -79,7 +79,10 @@ done
 iconutil -c icns "$ICONSET" -o "$BUNDLE/Contents/Resources/AppIcon.icns"
 
 echo "→ Packaging Alfred workflow…"
+# The name carries no version, so releases/latest/download/Open-in-Onyx.alfredworkflow is a
+# permanent link to the newest copy. zip adds to an existing archive, so start from nothing.
 ALFRED_WORKFLOW="$BUILD/Open-in-Onyx.alfredworkflow"
+rm -f "$ALFRED_WORKFLOW"
 /usr/bin/zip -j -q "$ALFRED_WORKFLOW" \
   "$ROOT/integrations/alfred/info.plist" "$ROOT/integrations/alfred/onyx_search.py" "$BUILD/icon.png"
 
@@ -168,6 +171,7 @@ fi
   cd "$BUILD"
   LC_ALL=C shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256"
   LC_ALL=C shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256"
+  LC_ALL=C shasum -a 256 "$(basename "$ALFRED_WORKFLOW")" > "$(basename "$ALFRED_WORKFLOW").sha256"
 )
 
 if [ "${1:-}" = "--no-install" ]; then

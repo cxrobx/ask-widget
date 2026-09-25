@@ -32,7 +32,10 @@ ONYX_NOTARY_PROFILE="notary-profile" \
 
 The build notarizes the ZIP, staples the app, then creates and notarizes a DMG
 with an Applications shortcut. It staples the DMG and writes a SHA-256 file for
-each download. The frozen Python service uses the build machine's architecture;
+each download. Attach the DMG, the ZIP, the Alfred workflow, and their `.sha256`
+files to the GitHub release. The Alfred workflow's name carries no version, so
+`releases/latest/download/Open-in-Onyx.alfredworkflow` always serves the newest
+copy, and the README links there. The frozen Python service uses the build machine's architecture;
 the arm64 release requires an Apple Silicon Mac.
 
 Without those variables, a local build signs with your keychain's Apple
