@@ -18,7 +18,8 @@ own pointer moves as the outline's edge is: an overlay strip would cover the con
 outline's toggle in the top-right corner. It goes a moment after the pointer leaves, unless it is in use — its list
 open, or focus inside it. Pinned (⌘⌥\\ or its pin), it is a band above the reader and the reader moves down under it.
 The title band of the app's window passes clicks to the page everywhere but the traffic lights (measured 2026-09-21),
-so a pill there takes its click, and the band's empty space drags the window.
+so a pill there takes its click, and the band's empty space drags the window. A pill whose title is cut widens under the
+pointer, pushing the others aside, and rolls a title still cut; the script's ``tab hover`` mark says why it is built so.
 
 The script runs inside the shell's ``<script>`` and leans on it: ``$``, ``esc``, ``store``, ``recall``, ``reader``
 (reassigned here), ``stage``, ``KIND``, ``VAULTS``, ``switchVault``, ``showHome``, ``empty``, ``home``, ``goHome``,
@@ -64,6 +65,13 @@ body.tabs-pinned .tab-group,body.tabs-still .tab-group,body.tabs-still #reader-p
 .tab{display:flex;align-items:center;flex:0 1 auto;gap:4px;width:180px;min-width:88px;height:26px;padding:0 3px 0 10px;border-radius:7px;color:rgb(var(--secondary));font-size:12px;font-weight:500;cursor:default;user-select:none;-webkit-user-select:none;transition:background-color .12s,color .12s}
 .tab:hover{background:rgb(var(--ink)/.05);color:rgb(var(--ink))} .tab[aria-selected=true]{background:rgb(var(--bg-elevated));color:rgb(var(--ink));font-weight:600;box-shadow:0 1px 2px rgb(0 0 0/.1)}
 .tab:focus-visible{outline:2px solid rgb(var(--accent));outline-offset:-2px} .tab-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* A cut title, hovered (tabHover in the script): the pills' widths are set there while the strip is held, and a title
+   still cut rolls to its end and back on the compositor, holding at each end, then glides home as the pill falls back. */
+#tab-strip.tabs-held .tab{flex:none} .tab-title.tab-rolling,.tab-title.tab-unrolling{text-overflow:clip}
+.tab-title.tab-rolling .tab-text,.tab-title.tab-unrolling .tab-text{display:inline-block;will-change:transform}
+.tab-title.tab-rolling .tab-text{animation:tab-roll var(--roll-dur,4s) ease-in-out infinite alternate}
+@keyframes tab-roll{0%,18%{transform:none}82%,100%{transform:translateX(var(--roll,0))}}
+@media(prefers-reduced-motion:reduce){.tab-title.tab-rolling .tab-text{animation:none}}
 .tab-x{display:grid;flex:none;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:5px;background:transparent;color:rgb(var(--faint));opacity:0;transition:opacity .12s}
 .tab:hover .tab-x,.tab[aria-selected=true] .tab-x{opacity:1} .tab-x:hover{background:rgb(var(--ink)/.1);color:rgb(var(--ink))} .tab-x svg{width:12px;height:12px}
 .tab-btn{display:grid;flex:none;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:7px;background:transparent;color:rgb(var(--secondary))}
@@ -119,15 +127,76 @@ document.addEventListener('click',e=>{const a=e.target instanceof Element?e.targ
 // MARK: tab bar — the pills, one per tab, the tab showing marked; + for a new one and ⌄ for the whole list.
 const tabBar=$('#tab-bar'),tabGroup=tabBar.querySelector('.tab-group'),tabStrip=$('#tab-strip'),tabPin=$('#tab-pin'),tabList=$('#tab-list');
 function tabLabel(t){return t.title||(t.src?t.src.split('/').pop():t.href?'Loading…':'New Tab')}
-function drawTabs(){const had=tabStrip.contains(document.activeElement);tabStrip.innerHTML=TABS.list.map(t=>{const on=t===TABS.active,l=esc(tabLabel(t));
-return `<div class=tab role=tab id=tab-${t.id} data-id=${t.id} aria-selected=${on} tabindex=${on?0:-1} title="${l}"><span class=tab-title>${l}</span><button class=tab-x type=button tabindex=-1 title="Close tab" aria-label="Close ${l}">${TAB_X}</button></div>`}).join('');
-fitTabs();if(had){const p=TABS.active&&document.getElementById('tab-'+TABS.active.id);if(p)p.focus()}}
+function drawTabs(){const had=tabStrip.contains(document.activeElement),ps=[...tabStrip.children],same=ps.length===TABS.list.length&&TABS.list.every((t,i)=>+ps[i].dataset.id===t.id),keep=same&&tabHover;tabsFree();
+// The same tabs (one brought forward, a title come in) are redrawn in place, never replaced: WebKit loses the hover of a
+// node replaced under the pointer and never tells the strip it left, so a pill clicked while wide stayed wide (2026-09-25).
+if(same)TABS.list.forEach((t,i)=>{const p=ps[i],on=t===TABS.active,l=tabLabel(t);p.setAttribute('aria-selected',on);p.tabIndex=on?0:-1;if(p.getAttribute('aria-label')===l)return;
+p.setAttribute('aria-label',l);if(!p.classList.contains('tab-wide'))p.title=l;p.querySelector('.tab-text').textContent=l;p.querySelector('.tab-x').setAttribute('aria-label','Close '+l)});
+else{tabHover=null;tabStrip.innerHTML=TABS.list.map(t=>{const on=t===TABS.active,l=esc(tabLabel(t));
+return `<div class=tab role=tab id=tab-${t.id} data-id=${t.id} aria-selected=${on} tabindex=${on?0:-1} title="${l}" aria-label="${l}"><span class=tab-title><span class=tab-text>${l}</span></span><button class=tab-x type=button tabindex=-1 title="Close tab" aria-label="Close ${l}">${TAB_X}</button></div>`}).join('')}
+fitTabs();if(had){const p=TABS.active&&document.getElementById('tab-'+TABS.active.id);if(p)p.focus()}
+// The pill under the pointer stays as it was, measured again: a title shown in bold is a little wider.
+if(keep){if(keep.hidden){tabUnwide(keep,true);tabHover=null}else tabPick(keep,true)}}
 // Past what the bar holds (a pill gives up width down to 88 px), pills spill into the ⌄ list, which lists every tab:
 // those furthest from the tab showing go first, so it always has its pill. Measured again as the bar changes width.
 function fitTabs(){const ps=[...tabStrip.children],at=ps.findIndex(p=>p.getAttribute('aria-selected')==='true');let lo=0,hi=ps.length-1;for(const p of ps)p.hidden=false;
 while(tabStrip.scrollWidth>tabStrip.clientWidth+1&&lo<hi){if(at-lo>hi-at)ps[lo++].hidden=true;else ps[hi--].hidden=true}
 const more=ps.filter(p=>p.hidden).length,label=more?`All tabs (${more} more)`:'All tabs';tabList.title=label;tabList.setAttribute('aria-label',label)}
 function tabsChanged(){drawTabs();saveTabs()}
+// MARK: tab hover — a pill whose title is cut widens at once toward its full title (360 px at most) and the others give
+// way down to their 88 px floor, pushed aside rather than covered, as Obsidian's are; a title still cut rolls. Leaving,
+// they fall back more slowly than they grew. Ported from Meeting Copilot (present/index.ts, evStripMove), where each rule
+// below was a bug Chris hit (2026-09-24):
+// - The strip's width is held from the first real move over it until the fall-back after leaving has finished. The bar
+//   is centred, so a strip that grew slid the pill out from under the pointer; letting go at once snapped the others
+//   back and re-centred the bar mid-collapse.
+// - Only real pointer movement picks a pill: a mousemove at a new spot. A pill that slides under a still pointer is not
+//   chosen, and mouseenter fires for exactly that, which cascaded a sweep into more resizes. So there is no delay.
+// - A widened pill stays until the pointer moves onto another, and the two swap in one step.
+// - The title rolls with transform on an inner span; text-indent re-laid it out every frame, in whole pixels.
+// Unlike there, every visible pill's width is set here while the strip is held, all eased by one animation from where
+// they are, so the widths always add up to the strip. Meeting Copilot eases only the hovered pill's width and flips its
+// flex-shrink at once, which makes both pills jump on the first frame of a swap or a fall-back (measured there,
+// 2026-09-25: 373→256 px on a swap, 302→255 px on leaving).
+const TAB_MAX=360,TAB_MIN=88,TAB_GROW=[200,'cubic-bezier(.2,.8,.2,1)'],TAB_FALL=[320,'cubic-bezier(.4,0,.2,1)'];
+let tabHover=null,tabRest=null,tabPt=null,tabRelease=0;
+function tabsHold(){clearTimeout(tabRelease);if(tabRest)return;const ps=[...tabStrip.querySelectorAll('.tab:not([hidden])')],ws=ps.map(p=>p.getBoundingClientRect().width);
+tabStrip.style.width=getComputedStyle(tabStrip).width;tabStrip.classList.add('tabs-held');tabRest=new Map(ps.map((p,i)=>[p,ws[i]]));ps.forEach((p,i)=>{p.style.width=ws[i]+'px'})}
+function tabsFree(){clearTimeout(tabRelease);if(!tabRest)return;for(const p of tabRest.keys()){if(p._tabGrow)p._tabGrow.cancel();p._tabGrow=null;p.style.width=''}
+tabStrip.classList.remove('tabs-held');tabStrip.style.width='';tabRest=null}
+// The padding, gap and × around a pill's title, and how wide its title would like to be.
+function tabChrome(p){return p.getBoundingClientRect().width-p.querySelector('.tab-title').getBoundingClientRect().width}
+// Where every pill goes with `p` widened: `p` to its full title, as far as the others can give at their floor, and the
+// others giving it up in proportion to what each has above the floor. Null when its title fits or there is no room.
+function tabWidths(p){const text=p.querySelector('.tab-text'),rest=tabRest.get(p);if(!text||rest==null)return null;
+const natural=text.getBoundingClientRect().width+tabChrome(p)+2;if(natural<=rest+1)return null;let total=0,slack=0;
+for(const [q,w] of tabRest){total+=w;if(q!==p)slack+=w-TAB_MIN}const want=Math.min(TAB_MAX,natural,total-(tabRest.size-1)*TAB_MIN);if(want<=rest+1)return null;
+const give=want-rest;return new Map([...tabRest].map(([q,w])=>[q,q===p?want:w-give*(w-TAB_MIN)/slack]))}
+// One animation for every pill, from the widths they are at now: read them all before any is changed.
+function tabsTween(ws,[ms,ease]){const ps=[...tabRest.keys()],from=ps.map(p=>p.getBoundingClientRect().width);if(stillMotion.matches)ms=0;
+ps.forEach((p,i)=>{const to=ws?ws.get(p):tabRest.get(p);if(p._tabGrow)p._tabGrow.cancel();p.style.width=to+'px';
+p._tabGrow=ms&&Math.abs(from[i]-to)>.5?p.animate([{width:from[i]+'px'},{width:to+'px'}],{duration:ms,easing:ease}):null})}
+// A title still cut once its pill has grown rolls to its end and back, paced by how much is hidden.
+function tabRoll(p,w,delay){const title=p.querySelector('.tab-title'),text=p.querySelector('.tab-text'),over=text.getBoundingClientRect().width-(w-tabChrome(p));clearTimeout(p._tabRoll);
+if(over<=1||stillMotion.matches){title.classList.remove('tab-rolling');return}const go=()=>{if(!p.classList.contains('tab-wide'))return;
+title.style.setProperty('--roll',(-over-4)+'px');title.style.setProperty('--roll-dur',Math.max(2.5,over/30+1.5).toFixed(1)+'s');title.classList.add('tab-rolling')};
+if(delay)p._tabRoll=setTimeout(go,delay);else go()}
+// Back to a pill's own width: its tooltip returns, and a rolled title glides home from wherever it had got to.
+function tabUnwide(p,still){if(!p.classList.contains('tab-wide'))return;p.classList.remove('tab-wide');p.title=p.getAttribute('aria-label')||'';clearTimeout(p._tabRoll);
+const title=p.querySelector('.tab-title'),text=p.querySelector('.tab-text');if(!title.classList.contains('tab-rolling'))return;
+const at=getComputedStyle(text).transform;title.classList.remove('tab-rolling');if(still||stillMotion.matches||at==='none')return;
+title.classList.add('tab-unrolling');const a=text.animate([{transform:at},{transform:'none'}],{duration:TAB_FALL[0],easing:TAB_FALL[1]});a.onfinish=()=>title.classList.remove('tab-unrolling')}
+// The pointer picked `p`: the pill widened before falls back as `p` widens, in one step. `still` puts it there at once.
+function tabPick(p,still){tabsHold();tabHover=p;const ws=tabWidths(p);for(const q of tabRest.keys())if(q!==p||!ws)tabUnwide(q,still);
+tabsTween(ws,still?[0]:ws?TAB_GROW:TAB_FALL);if(!ws)return;const was=p.classList.contains('tab-wide');p.classList.add('tab-wide');p.removeAttribute('title');
+tabRoll(p,ws.get(p),was?0:TAB_GROW[0]+20)}
+function tabLeave(){tabHover=null;tabPt=null;if(!tabRest)return;for(const q of tabRest.keys())tabUnwide(q);tabsTween(null,TAB_FALL);
+clearTimeout(tabRelease);tabRelease=setTimeout(()=>{if(!tabHover)tabsFree()},TAB_FALL[0]+40)}
+// Straight back, with no fall-back, when the bar itself changes width.
+function tabsSettle(){for(const q of tabStrip.querySelectorAll('.tab.tab-wide'))tabUnwide(q,true);tabsFree();tabHover=null}
+tabStrip.addEventListener('mousemove',e=>{if(tabPt&&tabPt.x===e.clientX&&tabPt.y===e.clientY)return;tabPt={x:e.clientX,y:e.clientY};
+const p=e.target.closest('.tab');if(p&&p!==tabHover&&!p.hidden)tabPick(p)},{passive:true});
+tabStrip.addEventListener('mouseleave',tabLeave);
 tabStrip.addEventListener('click',e=>{const p=e.target.closest('.tab');if(!p)return;const t=tabById(+p.dataset.id);if(e.target.closest('.tab-x'))closeTab(t);else activateTab(t)});
 // The middle button closes a pill, as in every browser; its mousedown is kept from starting the page's autoscroll.
 tabStrip.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
@@ -137,7 +206,7 @@ const to=e.key==='ArrowRight'?(i+1)%n:e.key==='ArrowLeft'?(i+n-1)%n:e.key==='Hom
 if(to>=0){e.preventDefault();activateTab(TABS.list[to]);const q=document.getElementById('tab-'+TABS.list[to].id);if(q)q.focus()}
 else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();closeTab(TABS.list[i])}});
 $('#tab-new').onclick=()=>openTab('',{kind:'library'});
-if(window.ResizeObserver)new ResizeObserver(()=>fitTabs()).observe(tabBar);
+if(window.ResizeObserver)new ResizeObserver(()=>{tabsSettle();fitTabs()}).observe(tabBar);
 // ⌄: every tab, the one showing checked, and Close Other Tabs. The bar stays out while the list is open.
 let tabMenuOpen=false;
 tabList.onclick=()=>{if(!window.OnyxMenu)return;const r=tabList.getBoundingClientRect(),items=TABS.list.map(t=>({id:'tab:'+t.id,label:tabLabel(t),checked:t===TABS.active}));
@@ -148,7 +217,7 @@ onSelect:id=>{if(id==='close-others')closeOtherTabs();else activateTab(tabById(+
 // use), watched from the reader's own pointer moves as the outline's edge is; on the home page, from the stage's.
 const TABBAR_KEY='askw:vault:tabbar';let tabsOver=false,tabsTimer=0,tabsAtEdge=false;
 function tabsPinned(){return document.body.classList.contains('tabs-pinned')}
-function tabsOut(out){document.body.classList.toggle('tabs-out',out);tabGroup.inert=!tabsPinned()&&!out}
+function tabsOut(out){document.body.classList.toggle('tabs-out',out);tabGroup.inert=!tabsPinned()&&!out;if(!out&&!tabsPinned())tabLeave()}
 function tabsInUse(){const a=document.activeElement;return !!((tabMenuOpen&&window.OnyxMenu&&OnyxMenu.isOpen())||(a&&tabBar.contains(a)))}
 function tabsLater(){clearTimeout(tabsTimer);if(tabsPinned())return;tabsTimer=setTimeout(function check(){if(tabsPinned()||tabsOver)return;if(tabsInUse()){tabsTimer=setTimeout(check,400);return}tabsOut(false)},400)}
 function setTabsPinned(on){document.body.classList.toggle('tabs-pinned',on);store(TABBAR_KEY,on?'pinned':'');tabPin.setAttribute('aria-pressed',String(on));const verb=on?'Unpin':'Pin';tabPin.title=verb+' tab bar (⌘⌥\\)';tabPin.setAttribute('aria-label',verb+' tab bar');

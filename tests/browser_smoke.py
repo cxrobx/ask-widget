@@ -3696,6 +3696,118 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_a_cut_tab_widens_under_the_pointer_and_falls_back_smoothly(self) -> None:
+        # A pill whose title is cut widens at once as the pointer lands on it (360 px at most) while the others give way,
+        # and a title still cut rolls. The strip's width and place hold until the fall-back has finished, the widths
+        # always add up to it, and leaving eases from where the pills are: Meeting Copilot's version, which this ports,
+        # dropped the pill 47 px on the first frame of leaving. Only real pointer movement picks a pill. Both engines.
+        artifacts = self._tab_pages()
+        long_title = "An unusually long page title that runs well past what any one tab pill can show, and then keeps going"
+        (artifacts / "Pages" / "long.html").write_text(f"<title>{long_title}</title><h1>Long</h1>", encoding="utf-8")
+        (artifacts / "Pages" / "mid.html").write_text("<title>A title that needs a little more than a pill</title>", encoding="utf-8")
+        sampler = """window.__tabs = []; (function sample() {
+          const ps = [...document.querySelectorAll('#tab-strip .tab')], s = document.querySelector('#tab-strip').getBoundingClientRect();
+          __tabs.push({w: ps.map(p => p.getBoundingClientRect().width), x: s.x, sw: s.width}); requestAnimationFrame(sample) })()"""
+        wide = "[...document.querySelectorAll('#tab-strip .tab')].findIndex(p => p.classList.contains('tab-wide'))"
+        # Skips a rolling title on to near its far end, where it has rolled furthest, and says how far that is.
+        ROLL_ON = """() => { const a = document.querySelector('.tab-rolling .tab-text').getAnimations().find(a => a.animationName === 'tab-roll');
+          a.currentTime = a.effect.getComputedTiming().duration * .9; return new DOMMatrix(getComputedStyle(a.effect.target).transform).m41 }"""
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1400, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.add_init_script("localStorage.setItem('askw:vault:tabbar', 'pinned')")
+                    page.goto(f"{self.base_url}/vault?vault=html&src={urllib.parse.quote(str(artifacts / 'Pages' / 'one.html'))}", wait_until="networkidle")
+                    for name in ("long", "mid"):  # each opens beside the first: One, mid, long
+                        page.evaluate("href => openTab(href, {background: true})", f"/view?src={urllib.parse.quote(str(artifacts / 'Pages' / (name + '.html')))}")
+                    page.wait_for_function("() => TABS.list.every(t => t.loaded && t.title)")
+                    pills, strip = page.locator("#tab-strip .tab"), page.locator("#tab-strip")
+                    expect(pills.nth(2)).to_have_attribute("aria-label", long_title)
+                    rest = strip.bounding_box()
+                    page.evaluate(sampler)
+
+                    # On it: wide at once, the others giving way, the strip where it was; the tooltip goes, the label stays.
+                    box = pills.nth(2).bounding_box()
+                    page.mouse.move(box["x"] + 40, box["y"] + 13)
+                    self.assertEqual(page.evaluate(wide), 2)
+                    page.wait_for_function("() => document.querySelector('.tab.tab-wide').getBoundingClientRect().width > 359")
+                    self.assertAlmostEqual(pills.nth(0).bounding_box()["width"], pills.nth(1).bounding_box()["width"], delta=0.5)
+                    self.assertGreaterEqual(pills.nth(0).bounding_box()["width"], 88)
+                    self.assertIsNone(pills.nth(2).get_attribute("title"))
+                    # Still cut at 360 px, it rolls, on transform.
+                    page.wait_for_function("() => document.querySelector('.tab-wide .tab-title').classList.contains('tab-rolling')")
+                    self.assertLess(page.evaluate(ROLL_ON), -100)
+
+                    # A still pointer never picks: the move a browser sends when a pill slides under it (same spot, new
+                    # pill) and the mouseenter that comes with it leave the wide one as it is.
+                    page.evaluate("""([x, y]) => { const p = document.querySelectorAll('#tab-strip .tab')[0];
+                      for (const type of ['mouseenter', 'mouseover', 'mousemove']) p.dispatchEvent(new MouseEvent(type, {clientX: x, clientY: y, bubbles: type !== 'mouseenter'})) }""",
+                                  [box["x"] + 40, box["y"] + 13])
+                    self.assertEqual(page.evaluate(wide), 2)
+
+                    # Straight onto the neighbour: it widens as the other falls back, in one step, and it is the one under the pointer.
+                    page.evaluate("__tabs.length = 0")
+                    near = pills.nth(1).bounding_box()
+                    page.mouse.move(near["x"] + near["width"] - 8, near["y"] + 13)
+                    self.assertEqual(page.evaluate(wide), 1)
+                    self.assertEqual(pills.nth(2).get_attribute("title"), long_title)
+                    page.wait_for_timeout(400)
+
+                    # Off it: back more slowly than it grew, from where it was, with the strip held until that is done.
+                    now = pills.nth(2).bounding_box()
+                    page.mouse.move(now["x"] + now["width"] / 2, now["y"] + 13)
+                    page.wait_for_function("() => document.querySelector('.tab-wide .tab-title.tab-rolling')")
+                    rolled = page.evaluate(ROLL_ON)
+                    page.evaluate("__tabs.length = 0")
+                    page.mouse.move(rest["x"] + rest["width"] / 2, 300)
+                    # The rolled title glides home from where it had got to.
+                    self.assertIn("tab-unrolling", pills.nth(2).locator(".tab-title").get_attribute("class"))
+                    self.assertLess(pills.nth(2).locator(".tab-text").evaluate("t => new DOMMatrix(getComputedStyle(t).transform).m41"), rolled / 2)
+                    page.wait_for_function("() => !document.querySelector('#tab-strip').style.width")
+                    frames = page.evaluate("__tabs.splice(0)")
+                    self.assertEqual({(round(f["x"], 1), round(f["sw"], 1)) for f in frames}, {(round(rest["x"], 1), round(rest["width"], 1))})
+                    self.assertLess(max(sum(f["w"]) for f in frames) - min(sum(f["w"]) for f in frames), 1)
+                    fall = [f["w"][2] for f in frames]
+                    self.assertEqual(fall, sorted(fall, reverse=True))
+                    moved = next(w for w in fall if w < fall[0] - 0.01)
+                    self.assertLess(fall[0] - moved, (fall[0] - 180) * 0.25)
+                    self.assertEqual([round(p.bounding_box()["width"]) for p in pills.all()], [180, 180, 180])
+                    self.assertEqual(page.evaluate(wide), -1)
+
+                    # A fast sweep across ends with the pill under the pointer the wide one.
+                    first, last = pills.nth(0).bounding_box(), pills.nth(2).bounding_box()
+                    page.mouse.move(first["x"] + 5, first["y"] + 13)
+                    page.mouse.move(last["x"] + 40, last["y"] + 13, steps=6)
+                    page.wait_for_timeout(300)
+                    under = page.evaluate(
+                        "([x, y]) => [...document.querySelectorAll('#tab-strip .tab')].indexOf(document.elementFromPoint(x, y).closest('.tab'))",
+                        [last["x"] + 40, last["y"] + 13],
+                    )
+                    self.assertEqual(page.evaluate(wide), under)
+                    # Clicked, it is drawn again as the tab showing and stays as wide under the pointer.
+                    width = pills.nth(under).bounding_box()["width"]
+                    page.mouse.down()
+                    page.mouse.up()
+                    expect(pills.nth(under)).to_have_attribute("aria-selected", "true")
+                    self.assertEqual(page.evaluate(wide), under)
+                    self.assertGreaterEqual(pills.nth(under).bounding_box()["width"], width - 0.5)
+
+                    # Reduce Motion: it still widens, at once, and does not roll.
+                    page.mouse.move(rest["x"] + rest["width"] / 2, 300)
+                    page.wait_for_function("() => !document.querySelector('#tab-strip').style.width")
+                    page.emulate_media(reduced_motion="reduce")
+                    page.wait_for_function("() => stillMotion.matches")  # WebKit's media query list catches up a frame late
+                    page.mouse.move(box["x"] + 40, box["y"] + 13)
+                    self.assertGreater(pills.nth(2).bounding_box()["width"], 359)
+                    page.wait_for_timeout(400)
+                    self.assertNotIn("tab-rolling", pills.nth(2).locator(".tab-title").get_attribute("class"))
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_tab_labels_read_under_both_vault_looks(self) -> None:
         # The pills wear the app's tokens, the vault's own colours while Match vault appearance is on: the tab showing
         # and the rest must read at 4.5:1 on the card, floating or pinned, under a dark vault and a light one.
