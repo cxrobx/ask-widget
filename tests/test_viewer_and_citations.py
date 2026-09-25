@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,13 +24,17 @@ from onyx.launcher_ui import (
 )
 from onyx.viewer import (
     RangeNotSatisfiable,
+    SourceConflict,
     ViewerError,
     byte_range,
     load_local_document,
     parse_flat_frontmatter,
     prepare_html,
+    read_source,
     split_frontmatter,
+    stat_signature,
     validate_remote_url,
+    write_source,
 )
 
 
@@ -125,6 +130,38 @@ class ViewerAndCitationTests(unittest.TestCase):
             self.assertIn('href="notes.png"', loaded.html)
             self.assertIn('href="file:///tmp/nope.md"', loaded.html)  # absent file stays untouched
             self.assertIn('href="#local"', loaded.html)
+
+    def test_saving_a_note_keeps_its_file_its_line_endings_and_its_byte_order_mark(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "note.md"
+            path.write_bytes(codecs.BOM_UTF8 + b"# Title\r\n\r\nBody\r\n")
+            text, sig = read_source(path)
+            self.assertEqual(text, "# Title\n\nBody\n")  # as the editor keeps text
+            inode = path.stat().st_ino
+            written = write_source(path, "# Title\n\nNew body\n", base=sig)
+            self.assertEqual(path.read_bytes(), codecs.BOM_UTF8 + b"# Title\r\n\r\nNew body\r\n")
+            # The same file, not a new one renamed over it: Obsidian's created date is the file's.
+            self.assertEqual(path.stat().st_ino, inode)
+            self.assertEqual(written, stat_signature(path.stat()))
+            # Written against a version that is no longer on disk: refused, and nothing written.
+            with self.assertRaises(SourceConflict) as refused:
+                write_source(path, "clobber", base=sig)
+            self.assertEqual(refused.exception.sig, written)
+            # A path that is a symlink now is refused, not followed.
+            link = Path(raw) / "link.md"
+            link.symlink_to(path)
+            with self.assertRaises(ViewerError):
+                write_source(link, "clobber", base=written)
+            self.assertEqual(path.read_bytes(), codecs.BOM_UTF8 + b"# Title\r\n\r\nNew body\r\n")
+            # Text that isn't UTF-8 would be written back as replacement characters, so it isn't opened.
+            latin = Path(raw) / "latin.md"
+            latin.write_bytes(b"caf\xe9")
+            with self.assertRaises(ViewerError):
+                read_source(latin)
+            page = Path(raw) / "page.html"
+            page.write_text("<p>x</p>", encoding="utf-8")
+            with self.assertRaises(ViewerError):
+                read_source(page)
 
     def test_wikilinks_render_only_in_vault_context(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

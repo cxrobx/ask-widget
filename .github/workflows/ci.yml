@@ -36,6 +36,25 @@ jobs:
       - run: python -m playwright install chromium webkit
       - run: PYTHONPATH=src python -m unittest tests.browser_smoke -v
 
+  # The ⌘E editor. static/onyx-editor.js is its build, committed so the service runs from a checkout with no Node step;
+  # a rebuild that differs from it means an edit under editor/ that was never built.
+  editor:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: editor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: editor/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: git diff --exit-code ../static/onyx-editor.js
+
   obsidian:
     runs-on: ubuntu-24.04
     defaults:

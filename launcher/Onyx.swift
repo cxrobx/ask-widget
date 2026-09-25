@@ -1313,6 +1313,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             if (result as? Bool) != true { self?.window?.performClose(nil) }
         }
     }
+    /// View ▸ Toggle Editing (⌘E): a Markdown page in the reader turns into its editor and back, as Obsidian's ⌘E does.
+    /// ⌘E typed in the page or the sidebar is taken there first (ask.js, vault_ui.py); this serves a click.
+    @objc private func toggleEditing() { onShell("onyxShell.edit()") }
     @objc private func openFind() { findInPage("open") }
     @objc private func findNext() { findInPage("next") }
     @objc private func findPrevious() { findInPage("previous") }
@@ -1531,6 +1534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         let viewMenu = NSMenu(title: "View")
         viewItem.submenu = viewMenu
         viewMenu.addItem(menuItem("Reload", #selector(reload), "r"))
+        viewMenu.addItem(menuItem("Toggle Editing", #selector(toggleEditing), "e"))
         viewMenu.addItem(.separator())
         viewMenu.addItem(menuItem("Zoom In", #selector(zoomIn), "+"))
         viewMenu.addItem(menuItem("Zoom Out", #selector(zoomOut), "-"))

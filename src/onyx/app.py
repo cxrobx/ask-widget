@@ -59,6 +59,7 @@ STATIC_DIR = (
 ASK_JS = STATIC_DIR / "ask.js"
 MARK_PNG = STATIC_DIR / "onyx-mark.png"
 APP_MENU_JS = STATIC_DIR / "app-menu.js"
+EDITOR_JS = STATIC_DIR / "onyx-editor.js"
 TOKEN_PLACEHOLDER = "__ASK_TOKEN__"
 PROTOCOL_VERSION = 3
 
@@ -72,6 +73,7 @@ MAX_HISTORY_TURNS = 12
 MAX_HISTORY_TEXT = 4000
 MAX_ASSET_CAPABILITIES = 32
 ASSET_CAPABILITY_TTL = 8 * 60 * 60
+MAX_EDIT_CAPABILITIES = 64
 
 
 def _sanitize_history(raw: object) -> list[dict]:
@@ -308,6 +310,9 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.recent_folders = [str(config.default_folder)]
     # Per-document expiring capabilities replace the old process-wide asset set.
     app.state.asset_caps = OrderedDict()
+    # The editor's: one per note opened for editing (/api/source), naming the one file it may save. Kept apart from
+    # the asset capabilities, which expire and are pushed out by the next 32 pages opened, under a note being written.
+    app.state.edit_caps = OrderedDict()
 
     def allowed_origins() -> list[str]:
         raw = storage.settings(model_default=config.model).get("allowed_origins")
@@ -449,6 +454,7 @@ def create_app(config: AppConfig) -> FastAPI:
         settings = app.state.storage.settings(model_default=config.model)
         seed_path = _resolve_folder(app, folder) if folder else config.default_folder
         seed = str(seed_path) if seed_path else None
+        editing = None  # how a note was opened, which its links resolve against once it is being edited
         try:
             if viewer.is_remote(src):
                 html_text = await asyncio.to_thread(
@@ -506,6 +512,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     vault=index,
                 )
                 html_text = loaded.html
+                if loaded.kind == "markdown":
+                    editing = {"display": str(lexical), "folder": seed, "notes": str(root) if index is not None else None}
                 if loaded.kind in markdown_theme.KINDS:
                     css = current_markdown_theme()["css"]
                     html_text = html_text.replace(
@@ -533,6 +541,7 @@ def create_app(config: AppConfig) -> FastAPI:
             "assets": assets,
             "source": doc_src,
             "expires": time.time() + ASSET_CAPABILITY_TTL,
+            **({"editing": editing} if editing else {}),
         }
         caps.move_to_end(capability)
         while len(caps) > MAX_ASSET_CAPABILITIES:
@@ -720,9 +729,87 @@ def create_app(config: AppConfig) -> FastAPI:
         except (OSError, ValueError):
             return JSONResponse({"ok": False})
         return JSONResponse(
-            {"ok": True, "sig": f"{st.st_mtime_ns}:{st.st_size}"},
+            {"ok": True, "sig": viewer.stat_signature(st)},
             headers={"Cache-Control": "no-store"},
         )
+
+    # MARK: - Editing a note (⌘E): the editor in static/onyx-editor.js, built from editor/
+
+    @app.get("/onyx-editor.js")
+    async def editor_js():
+        try:
+            text = EDITOR_JS.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return Response("// onyx-editor.js missing", status_code=500, media_type="application/javascript")
+        return Response(content=text, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/source")
+    async def note_source(request: Request, src: str, cap: str):
+        """A note's Markdown for the editor, for the page that shows it: the page's own capability names the file, so
+        this reads nothing that page wasn't already given. It hands back an edit capability for that one file."""
+        if denied := api_forbidden(request):
+            return denied
+        capability = app.state.asset_caps.get(cap)
+        if not capability or capability["expires"] < time.time() or capability["source"] != src:
+            return JSONResponse({"ok": False, "error": "Reload this page to edit it."}, status_code=403)
+        opened = capability.get("editing")
+        if not opened:
+            return JSONResponse({"ok": False, "error": "Only Markdown notes can be edited."}, status_code=400)
+        try:
+            text, sig = await asyncio.to_thread(viewer.read_source, Path(src))
+        except viewer.ViewerError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        edits: OrderedDict = app.state.edit_caps
+        edit = secrets.token_urlsafe(18)
+        edits[edit] = {"source": src, **opened}
+        while len(edits) > MAX_EDIT_CAPABILITIES:
+            edits.popitem(last=False)
+        return JSONResponse({"ok": True, "text": text, "sig": sig, "edit": edit}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/source")
+    async def save_note_source(request: Request):
+        """Save the editor's text to the one file its edit capability names, over the version it was written against;
+        409 with the version on disk when that has changed since."""
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        edit = app.state.edit_caps.get(str(body.get("edit") or ""))
+        if not edit:
+            return JSONResponse({"ok": False, "error": "Onyx restarted since this note was opened; reload it to keep editing."}, status_code=403)
+        text = body.get("text")
+        if not isinstance(text, str):
+            return JSONResponse({"ok": False, "error": "no text"}, status_code=400)
+        try:
+            sig = await asyncio.to_thread(viewer.write_source, Path(edit["source"]), text, base=str(body.get("base") or ""))
+        except viewer.SourceConflict as exc:
+            return JSONResponse({"ok": False, "error": str(exc), "sig": exc.sig}, status_code=409)
+        except viewer.ViewerError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        app.state.edit_caps.move_to_end(str(body["edit"]))
+        return {"ok": True, "sig": sig}
+
+    @app.get("/api/source/link")
+    async def note_link(request: Request, edit: str, target: str, kind: str = "md"):
+        """Where a link clicked in the editor leads, from where its note was opened (see ``viewer.link_href``)."""
+        if denied := api_forbidden(request):
+            return denied
+        opened = app.state.edit_caps.get(edit)
+        if not opened:
+            return JSONResponse({"ok": False, "error": "Reload this page to follow its links."}, status_code=403)
+
+        def resolve() -> str | None:
+            notes = opened.get("notes")
+            index = app.state.vault.get(Path(notes)) if notes else None
+            ctx = viewer.RenderContext(doc_path=Path(opened["display"]), folder=opened.get("folder"), vault=index)
+            return viewer.link_href(target, kind, ctx)
+
+        href = await asyncio.to_thread(resolve)
+        return JSONResponse({"ok": href is not None, "href": href}, headers={"Cache-Control": "no-store"})
 
     # MARK: - Library, settings, and diagnostics APIs
 

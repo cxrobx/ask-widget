@@ -2948,6 +2948,124 @@ class BrowserSmokeTests(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
+    def test_command_e_edits_a_note_in_live_preview_saves_it_and_turns_back_at_the_same_place(self) -> None:
+        # ⌘E, as in Obsidian: the note turns into its own source, drawn as Live Preview (syntax hidden except where the
+        # cursor is), opened where the page was being read. It saves by itself a moment after typing stops; the file
+        # changing on disk meanwhile is taken in when nothing is unsaved, and asked about when something is. ⌘E again
+        # shows the page, re-rendered, at the same place. A link drawn as a link follows on click. Both engines.
+        filler = "".join(f"Filler paragraph {i} of the note.\n\n" for i in range(45))
+        note = self.root / "edit.md"
+        note.write_text(
+            "---\ntags: [x]\n---\n\n# Heading\n\nSome **bold** text and a [link](other.md).\n\n- one\n- two\n\n"
+            f"{filler}Target paragraph near the end.\n\n{filler}",
+            encoding="utf-8",
+        )
+        original = note.read_text(encoding="utf-8")
+        (self.root / "other.md").write_text("# Other\n", encoding="utf-8")
+        line_of = """text => {
+          const line = [...document.querySelectorAll('.askw-ed .cm-line')].find(l => l.textContent.includes(text));
+          if (!line) return null;
+          const r = line.getBoundingClientRect();
+          return {text: line.textContent, top: r.top, cls: line.className};
+        }"""
+        page_errors: list[str] = []
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    note.write_text(original, encoding="utf-8")
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/?{urllib.parse.urlencode({'src': str(note)})}", wait_until="networkidle")
+                    frame = page.frame_locator("iframe[name=reader]")
+                    target = frame.locator("main > p", has_text="Target paragraph")
+                    expect(target).to_be_attached()
+                    reader = page.frame(name="reader")
+                    status = frame.locator(".askw-ed-status")
+
+                    # Read down until the target paragraph is the one at the top of the window, then ⌘E: the editor
+                    # opens with it there. (Only the top one is held: blocks sit further apart in source than on the page.)
+                    frame.locator("h1").click()
+                    target.evaluate("p => { p.scrollIntoView(); scrollBy(0, -10); }")
+                    was = target.evaluate("p => p.getBoundingClientRect().top")
+                    page.keyboard.press("Meta+e")
+                    expect(frame.locator(".askw-ed .cm-content")).to_be_visible()
+                    expect(target).to_be_hidden()
+                    expect(status).to_have_text("Editing · Saved")
+                    landed = reader.evaluate(line_of, "Target paragraph")
+                    self.assertLess(abs(landed["top"] - was), 6, landed)
+
+                    # Live Preview: the syntax is hidden where the cursor isn't, and drawn as what it makes. (Scrolled up
+                    # first: the editor draws only the lines near the window.)
+                    reading_at = reader.evaluate("scrollY")
+                    reader.evaluate("scrollTo(0, 0)")
+                    expect(frame.locator(".cm-line.askw-ed-h1")).to_have_text("Heading")
+                    heading = reader.evaluate(line_of, "Heading")
+                    self.assertEqual(heading["text"], "Heading")
+                    self.assertIn("askw-ed-h1", heading["cls"])
+                    self.assertEqual(reader.evaluate(line_of, "Some")["text"], "Some bold text and a link.")
+                    expect(frame.locator(".askw-ed-bullet")).to_have_count(2)
+                    self.assertIn("askw-ed-frontmatter", reader.evaluate(line_of, "tags:")["cls"])
+                    # With the cursor in it, the bold word shows its stars again; the link beside it stays drawn.
+                    frame.locator(".askw-ed-strong").click()
+                    self.assertEqual(reader.evaluate(line_of, "Some")["text"], "Some **bold** text and a link.")
+
+                    # Typing saves by itself.
+                    reader.evaluate("y => scrollTo(0, y)", reading_at)
+                    frame.locator(".cm-line", has_text="Target paragraph").click(position={"x": 1, "y": 8})
+                    page.keyboard.type("Edited ")
+                    expect(status).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertIn("\nEdited Target paragraph near the end.\n", note.read_text(encoding="utf-8"))
+
+                    # Changed on disk with nothing unsaved: the editor takes the new text in.
+                    note.write_text(note.read_text(encoding="utf-8").replace("Filler paragraph 3 ", "Filler paragraph three "), encoding="utf-8")
+                    expect(frame.locator(".cm-line", has_text="Filler paragraph three")).to_have_count(1, timeout=8000)
+                    # Changed on disk while something is unsaved: asked, not overwritten, and "Keep mine" saves it.
+                    page.keyboard.type("again ")
+                    note.write_text(note.read_text(encoding="utf-8").replace("Filler paragraph 4 ", "Filler paragraph four "), encoding="utf-8")
+                    expect(frame.locator(".askw-ed-conflict")).to_be_visible(timeout=5000)
+                    expect(status).to_have_text("Editing · Changed on disk")
+                    self.assertIn("Filler paragraph four", note.read_text(encoding="utf-8"))
+                    frame.locator(".askw-ed-conflict button", has_text="Keep mine").click()
+                    expect(status).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertIn("Edited again Target paragraph", note.read_text(encoding="utf-8"))
+
+                    # ⌘E again: the page, re-rendered from the file, with the edited paragraph where the editor had it.
+                    reader.evaluate("""() => {
+                      [...document.querySelectorAll('.askw-ed .cm-line')].find(l => l.textContent.includes('Target')).scrollIntoView();
+                      scrollBy(0, -12);
+                    }""")
+                    was = reader.evaluate(line_of, "Target paragraph")["top"]
+                    page.keyboard.press("Meta+e")
+                    rendered = frame.locator("main > p", has_text="Edited again Target paragraph")
+                    expect(rendered).to_be_visible(timeout=5000)
+                    expect(frame.locator(".askw-ed")).to_have_count(0)
+                    self.assertLess(abs(rendered.evaluate("p => p.getBoundingClientRect().top") - was), 6)
+
+                    # A link drawn as a link follows on click, in the reader.
+                    page.keyboard.press("Meta+e")
+                    expect(frame.locator(".askw-ed .cm-content")).to_be_visible()
+                    reader.evaluate("scrollTo(0, 0)")
+                    frame.locator(".askw-ed [data-askw-href]").click()
+                    expect(frame.locator("h1", has_text="Other")).to_be_visible(timeout=5000)
+                    self.assertIn(str(self.root / "other.md"), urllib.parse.unquote(page.frame(name="reader").url))
+
+                    # From the shell (View ▸ Toggle Editing in the app): in and out again, with nothing changed and no reload.
+                    self.assertTrue(page.evaluate("onyxShell.edit()"))
+                    expect(frame.locator(".askw-ed .cm-content")).to_be_visible()
+                    page.evaluate("onyxShell.edit()")
+                    expect(frame.locator(".askw-ed")).to_have_count(0)
+                    expect(frame.locator("main > h1", has_text="Other")).to_be_visible()
+                    # A page that isn't a note says so.
+                    page.evaluate("src => { document.querySelector('iframe[name=reader]').src = '/view?src=' + encodeURIComponent(src) }", str(self.interactive_document))
+                    expect(frame.locator("#level")).to_be_visible()
+                    page.evaluate("onyxShell.edit()")
+                    expect(frame.locator(".askw-toast")).to_have_text("Only Markdown notes can be edited")
+                    expect(frame.locator(".askw-ed")).to_have_count(0)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_the_reader_and_the_answer_panel_wear_the_vault_look(self) -> None:
         # Match vault appearance dresses the reader too: a text page takes the vault's reading styles and the answer
         # panel its palette, in the vault's mode whatever the app theme says; off, they are Onyx's own again, live.

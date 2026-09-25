@@ -344,6 +344,50 @@ class ApiTests(unittest.TestCase):
         )
         self.assertFalse(expired.json()["ok"])
 
+    def page_capability(self, path: Path, **params: str) -> str:
+        page = self.client.get("/view", params={"src": str(path), **params})
+        return re.search(r'name="askw-doc-token" content="([^"]+)"', page.text).group(1)
+
+    def test_editing_saves_only_the_note_its_page_opened_and_never_over_a_newer_version(self) -> None:
+        src, cap = str(self.document), self.page_capability(self.document)
+        other = self.root / "other.md"
+        other.write_text("# Other\n", encoding="utf-8")
+        # The source comes only with the page's own capability, for the page's own file.
+        self.assertEqual(self.client.get("/api/source", params={"src": src, "cap": "forged"}).status_code, 403)
+        self.assertEqual(
+            self.client.get("/api/source", params={"src": str(other.resolve()), "cap": cap}).status_code, 403
+        )
+        opened = self.client.get("/api/source", params={"src": src, "cap": cap}).json()
+        self.assertEqual(opened["text"], "# Guide\n\nThe server is local.")
+
+        save = {"token": self.config.token, "edit": opened["edit"], "base": opened["sig"], "text": "# Guide\n\nEdited."}
+        self.assertEqual(self.client.post("/api/source", json={**save, "token": "wrong"}).status_code, 403)
+        self.assertEqual(self.client.post("/api/source", json={**save, "edit": "forged"}).status_code, 403)
+        self.assertEqual(
+            self.client.post("/api/source", json=save, headers={"Origin": "https://attacker.example"}).status_code, 403
+        )
+        self.assertEqual(self.document.read_text(encoding="utf-8"), "# Guide\n\nThe server is local.")
+        # A path in the request names nothing: the edit capability is the file.
+        saved = self.client.post("/api/source", json={**save, "src": str(other)}).json()
+        self.assertTrue(saved["ok"])
+        self.assertEqual(self.document.read_text(encoding="utf-8"), "# Guide\n\nEdited.")
+        self.assertEqual(other.read_text(encoding="utf-8"), "# Other\n")
+        # Live reload sees the version the save returned, so the page doesn't take its own save for someone else's.
+        self.assertEqual(self.client.get("/_mtime", params={"src": src, "cap": cap}).json()["sig"], saved["sig"])
+
+        # Saved against the version before: refused, with the one on disk, and nothing overwritten.
+        stale = self.client.post("/api/source", json={**save, "text": "clobber"})
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.json()["sig"], saved["sig"])
+        self.assertEqual(self.document.read_text(encoding="utf-8"), "# Guide\n\nEdited.")
+
+        # Pages that aren't Markdown notes aren't editable.
+        for name, body in (("page.html", "<p>Authored</p>"), ("plain.txt", "Plain")):
+            path = self.root / name
+            path.write_text(body, encoding="utf-8")
+            refused = self.client.get("/api/source", params={"src": str(path.resolve()), "cap": self.page_capability(path)})
+            self.assertEqual(refused.status_code, 400)
+
     def test_position_and_export_round_trip(self) -> None:
         self.client.get("/view", params={"src": str(self.document)})
         updated = self.client.post(
@@ -484,6 +528,37 @@ class VaultApiTests(unittest.TestCase):
 
         outside_note = self.client.get("/view", params={"src": str(self.outside / "L.md")})
         self.assertIn("[[M]]", outside_note.text)  # outside the vault: literal wikilink
+
+    def test_a_note_edited_through_a_linked_folder_saves_to_its_real_file_and_follows_its_links(self) -> None:
+        self.set_vault(str(self.vault))
+        note = self.vault / "linked" / "L.md"
+        page = self.client.get("/view", params={"src": str(note), "folder": str(self.vault)})
+        cap = re.search(r'name="askw-doc-token" content="([^"]+)"', page.text).group(1)
+        real = str((self.outside / "L.md").resolve())
+        opened = self.client.get("/api/source", params={"src": real, "cap": cap}).json()
+        self.assertEqual(opened["text"], "# Linked\n\n[[M]]\n")
+
+        # A link clicked in the editor leads where the same link on the page does: from the note's vault path.
+        def follow(target: str, kind: str) -> dict:
+            return self.client.get("/api/source/link", params={"edit": opened["edit"], "target": target, "kind": kind}).json()
+
+        sibling = "/view?src=" + urllib.parse.quote(str(self.vault / "linked" / "M.md"))
+        folder = "&folder=" + urllib.parse.quote(str(self.vault.resolve()))
+        self.assertEqual(follow("M", "wiki")["href"], sibling + folder)
+        self.assertEqual(follow("M#Part", "wiki")["href"], sibling + folder + "#Part")
+        self.assertEqual(follow("M.md", "md")["href"], sibling + folder)
+        self.assertFalse(follow("Nowhere", "wiki")["ok"])
+        self.assertFalse(follow("https://example.com", "md")["ok"])  # the editor opens those itself
+        self.assertEqual(
+            self.client.get("/api/source/link", params={"edit": "forged", "target": "M", "kind": "wiki"}).status_code, 403
+        )
+
+        saved = self.client.post("/api/source", json={
+            "token": self.config.token, "edit": opened["edit"], "base": opened["sig"], "text": "# Linked\n\n[[M]] again\n",
+        }).json()
+        self.assertTrue(saved["ok"])
+        self.assertTrue((self.vault / "linked").is_symlink())
+        self.assertEqual((self.outside / "L.md").read_text(encoding="utf-8"), "# Linked\n\n[[M]] again\n")
 
     def test_history_says_which_vault_a_document_lives_in_and_its_row_there(self) -> None:
         # History keys a note by its real file; the shell lists it through the link, and says where.

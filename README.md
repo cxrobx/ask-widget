@@ -72,6 +72,8 @@ Three actions on any selection, or on a whole page when nothing is selected:
 Around them:
 
 - Readers for HTML, Markdown, plain text, and text-based PDF, plus HTTPS pages.
+- **⌘E edits a note in place**, as in Obsidian: the page turns into its Markdown
+  drawn as Live Preview, saves as you type, and turns back with ⌘E.
 - **Notes** and **Artifacts** sidebars: your Obsidian vault (wikilinks,
   frontmatter, outline, related pages) and a folder of links to HTML pages
   anywhere on your Mac.

@@ -17,11 +17,13 @@ so interactive artifacts behave like they do when opened directly in a browser.
 
 from __future__ import annotations
 
+import codecs
 import html as _html
 import ipaddress
 import os
 import re
 import socket
+import stat
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -267,6 +269,90 @@ def read_local(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise ViewerError(f"Could not read {path}: {exc}") from exc
+
+
+# MARK: - Editing a note (⌘E, editor/)
+
+EDITABLE_EXTENSIONS = {".md", ".markdown"}
+MAX_EDIT_BYTES = 8 * 1024 * 1024
+
+
+class SourceConflict(ViewerError):
+    """The note on disk is no longer the version a save was written against."""
+
+    def __init__(self, sig: str) -> None:
+        super().__init__("This note changed on disk.")
+        self.sig = sig
+
+
+def stat_signature(st: os.stat_result) -> str:
+    """What live reload and the editor compare to tell one version of a file from the next."""
+    return f"{st.st_mtime_ns}:{st.st_size}"
+
+
+def read_source(path: Path) -> tuple[str, str]:
+    """A note's text for the editor, and the signature of the version it is.
+
+    Strictly UTF-8: the reader decodes with replacement characters, which is fine to look at but would be saved back
+    over the bytes they stand in for. A byte-order mark is left out and CRLF comes back as LF, as the editor keeps
+    text; ``write_source`` puts both back.
+    """
+    if path.suffix.lower() not in EDITABLE_EXTENSIONS:
+        raise ViewerError("Only Markdown notes can be edited.")
+    try:
+        with path.open("rb") as handle:
+            st = os.fstat(handle.fileno())
+            if st.st_size > MAX_EDIT_BYTES:
+                raise ViewerError("This note is too large to edit here.")
+            data = handle.read()
+    except FileNotFoundError:
+        raise ViewerError(f"No such file: {path}") from None
+    except OSError as exc:
+        raise ViewerError(f"Could not read {path}: {exc}") from exc
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ViewerError("This note isn’t UTF-8 text, so Onyx won’t edit it.") from None
+    return text.removeprefix("﻿").replace("\r\n", "\n"), stat_signature(st)
+
+
+def write_source(path: Path, text: str, *, base: str) -> str:
+    """Save the editor's text over the version ``base`` names, and return the signature of the one written.
+
+    In place, never a new file renamed over the old: a rename gives the note a new inode and so a new creation date,
+    which Obsidian shows and sorts notes by. The new bytes go over the old before the file is cut to length, so a
+    watcher never reads it empty. ``O_NOFOLLOW`` refuses a path that has become a symlink since the page was opened.
+    A file that ended its lines in CRLF, or began with a byte-order mark, keeps doing so.
+    """
+    if path.suffix.lower() not in EDITABLE_EXTENSIONS:
+        raise ViewerError("Only Markdown notes can be edited.")
+    encoded = text.replace("\r\n", "\n").encode("utf-8")
+    if len(encoded) > MAX_EDIT_BYTES:
+        raise ViewerError("This note is too large to save here.")
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        raise ViewerError("This note is no longer on disk.") from None
+    except OSError as exc:
+        raise ViewerError(f"Could not open {path.name} to save it: {exc.strerror or exc}") from exc
+    with os.fdopen(fd, "r+b") as handle:
+        st = os.fstat(handle.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            raise ViewerError("Only a file can be edited.")
+        if stat_signature(st) != base:
+            raise SourceConflict(stat_signature(st))
+        current = handle.read()
+        if b"\r\n" in current and current.count(b"\r\n") == current.count(b"\n"):
+            encoded = encoded.replace(b"\n", b"\r\n")
+        if current.startswith(codecs.BOM_UTF8):
+            encoded = codecs.BOM_UTF8 + encoded
+        if encoded != current:
+            handle.seek(0)
+            handle.write(encoded)
+            handle.truncate()
+            handle.flush()
+            os.fsync(handle.fileno())
+        return stat_signature(os.fstat(handle.fileno()))
 
 
 # MARK: - Markdown: frontmatter, wikilinks, link rewriting
@@ -515,6 +601,18 @@ def _build_markdown() -> MarkdownIt:
 
 
 _MARKDOWN = _build_markdown()
+
+
+def link_href(target: str, kind: str, ctx: RenderContext) -> str | None:
+    """Where a link the editor was clicked on leads: the reader's URL for it, worked out by the renderer that draws the
+    same link on the page (``kind`` is ``"wiki"`` for ``[[target]]``, else a Markdown link's destination). None when it
+    leads to no local page — a missing note, or an outside address, which the editor opens itself."""
+    if "\n" in target or (kind == "wiki" and "]]" in target):
+        return None
+    markup = f"[[{target}]]" if kind == "wiki" else f"[x]({target})"
+    found = re.search(r'<a href="([^"]*)"', _MARKDOWN.renderInline(markup, {"askw": ctx}))
+    href = _html.unescape(found.group(1)) if found else ""
+    return href if href.startswith("/view?") else None
 
 
 def _markdown_html(raw: str, title: str, *, ctx: RenderContext) -> str:

@@ -12,7 +12,7 @@ user's own files, so every boundary in here is a real boundary.
 ## Verify with this
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests     # 166 tests, ~3s
+PYTHONPATH=src python -m unittest discover -s tests     # ~200 tests, ~5s
 ```
 
 That is what CI runs, and it is the only command guaranteed to work — there is no
@@ -24,6 +24,7 @@ swiftc -typecheck -framework Cocoa -framework WebKit \
   -framework UniformTypeIdentifiers launcher/Onyx.swift
 plutil -lint launcher/Info.plist
 cd integrations/obsidian && npm ci && npm run check && npm run build && npm test
+cd editor && npm ci && npm run check && npm run build && git diff --exit-code ../static/onyx-editor.js
 PYTHONPATH=src python -m unittest tests.browser_smoke     # needs playwright chromium+webkit
 ```
 
@@ -65,6 +66,17 @@ never opt back in. Markdown is rendered without executing raw HTML.
 **The model never gets write tools.** Provider commands gate web access and allow
 no writes, ever. Adding a write tool to the runner is not a feature.
 → `test_claude_command_gates_web_tools_and_never_allows_writes`
+
+**A save writes only the note its page was opened from.** ⌘E's editor gets a
+note's source only against that page's own document capability, and an edit
+capability for that one file with it; `POST /api/source` takes no path. It writes
+an existing UTF-8 Markdown file in place, refuses a path that has become a
+symlink, and refuses a save written against an older version than the one on
+disk (409), so neither side's edit is lost. This is the user's write path; it
+does not loosen the model's.
+→ `test_editing_saves_only_the_note_its_page_opened_and_never_over_a_newer_version`,
+`test_saving_a_note_keeps_its_file_its_line_endings_and_its_byte_order_mark`,
+`test_a_note_edited_through_a_linked_folder_saves_to_its_real_file_and_follows_its_links`
 
 **Vault mutations stay inside the vault.** Link, folder and reorganise routes
 write only within the vault and never through a symlink target.
@@ -124,6 +136,18 @@ a frame after each reader load or popstate). `tellPainted` has no JS caller, so
 it looks dead; it isn't. Keeping the slide, rather than an instant swipe without
 WebKit's snapshot, was the owner's call (2026-09-22).
 
+**`static/onyx-editor.js` is a build, and it is committed.** Edit `editor/src/`,
+then `npm run build` in `editor/`; CI fails on a bundle that doesn't match its
+source. It is a separate file so `ask.js` stays one dependency-free script, and it
+loads only on the first ⌘E. The editor follows the reader's Markdown (CommonMark,
+tables, wikilinks) rather than all of Obsidian's, on purpose: ⌘E should never show
+a construct styled that the page it toggles back to leaves as plain text. Add a
+construct to the reader (`viewer._build_markdown`) and the editor together.
+
+**A save writes the note in place, not to a temp file renamed over it.** A rename
+gives the file a new inode and creation date, and Obsidian shows and sorts notes by
+that date. `viewer.write_source` writes the new bytes over the old, then truncates.
+
 **Comments here carry reasons, not restatements.** Several explain a measurement
 or a failure that motivated the code. If you change such code, update the reason
 or delete it — do not leave a comment describing behaviour that no longer exists.
@@ -134,7 +158,8 @@ or delete it — do not leave a comment describing behaviour that no longer exis
 readers and `prepare_html`; `vault.py` the note/HTML index; `storage.py` SQLite;
 `claude_runner.py` / `codex_runner.py` the provider processes and SSE translation;
 `*_ui.py` the server-rendered shell. `static/ask.js` is the injected widget — the
-reusable core if you are building something similar. `launcher/` is the Swift app,
+reusable core if you are building something similar. `editor/` builds the ⌘E
+editor into `static/onyx-editor.js`. `launcher/` is the Swift app,
 `integrations/` the Obsidian plugin and Alfred workflow.
 
 ## Scope

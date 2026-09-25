@@ -9,3 +9,4 @@ launcher/.build-venv/
 tmp/
 integrations/obsidian/node_modules/
 integrations/obsidian/main.js
+editor/node_modules/

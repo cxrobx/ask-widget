@@ -52,6 +52,10 @@
   var requestCitations = [], requestTrace = [];
   // ---- live reload (only on /view pages, which seed askw-src) ----
   var reloadSrc = null, reloadSig = null, reloadSeen = null, reloadPending = false;
+  var reloadRestoring = false;   // this load is one live reload (or the editor) asked for, and it puts back its own place
+  var landingReload = false;     // leaving for a reload that lands the page itself (back from the editor)
+  // ---- editing (⌘E on a Markdown page; the editor is static/onyx-editor.js, loaded on first use) ----
+  var editSession = null, editOpening = false, editorScript = null;
 
   // ---- DOM refs ----
   var triggerEl, menuEl, askWrap, askInput;
@@ -2003,10 +2007,16 @@
     return metaValue('askw-src');
   }
   function reloadIdle() {
-    return !streaming && !(panelEl && panelEl.classList.contains('open'));
+    return !streaming && !editSession && !editOpening && !(panelEl && panelEl.classList.contains('open'));
   }
-  function doReload() {
-    try { sessionStorage.setItem('askw:reload', JSON.stringify({ src: reloadSrc, y: window.scrollY })); } catch (e) {}
+  function doReload(landing) {
+    try { sessionStorage.setItem('askw:reload', JSON.stringify({ src: reloadSrc, y: window.scrollY, landing: landing || null })); } catch (e) {}
+    // Back from the editor the page is a different height, and the browser putting back the editor's scrollY after the
+    // load undid the landing. It does that after the load event, so the new page leaves restoration off until it is left.
+    if (landing) {
+      landingReload = true;
+      try { history.scrollRestoration = 'manual'; } catch (e) {}
+    }
     location.reload();
   }
   function maybeApplyReload() {
@@ -2020,6 +2030,7 @@
       .then(function (d) {
         if (!d || !d.ok || !d.sig) return;
         var sig = d.sig;
+        if (editSession) { editSession.poll(sig); return; }   // the editor keeps its text in step with the file itself
         if (reloadSig === null) { reloadSig = reloadSeen = sig; return; }  // baseline
         if (sig !== reloadSeen) { reloadSeen = sig; return; }              // still changing — let it settle
         if (sig === reloadSig) return;                                     // unchanged from what's rendered
@@ -2038,13 +2049,101 @@
       var saved = JSON.parse(sessionStorage.getItem('askw:reload') || 'null');
       if (saved && saved.src === reloadSrc) {
         sessionStorage.removeItem('askw:reload');
-        window.addEventListener('load', function () { jumpTo(saved.y || 0); });
-        toast('Document updated');
+        reloadRestoring = true;
+        if (saved.landing) {
+          // Back from the editor: where it was showing, and no news, since the change was the reader's own.
+          landAt(saved.landing);
+          window.addEventListener('load', function () { landAt(saved.landing); });
+          window.addEventListener('pagehide', function () {
+            if (!landingReload) try { history.scrollRestoration = 'auto'; } catch (e) {}
+          });
+        } else {
+          window.addEventListener('load', function () { jumpTo(saved.y || 0); });
+          toast('Document updated');
+        }
       }
     } catch (e) {}
     checkDoc();   // establish the baseline immediately
     setInterval(checkDoc, 3000);
   }
+
+  // ============================================================ editing (⌘E)
+  // ⌘E turns a Markdown page into its source, drawn as Obsidian's Live Preview, and ⌘E again turns it back, re-rendered,
+  // at the same place. Everything else about editing — saving, conflicts, links — is the editor's (editor/src/main.ts);
+  // this side only opens it, hands it the page's place, and puts the page back.
+  function editableNote() {
+    return document.body.getAttribute('data-askw-document-kind') === 'markdown' && !!reloadSrc && !!metaValue('askw-doc-token');
+  }
+  function readingColumn() { return document.querySelector('body[data-askw-document-kind="markdown"] > main'); }
+  // The note's top-level blocks as the page shows them, one child of <main> each; the editor counts the same blocks in
+  // the source. The Properties box is the frontmatter, which the editor doesn't count.
+  function readerBlocks() {
+    var main = readingColumn();
+    if (!main) return [];
+    return Array.prototype.filter.call(main.children, function (el) {
+      return !el.classList.contains('askw-properties') && !el.classList.contains('askw-ed-host') && !/^(SCRIPT|STYLE|TEMPLATE)$/.test(el.tagName);
+    });
+  }
+  function readerLanding() {
+    var blocks = readerBlocks();
+    for (var i = 0; i < blocks.length; i++) {
+      var r = blocks[i].getBoundingClientRect();
+      if (r.bottom <= 0) continue;
+      return r.top >= 0 ? { index: i, count: blocks.length, fraction: 0, offset: r.top }
+                        : { index: i, count: blocks.length, fraction: -r.top / Math.max(1, r.height), offset: 0 };
+    }
+    return null;
+  }
+  function landAt(landing) {
+    var blocks = readerBlocks();
+    if (!landing || !blocks.length) return;
+    var n = blocks.length, i = landing.count === n || landing.count < 2 ? landing.index
+      : Math.round(landing.index * (n - 1) / (landing.count - 1));
+    var r = blocks[Math.max(0, Math.min(n - 1, i))].getBoundingClientRect();
+    jumpTo(window.scrollY + r.top + landing.fraction * r.height - landing.offset);
+  }
+  function loadEditor() {
+    if (window.OnyxEditor) return Promise.resolve();
+    if (!editorScript) {
+      editorScript = new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = SERVER + '/onyx-editor.js';
+        s.onload = function () { resolve(); };
+        s.onerror = function () { editorScript = null; reject(new Error('Couldn’t load the editor.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return editorScript;
+  }
+  function toggleEdit() {
+    if (editOpening) return;
+    if (editSession) { editSession.exit(); return; }
+    if (!editableNote()) { toast('Only Markdown notes can be edited'); return; }
+    editOpening = true;
+    reloadPending = false;   // the editor opens on the file as it is now, and a reload would throw it away
+    hideMenu(); hideTrigger();
+    var landing = readerLanding();
+    loadEditor().then(function () {
+      return window.OnyxEditor.open({
+        container: readingColumn(),
+        server: SERVER,
+        token: TOKEN,
+        src: reloadSrc,
+        cap: metaValue('askw-doc-token'),
+        landing: landing,
+        toast: toast,
+        onExit: function (result) {
+          editSession = null;
+          if (result.changed) { reloadSig = reloadSeen = result.sig; doReload(result.landing); }
+          else landAt(result.landing);
+        }
+      });
+    }).then(function (session) { editSession = session; }, function (err) {
+      toast((err && err.message) || 'Couldn’t open the editor.');
+    }).then(function () { editOpening = false; });
+  }
+  // The shell's ⌘E, and View ▸ Toggle Editing in the app, reach the page showing through this.
+  window.askwToggleEdit = toggleEdit;
 
   // A plain HTML page that paints no background of its own used to sit on the
   // window's material, which tinted it. The window is now a raw desktop blur, so
@@ -2084,8 +2183,9 @@
     // A #fragment (a guide's "#predict" link) is where the reader asked to land, and a live reload puts back its own
     // position: neither is overridden. A /view page brings its remembered position with it (<meta name="askw-scroll">),
     // so it is taken before the first frame rather than jumped to after a fetch.
-    var reloading = false;
-    try { reloading = !!sessionStorage.getItem('askw:reload'); } catch (e) {}
+    // initLiveReload has already taken the marker out of sessionStorage by now, and says so in reloadRestoring.
+    var reloading = reloadRestoring;
+    try { reloading = reloading || !!sessionStorage.getItem('askw:reload'); } catch (e) {}
     if (!location.hash && !reloading && !pendingLanding) {
       var seeded = metaValue('askw-scroll');
       if (seeded !== '') restorePosition(Number(seeded));
@@ -2296,6 +2396,11 @@
 
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Alt') { setProviderLabel(true); return; }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e' && (editSession || editableNote())) {
+        e.preventDefault();
+        toggleEdit();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
         var captured = captureFromSelection();
         if (captured) {

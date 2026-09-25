@@ -13,13 +13,16 @@ swiftc -typecheck -framework Cocoa -framework WebKit \
   -framework UniformTypeIdentifiers launcher/Onyx.swift
 plutil -lint launcher/Info.plist
 
+cd editor && npm ci && npm run check && npm run build && cd ..   # ⌘E editor → static/onyx-editor.js
+
 ./launcher/build-app.sh --no-install
 ./scripts/smoke-bundle.sh
 ```
 
 CI runs the Python suite on Python 3.11 and 3.14, type-checks the Swift launcher,
 validates the plist, builds the frozen service, and smoke-tests its health and
-configuration contracts.
+configuration contracts. It also rebuilds the editor and fails if the result
+differs from the committed `static/onyx-editor.js`.
 
 For a distributable release, provide a Developer ID identity and a notarytool
 keychain profile:
@@ -49,6 +52,7 @@ and the vault sidebar waits until they are answered.
 
 ```text
 onyx/
+├── editor/                   the ⌘E Live Preview editor (CodeMirror 6, esbuild → static/onyx-editor.js)
 ├── integrations/
 │   ├── alfred/               Alfred workflow: onx/onxc search, file action
 │   └── obsidian/             Obsidian plugin (TypeScript, esbuild)
@@ -69,6 +73,7 @@ onyx/
 │   ├── vault_ui.py           the app's shell: Library · Notes · Artifacts beside the reader
 │   └── viewer.py             secure HTML/Markdown/text/PDF readers
 ├── static/ask.js             selection UI and streamed answer panel
+├── static/onyx-editor.js     the editor's build, committed; loaded on the first ⌘E
 ├── tests/                    API, security, storage, viewer, and runner tests
 └── requirements-*.lock       exact runtime, build, and test environments
 ```

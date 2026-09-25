@@ -44,6 +44,13 @@ deliberately narrow:
     only on an entry sitting directly in one of its own folders; removing
     deletes a link or an empty folder, never a real file. Link targets are never
     modified.
+12. Editing a note (⌘E) writes only the file the page was opened from. The
+    source is handed out against that page's own document capability, with an
+    edit capability for that one file; a save names no path. It writes only an
+    existing UTF-8 Markdown file, in place, never through a path that has
+    become a symlink, and never over a version newer than the one the editor
+    last read (the save is refused and the editor asks). This is the reader's
+    own write path: the provider runners still have no write tools.
 
 Both executables are launched directly, not through an interactive shell.
 Before launch, Anthropic/OpenAI API-key and alternate-provider environment

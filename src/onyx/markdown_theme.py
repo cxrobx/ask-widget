@@ -29,6 +29,21 @@ PROPERTIES = frozenset({
     *(f"{kind}-{side}" for kind in ("margin", "padding") for side in ("top", "right", "bottom", "left")),
     *(f"border-{side}-{kind}" for side in ("top", "right", "bottom", "left") for kind in ("color", "width", "style")),
 })
+# The editor (⌘E, editor/src/preview.ts) draws a note's lines with these classes where the page has the elements, so
+# it wears the same vault styles. Only the lettering carries over: an editor line is one line of source text, and a
+# heading's margins or a table's borders on it would pull the text away from the caret.
+EDITOR_TWINS = {
+    **{f"h{i}": f".cm-line.askw-ed-h{i}" for i in range(1, 7)},
+    "strong": ".askw-ed-strong", "em": ".askw-ed-em", "code": ".askw-ed-code",
+    "a": ".askw-ed-link", "internal-link": ".askw-ed-wikilink", "blockquote": ".cm-line.askw-ed-quote",
+    # The block's own colours are the ``pre``'s; its ``code`` is usually transparent, which would clear them.
+    "pre": ".cm-line.askw-ed-pre",
+}
+EDITOR_PROPERTIES = frozenset({
+    "color", "background-color", "font-family", "font-size", "font-weight", "font-style", "line-height",
+    "letter-spacing", "text-transform", "text-decoration-line", "text-decoration-color", "text-decoration-thickness",
+    "text-underline-offset",
+})
 # Computed values can include quoted font names and modern color functions.
 # Reject escapes, rule/declaration delimiters, comments and resource functions.
 _UNSAFE = re.compile(r"[;{}<>\\\x00-\x1f]|/\*|\*/|(?:url|var|env|attr|expression)\s*\(", re.I)
@@ -86,6 +101,11 @@ def stylesheet(snapshot: dict[str, Any] | None) -> str:
         if declarations:
             css = ";".join(f"{prop}:{value}" for prop, value in sorted(declarations.items()))
             rules.append(f'{main}{" " + selector if selector else ""}{{{css}}}')
+    for key, selector in EDITOR_TWINS.items():
+        declarations = {p: v for p, v in snapshot["styles"].get(key, {}).items() if p in EDITOR_PROPERTIES}
+        if declarations:
+            css = ";".join(f"{prop}:{value}" for prop, value in sorted(declarations.items()))
+            rules.append(f"{main} {selector}{{{css}}}")
     return "\n".join(rules)
 
 

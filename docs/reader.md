@@ -30,6 +30,28 @@ select text in another app, open its Services menu, and choose **Ask Selection
 with Onyx**. Onyx opens a temporary reading page and selects the
 shared passage automatically.
 
+## Editing a note
+
+**⌘E** (or **View ▸ Toggle Editing**) turns a Markdown page into its source, drawn
+the way Obsidian's Live Preview draws it: headings, emphasis, code, links, quotes
+and bullets look as they will read, and their syntax (`#`, `**`, `[…](…)`) shows
+only where the cursor is. It opens at the part of the note you were reading. ⌘E
+again shows the page, re-rendered, at the same place.
+
+- It saves by itself a moment after you stop typing, and at once on ⌘S, on ⌘E,
+  and when you leave the page. The corner shows **Saved**, **Saving…** or
+  **Edited**.
+- If the file changes on disk while the editor is open (Obsidian, an agent, a
+  sync), the new text is taken in when nothing is unsaved. When something is,
+  Onyx asks: **Keep mine** or **Use the one on disk**. It never overwrites either
+  without asking.
+- A link drawn as a link opens on click (⌘-click for a new tab); put the cursor
+  next to it with the arrow keys to edit it. ⌘B and ⌘I bold and italicise.
+- It edits `.md` and `.markdown` files that are UTF-8. The editor follows the
+  reader's Markdown (CommonMark, tables, wikilinks), so a construct the page
+  shows as plain text, such as `~~strike~~` or a `- [ ]` task, is plain text in
+  the editor too.
+
 ## Vault mode
 
 The **Library · Notes · Artifacts** switch at the top of the sidebar (or **File ▸

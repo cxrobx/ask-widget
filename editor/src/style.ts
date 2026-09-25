@@ -1,0 +1,47 @@
+// The editor wears the reading page's look: its column, its body font, and its `--reader-*` colours, so ⌘E changes
+// what can be typed, not what the note looks like. These are the reader shell's own defaults (viewer.py,
+// `_reading_shell`); when the vault's reading styles are in force, markdown_theme.py gives the editor's heading, emphasis,
+// code, link and quote classes the vault's values too, from rules that outrank these.
+//
+// `body .askw-ed` carries one more element than CodeMirror's own scoped rules, so these win over its base theme
+// whichever stylesheet came last.
+const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
+
+export const CSS = `
+body.askw-editing main > :not(.askw-ed-host){display:none!important}
+body .askw-ed .cm-editor{background:transparent;color:inherit}
+body .askw-ed .cm-editor.cm-focused{outline:none}
+body .askw-ed .cm-scroller{font-family:inherit;line-height:inherit;overflow:visible}
+body .askw-ed .cm-content{padding:0;caret-color:rgb(var(--reader-accent))}
+body .askw-ed .cm-line{padding:0}
+body .askw-ed .cm-line.askw-ed-h{font-weight:700;line-height:1.2;letter-spacing:-.02em}
+body .askw-ed .cm-line.askw-ed-h1{font-size:2.35rem;padding-top:.3em}
+body .askw-ed .cm-line.askw-ed-h2{font-size:1.5em;padding-top:.5em}
+body .askw-ed .cm-line.askw-ed-h3{font-size:1.17em;padding-top:.35em}
+body .askw-ed .cm-line.askw-ed-h4{font-size:1em}
+body .askw-ed .cm-line.askw-ed-h5{font-size:.83em}
+body .askw-ed .cm-line.askw-ed-h6{font-size:.67em}
+body .askw-ed .askw-ed-strong{font-weight:700}
+body .askw-ed .askw-ed-em{font-style:italic}
+body .askw-ed .askw-ed-code{font-family:${MONO};font-size:.88em;background:rgb(var(--reader-code)/.88);border-radius:4px;padding:.12em .1em}
+body .askw-ed .askw-ed-mark{color:rgb(var(--reader-faint))}
+body .askw-ed .askw-ed-link{color:rgb(var(--reader-accent));text-decoration:underline;text-underline-offset:2px}
+body .askw-ed [data-askw-href],body .askw-ed [data-askw-wiki]{cursor:pointer}
+body .askw-ed .askw-ed-embed{color:rgb(var(--reader-muted))}
+body .askw-ed .cm-line.askw-ed-quote{padding-left:20px;border-left:3px solid rgb(var(--reader-line)/.16);color:rgb(var(--reader-muted))}
+body .askw-ed .askw-ed-bullet{display:inline-block;min-width:.6em;text-align:center;color:rgb(var(--reader-muted))}
+body .askw-ed .askw-ed-hr{display:inline-block;width:100%;height:0;vertical-align:middle;border-top:1px solid rgb(var(--reader-line)/.14)}
+body .askw-ed .cm-line.askw-ed-pre{font:14px/1.55 ${MONO};background:rgb(var(--reader-code)/.88);padding:0 18px}
+body .askw-ed .cm-line.askw-ed-pre-first{padding-top:12px;border-radius:10px 10px 0 0}
+body .askw-ed .cm-line.askw-ed-pre-last{padding-bottom:12px;border-radius:0 0 10px 10px}
+body .askw-ed .cm-line.askw-ed-pre-first.askw-ed-pre-last{border-radius:10px}
+body .askw-ed .cm-line.askw-ed-table{font-family:${MONO};font-size:.88em}
+body .askw-ed .cm-line.askw-ed-frontmatter{font:13px/1.7 ${MONO};color:rgb(var(--reader-muted));background:rgb(var(--reader-code)/.5);padding:0 14px}
+.askw-ed-conflict{position:sticky;top:10px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px;padding:9px 12px;border:1px solid rgb(var(--reader-line)/.14);border-radius:10px;background:rgb(var(--reader-pane));box-shadow:0 8px 24px rgb(0 0 0/.12);font-size:14px}
+.askw-ed-conflict[hidden]{display:none}
+.askw-ed-conflict span{flex:1 1 220px}
+.askw-ed-conflict button{padding:5px 10px;border:1px solid rgb(var(--reader-line)/.16);border-radius:7px;background:rgb(var(--reader-code));color:inherit;font:inherit;font-size:13px;cursor:pointer}
+.askw-ed-conflict button:first-of-type{background:rgb(var(--reader-accent));border-color:transparent;color:#fff}
+.askw-ed-status{position:fixed;left:12px;bottom:12px;z-index:2147483599;padding:4px 10px;border:1px solid rgb(var(--reader-line)/.1);border-radius:999px;background:rgb(var(--reader-pane)/.86);color:rgb(var(--reader-muted));font:500 11.5px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);pointer-events:none}
+.askw-ed-status[data-state=problem]{color:#c2410c}
+`;

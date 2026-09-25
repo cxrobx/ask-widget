@@ -42,6 +42,15 @@ class MarkdownThemeTests(unittest.TestCase):
                       stylesheet(snapshot()))
         self.assertNotIn('document-kind="html"', stylesheet(snapshot()))
 
+    def test_the_editor_takes_the_vault_lettering_but_not_its_block_spacing(self):
+        candidate = snapshot()
+        candidate["styles"]["h1"]["margin-top"] = "24px"
+        css = stylesheet(candidate)
+        heading = next(rule for rule in css.splitlines() if rule.endswith("{color:rgb(88, 209, 235);font-size:36px}"))
+        self.assertTrue(heading.split("{")[0].endswith("> main .cm-line.askw-ed-h1"))
+        self.assertIn("> main h1{color:rgb(88, 209, 235);font-size:36px;margin-top:24px}", css)  # the page keeps it
+        self.assertIn("> main .askw-ed-code{background-color:rgb(21, 21, 21)}", css)
+
     def test_api_persistence_vault_selection_and_reading_pages_not_html(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

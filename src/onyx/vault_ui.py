@@ -838,7 +838,11 @@ for(const a of switchLinks)a.addEventListener('click',e=>{{if(e.button||e.metaKe
 // this one), Settings… (⌘,) and Recent Conversations (⌘Y) open their dialogs, Search… (⌘P) the palette, Edit ▸
 // Find's items (⌘F, ⌘G, ⇧⌘G) the find bar, and the tab items and outside opens the tabs (TAB_SHELL, tabs_ui.py).
 window.onyxVault={{switchTo:k=>{{if(!VAULTS[k])return false;switchVault(k);return true}}}};
-window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory(),openSearch:()=>SEARCH.open(),find:verb=>FIND.run(verb),...TAB_SHELL}};
+// ⌘E: the page showing turns into its editor and back (ask.js, toggleEdit), from View ▸ Toggle Editing in the app or from
+// the key typed out here in the sidebar; typed inside the page, ask.js takes it itself. A page that can't be edited says so.
+function readerEdit(){{try{{const w=reader.contentWindow;if(readerPage()&&w&&w.askwToggleEdit){{w.askwToggleEdit();return true}}}}catch(e){{}}return false}}
+document.addEventListener('keydown',e=>{{if((e.metaKey||e.ctrlKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='e'&&readerEdit())e.preventDefault()}});
+window.onyxShell={{openSettings:section=>PANELS.openSettings(section),openHistory:()=>PANELS.openHistory(),openSearch:()=>SEARCH.open(),find:verb=>FIND.run(verb),edit:()=>readerEdit(),...TAB_SHELL}};
 // Put back as it was left without a slide: the page opens with the sidebar already away.
 if(/^(unpinned|collapsed)$/.test(recall(SIDE_KEY)||'')){{document.body.classList.add('side-still');setPinned(false);requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.remove('side-still')))}}
 // The outline likewise: docked at once if it was pinned, else away until its toggle is hovered.
