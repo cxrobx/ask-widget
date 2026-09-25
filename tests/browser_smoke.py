@@ -76,6 +76,13 @@ CONTRAST = r"""e => {
 }"""
 
 
+def _png(width: int, height: int) -> bytes:
+    """A small real PNG, for a page to draw."""
+    out = io.BytesIO()
+    Image.new("RGB", (width, height), (200, 60, 60)).save(out, format="PNG")
+    return out.getvalue()
+
+
 class BrowserSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -3062,6 +3069,96 @@ class BrowserSmokeTests(unittest.TestCase):
                     page.evaluate("onyxShell.edit()")
                     expect(frame.locator(".askw-toast")).to_have_text("Only Markdown notes can be edited")
                     expect(frame.locator(".askw-ed")).to_have_count(0)
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_tasks_tables_images_outline_and_find_all_work_while_editing(self) -> None:
+        # What the page shows, the editor shows too: ~~strikethrough~~, ==highlights==, and tasks whose boxes tick the
+        # file (on the page and in the editor); a table drawn as a table and an image as the picture until the cursor
+        # goes in. The outline lists the note's headings while it is edited, and ⌘F finds words anywhere in it, even
+        # where the editor has drawn nothing yet. Both engines.
+        (self.root / "pic.png").write_bytes(_png(40, 30))
+        filler = "".join(f"Filler paragraph {i} of the note.\n\n" for i in range(60))
+        note = self.root / "rich.md"
+        original = (
+            "# Rich note\n\n- [ ] write it\n- [x] ship it\n\nSome ~~old~~ and ==new== words.\n\n"
+            "| Name | Count |\n| :-- | --: |\n| **apples** | 3 |\n| pears | 4 | extra |\n\n![a picture](pic.png)\n\n## Middle heading\n\n"
+            f"{filler}The needle sits far below.\n\n## Last heading\n"
+        )
+        page_errors: list[str] = []
+        home = patch("pathlib.Path.home", return_value=self.root.resolve())  # /_fs serves only under home
+        home.start()
+        self.addCleanup(home.stop)
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    note.write_text(original, encoding="utf-8")
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/?{urllib.parse.urlencode({'src': str(note)})}", wait_until="networkidle")
+                    frame = page.frame_locator("iframe[name=reader]")
+                    reader = page.frame(name="reader")
+
+                    # The page: struck, highlighted, and a box per task, which ticks its line without a reload.
+                    expect(frame.locator("main s")).to_have_text("old")
+                    expect(frame.locator("main mark")).to_have_text("new")
+                    boxes = frame.locator("main input.askw-task-box")
+                    expect(boxes).to_have_count(2)
+                    reader.evaluate("window.__stay = 1")
+                    boxes.first.click()
+                    for _ in range(50):
+                        if "- [x] write it" in note.read_text(encoding="utf-8"):
+                            break
+                        time.sleep(0.1)
+                    self.assertIn("- [x] write it", note.read_text(encoding="utf-8"))
+                    time.sleep(3.5)  # a live-reload poll: the page's own write is not news
+                    self.assertEqual(page.frame(name="reader").evaluate("window.__stay"), 1)
+
+                    # The editor: the same, drawn in place.
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+e")
+                    expect(frame.locator(".askw-ed .cm-content")).to_be_visible()
+                    expect(frame.locator(".askw-ed-strike")).to_have_text("old")
+                    expect(frame.locator(".askw-ed-highlight")).to_have_text("new")
+                    tasks = frame.locator(".askw-ed input.askw-ed-task")
+                    expect(tasks).to_have_count(2)
+                    self.assertEqual(tasks.evaluate_all("els => els.map(e => e.checked)"), [True, True])
+                    tasks.nth(1).click()
+                    expect(frame.locator(".askw-ed-status")).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertIn("- [ ] ship it", note.read_text(encoding="utf-8"))
+                    # A table as a table, its cells' Markdown drawn; a click in one turns it back into its source.
+                    grid = frame.locator(".askw-ed-grid table")
+                    expect(grid.locator("th")).to_have_text(["Name", "Count"])
+                    expect(grid.locator("td strong, td .askw-ed-strong")).to_have_text("apples")
+                    self.assertEqual(grid.locator("td").nth(1).evaluate("td => td.style.textAlign"), "right")
+                    # The header sets the width, as on the page: a row's extra cell is dropped.
+                    expect(grid.locator("tbody tr").nth(1).locator("td")).to_have_text(["pears", "4"])
+                    expect(frame.locator("main table tbody tr").nth(1).locator("td")).to_have_count(2)
+                    grid.locator("td").first.click()
+                    expect(frame.locator(".askw-ed-grid")).to_have_count(0)
+                    expect(frame.locator(".cm-line.askw-ed-table").first).to_contain_text("| Name | Count |")
+                    # The image, drawn from the file.
+                    picture = frame.locator(".askw-ed img.askw-ed-img")
+                    expect(picture).to_have_attribute("alt", "a picture")
+                    page.wait_for_function("() => { const f = document.querySelector('iframe[name=reader]').contentDocument; const i = f.querySelector('.askw-ed img.askw-ed-img'); return i && i.complete && i.naturalWidth === 40; }")
+
+                    # The outline, from the editor.
+                    expect(page.locator("#outline .h")).to_have_text(["Rich note", "Middle heading", "Last heading"])
+                    page.locator("#outline .h", has_text="Last heading").evaluate("b => b.click()")
+                    expect(frame.locator(".cm-line.askw-ed-h2", has_text="Last heading")).to_be_in_viewport()
+
+                    # ⌘F in the editor: a word far from anything drawn, found, marked and brought into view.
+                    reader.evaluate("scrollTo(0, 0)")
+                    frame.locator(".cm-line.askw-ed-h1").click()
+                    page.keyboard.press("Meta+f")
+                    page.locator("#find-input").fill("needle")
+                    expect(page.locator("#find-count")).to_have_text("1 of 1")
+                    expect(frame.locator(".askw-ed-find-current")).to_have_text("needle")
+                    expect(frame.locator(".askw-ed-find-current")).to_be_in_viewport()
+                    page.keyboard.press("Escape")
+                    self.assertEqual(reader.evaluate("getSelection().toString()"), "needle")
                     browser.close()
 
         self.assertEqual(page_errors, [])

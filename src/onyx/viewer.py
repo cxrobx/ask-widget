@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
 from markdown_it.common import normalize_url as _normalize_url
+from markdown_it.rules_inline.state_inline import Delimiter
 from markdown_it.token import Token
 
 from . import __version__
@@ -355,6 +356,22 @@ def write_source(path: Path, text: str, *, base: str) -> str:
         return stat_signature(os.fstat(handle.fileno()))
 
 
+# A task item's line: any quote and list markers, then the box. Group 2 is the character inside it.
+_TASK_LINE_RE = re.compile(r"^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)([ xX])(\][ \t])")
+
+
+def set_task(path: Path, line: int, done: bool, *, base: str) -> str:
+    """Tick or clear the task on ``line`` (0-based, as the page's box names it), over the version ``base`` names."""
+    text, _ = read_source(path)
+    lines = text.split("\n")
+    if not 0 <= line < len(lines):
+        raise ViewerError("That task is no longer in this note.")
+    found = _TASK_LINE_RE.match(lines[line])
+    if not found:
+        raise ViewerError("That task is no longer in this note.")
+    lines[line] = found.group(1) + ("x" if done else " ") + lines[line][found.end(2):]
+    return write_source(path, "\n".join(lines), base=base)
+
 # MARK: - Markdown: frontmatter, wikilinks, link rewriting
 
 # Obsidian-style YAML frontmatter: an opening ``---`` on the very first line and
@@ -580,10 +597,105 @@ def _render_link_open(self: Any, tokens: Any, idx: int, options: Any, env: Any) 
     return self.renderToken(tokens, idx, options, env)
 
 
+# MARK: - Markdown: Obsidian's inline extras (==highlight==, - [ ] tasks)
+
+def _highlight_rule(state: Any, silent: bool) -> bool:
+    """``==highlight==``, as Obsidian writes it: markdown-it's own ``~~strikethrough~~`` rule with ``=`` for ``~``."""
+    start = state.pos
+    if silent or state.src[start] != "=":
+        return False
+    scanned = state.scanDelims(start, True)
+    length = scanned.length
+    if length < 2:
+        return False
+    if length % 2:
+        token = state.push("text", "", 0)
+        token.content = "="
+        length -= 1
+    for _ in range(0, length, 2):
+        token = state.push("text", "", 0)
+        token.content = "=="
+        state.delimiters.append(Delimiter(
+            marker=0x3D, length=0, token=len(state.tokens) - 1, end=-1,
+            open=scanned.can_open, close=scanned.can_close,
+        ))
+    state.pos += scanned.length
+    return True
+
+
+def _pair_highlights(state: Any, delimiters: list) -> None:
+    lone = []
+    for start in delimiters:
+        if start.marker != 0x3D or start.end == -1:
+            continue
+        end = delimiters[start.end]
+        for index, kind, nesting in ((start.token, "mark_open", 1), (end.token, "mark_close", -1)):
+            token = state.tokens[index]
+            token.type, token.tag, token.nesting, token.markup, token.content = kind, "mark", nesting, "==", ""
+        before = state.tokens[end.token - 1]
+        if before.type == "text" and before.content == "=":
+            lone.append(end.token - 1)
+    # An odd run (`===`) leaves one `=` before its pair; it belongs after the closing tag, as with `~`.
+    while lone:
+        i = lone.pop()
+        j = i + 1
+        while j < len(state.tokens) and state.tokens[j].type == "mark_close":
+            j += 1
+        j -= 1
+        if i != j:
+            state.tokens[i], state.tokens[j] = state.tokens[j], state.tokens[i]
+
+
+def _highlight_post(state: Any) -> None:
+    _pair_highlights(state, state.delimiters)
+    for meta in state.tokens_meta:
+        if meta and "delimiters" in meta:
+            _pair_highlights(state, meta["delimiters"])
+
+
+_TASK_RE = re.compile(r"\[([ xX])\][ \t]")
+
+
+def _task_lists(state: Any) -> None:
+    """``- [ ] task`` and ``- [x] done``: a list item whose text opens with a box is a task, drawn with a checkbox.
+
+    The box carries its source line (``data-askw-line``, counted in the file, frontmatter included) so a click on the
+    page can tick that line (``set_task``); only a note's own render knows the line, so only it gets one.
+    """
+    env = state.env if isinstance(state.env, dict) else {}
+    offset = env.get("askw_line_offset")
+    tokens = state.tokens
+    for i in range(2, len(tokens)):
+        inline = tokens[i]
+        if inline.type != "inline" or tokens[i - 1].type != "paragraph_open" or tokens[i - 2].type != "list_item_open":
+            continue
+        found = _TASK_RE.match(inline.content)
+        children = inline.children or []
+        if not found or not children or children[0].type != "text" or not children[0].content.startswith(found.group(0)):
+            continue
+        done = found.group(1) != " "
+        children[0].content = children[0].content[len(found.group(0)):]
+        box = Token("askw_task", "input", 0)
+        box.meta = {"done": done}
+        if offset is not None and inline.map:
+            box.meta["line"] = inline.map[0] + offset
+        label = Token("askw_task_label_open", "span", 1)
+        label.attrSet("class", "askw-task-label")
+        inline.children = [box, label, *children, Token("askw_task_label_close", "span", -1)]
+        tokens[i - 2].attrJoin("class", "askw-task is-done" if done else "askw-task")
+
+
+def _render_task(self: Any, tokens: Any, idx: int, options: Any, env: Any) -> str:
+    meta = tokens[idx].meta
+    line = f' data-askw-line="{int(meta["line"])}"' if "line" in meta else ""
+    return f'<input type="checkbox" class="askw-task-box"{" checked" if meta.get("done") else ""}{line} aria-label="Task">'
+
+
 def _build_markdown() -> MarkdownIt:
     # markdown-it escapes raw HTML and rejects unsafe URL schemes under the
     # CommonMark preset. Tables are the one GitHub-style extension readers need
-    # most often; everything remains local and deterministic.
+    # most often; strikethrough, highlights and task lists are Obsidian's everyday
+    # extras. Everything remains local and deterministic.
     md = MarkdownIt(
         "commonmark",
         {
@@ -591,16 +703,47 @@ def _build_markdown() -> MarkdownIt:
             "linkify": False,
             "typographer": False,
         },
-    ).enable("table")
+    ).enable(["table", "strikethrough"])
     md.validateLink = _validate_link  # type: ignore[method-assign]
     # Before ``link`` so ``[[Note]]`` is never mistaken for a reference link.
     # ``backticks`` runs earlier, so wikilinks inside code spans stay literal.
     md.inline.ruler.before("link", "wikilink", _wikilink_rule)
+    md.inline.ruler.after("strikethrough", "askw_highlight", _highlight_rule)
+    md.inline.ruler2.after("strikethrough", "askw_highlight", _highlight_post)
+    # After ``text_join``, which merges the ``[`` and `` ]`` of a box into the text they open.
+    md.core.ruler.push("askw_tasks", _task_lists)
     md.add_render_rule("link_open", _render_link_open)
+    md.add_render_rule("askw_task", _render_task)
     return md
 
 
 _MARKDOWN = _build_markdown()
+
+
+def image_asset(target: str, kind: str, ctx: RenderContext, *, src: str, fs_prefix: str) -> tuple[str, str | None] | None:
+    """The URL the reader would draw an image in the editor with, and the file it reads (None for an outside address).
+
+    Worked out as the page works it out: the renderer turns ``![](target)`` or ``![[target]]`` into an ``<img>``, and
+    ``prepare_html``'s rewrite turns its source into a ``/_fs`` URL. None when the reference draws no image at all.
+    The caller still has to check the file is one the saved note references before it may be served.
+    """
+    if "\n" in target or (kind == "wiki" and "]]" in target):
+        return None
+    markup = f"![[{target}]]" if kind == "wiki" else f"![]({target})"
+    found = re.search(r'<img src="([^"]*)"', _MARKDOWN.renderInline(markup, {"askw": ctx}))
+    if not found:
+        return None
+    ref = _html.unescape(found.group(1)).strip()
+    if ref.lower().startswith(("http://", "https://", "data:image/")):
+        return ref, None
+    if not ref or ref.lower().startswith(_SKIP_PREFIXES):
+        return None
+    sink: set[str] = set()
+    url = _rewrite_asset(ref, remote=False, base="", doc_dir=Path(src).resolve().parent, fs_prefix=fs_prefix, sink=sink)
+    asset = next(iter(sink), None)
+    if asset is None or not ASSET_CONTENT_TYPES.get(Path(asset).suffix.lower(), "").startswith("image/"):
+        return None
+    return url, asset
 
 
 def link_href(target: str, kind: str, ctx: RenderContext) -> str | None:
@@ -617,7 +760,8 @@ def link_href(target: str, kind: str, ctx: RenderContext) -> str | None:
 
 def _markdown_html(raw: str, title: str, *, ctx: RenderContext) -> str:
     block, body = split_frontmatter(raw)
-    env: dict[str, Any] = {"askw": ctx}
+    # The body's first line is this many lines into the file (the frontmatter's), for the task boxes' source lines.
+    env: dict[str, Any] = {"askw": ctx, "askw_line_offset": raw[: len(raw) - len(body)].count("\n")}
     properties = _render_properties(block, _MARKDOWN, env) if block is not None else ""
     rendered = _MARKDOWN.render(body, env)
     return _reading_shell(title, properties + rendered, kind="markdown")
@@ -642,6 +786,8 @@ hr{{border:0;border-top:1px solid rgb(var(--reader-line)/.14);margin:2em 0}} img
 .askw-page-label{{margin:0 0 24px;color:rgb(var(--reader-faint));font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}}
 .askw-properties{{margin:0 0 1.6em;padding:9px 14px;border:1px solid rgb(var(--reader-line)/.12);border-radius:10px;background:rgb(var(--reader-code)/.5);font-size:.88em}} .askw-properties summary{{cursor:pointer;color:rgb(var(--reader-muted));font-weight:600;letter-spacing:.02em}}
 .askw-properties dl{{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;margin:10px 0 2px}} .askw-properties dt{{color:rgb(var(--reader-muted));font-weight:600}} .askw-properties dd{{margin:0;overflow-wrap:anywhere}} .askw-properties pre{{margin:8px 0 0}} .askw-empty{{color:rgb(var(--reader-faint))}}
+li.askw-task{{list-style:none}} .askw-task-box{{margin:0 .55em 0 -1.45em;vertical-align:-.1em;cursor:pointer}} li.askw-task.is-done>.askw-task-label,li.askw-task.is-done>p>.askw-task-label{{color:rgb(var(--reader-faint));text-decoration:line-through}}
+mark{{padding:0 .1em;border-radius:3px;background:rgb(255 208 0/.4);color:inherit}}
 .askw-tag{{display:inline-block;margin:0 4px 2px 0;padding:1px 8px;border-radius:999px;background:rgb(var(--reader-accent)/.12);color:rgb(var(--reader-accent));font-size:.85em}}
 .askw-wikilink-missing{{border-bottom:1px dotted rgb(var(--reader-faint));color:rgb(var(--reader-muted));cursor:help}} a.askw-embed{{display:inline-block;padding:1px 8px;border:1px dashed rgb(var(--reader-line)/.25);border-radius:6px;text-decoration:none}} a.askw-embed::before{{content:"⧉ ";opacity:.6}}
 @media(prefers-color-scheme:dark){{:root{{--reader-bg:24 24 24;--reader-pane:31 31 31;--reader-ink:245 245 245;--reader-muted:205 205 205;--reader-faint:143 143 143;--reader-line:255 255 255;--reader-code:48 48 48}} body{{background:rgb(var(--reader-bg)/.70)}} main{{background:rgb(var(--reader-pane)/.78);box-shadow:0 18px 60px rgb(0 0 0/.28)}}}}

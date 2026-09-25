@@ -49,8 +49,12 @@ deliberately narrow:
     edit capability for that one file; a save names no path. It writes only an
     existing UTF-8 Markdown file, in place, never through a path that has
     become a symlink, and never over a version newer than the one the editor
-    last read (the save is refused and the editor asks). This is the reader's
-    own write path: the provider runners still have no write tools.
+    last read (the save is refused and the editor asks). A task's box on the
+    reading page ticks its line through that page's capability, against the
+    version the page shows. The editor's images come through `/_fs` under a
+    capability of their own that lists only images the note as saved
+    references. This is the reader's own write path: the provider runners still
+    have no write tools.
 
 Both executables are launched directly, not through an interactive shell.
 Before launch, Anthropic/OpenAI API-key and alternate-provider environment

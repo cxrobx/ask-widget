@@ -9,12 +9,12 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirro
 import { ensureSyntaxTree, Language, LanguageSupport, syntaxTree } from "@codemirror/language";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { yamlFrontmatter } from "@codemirror/lang-yaml";
-import { EditorSelection, EditorState, Prec, StateCommand } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
-import { parser as commonmark, Table } from "@lezer/markdown";
+import { EditorSelection, EditorState, Prec, StateCommand, StateEffect, StateField } from "@codemirror/state";
+import { Decoration, DecorationSet, EditorView, keymap } from "@codemirror/view";
+import { parser as commonmark, Strikethrough, Table, TaskList } from "@lezer/markdown";
 
 import { lineChanges } from "./diff";
-import { livePreview, wikilinks } from "./preview";
+import { highlights, ImageSource, imageSource, imagesChanged, inlineRuns, livePreview, tables, wikilinks } from "./preview";
 import { CSS } from "./style";
 
 /**
@@ -44,12 +44,12 @@ export interface Session {
   poll(sig: string): void;
 }
 
-// CommonMark with tables, as the reader renders (viewer.py), plus wikilinks. The Language is built here rather than
+// CommonMark with tables, strikethrough, highlights and tasks, as the reader renders (viewer.py), plus wikilinks. The Language is built here rather than
 // through `markdown()` so the HTML and JavaScript grammars that bundles for inline HTML stay out of this file: the
 // reader escapes raw HTML, so there is nothing for them to highlight. It shares `commonmarkLanguage`'s data, which is
 // what the Markdown keymap checks, so Enter still continues a list and Backspace still lifts one.
 const markdownSupport = new LanguageSupport(
-  new Language(commonmarkLanguage.data, commonmark.configure([Table, wikilinks]), [], "markdown"),
+  new Language(commonmarkLanguage.data, commonmark.configure([Table, Strikethrough, TaskList, highlights, wikilinks]), [], "markdown"),
   [Prec.high(keymap.of(markdownKeymap))],
 );
 
@@ -95,6 +95,44 @@ function scaleIndex(index: number, count: number, total: number): number {
   return Math.min(total - 1, Math.round(index * (total - 1) / (count - 1)));
 }
 
+// ⌘F's matches while the editor is open (find_ui.py searches the note's text through window.askwEditor).
+const setFind = StateEffect.define<{ ranges: { from: number; to: number }[]; current: number }>();
+const findMarks = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    value = value.map(tr.changes);
+    for (const e of tr.effects) {
+      if (!e.is(setFind)) continue;
+      const len = tr.state.doc.length;
+      value = Decoration.set(e.value.ranges.flatMap((r, i) => r.to > r.from && r.to <= len
+        ? [Decoration.mark({ class: i === e.value.current ? "askw-ed-find-current" : "askw-ed-find" }).range(r.from, r.to)]
+        : []), true);
+    }
+    return value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** What the shell's outline and find bar read while the editor stands in for the page (vault_ui.py, find_ui.py). */
+export interface EditorFace {
+  live(): boolean;
+  text(): string;
+  headings(): { level: number; text: string; el: HeadingAnchor }[];
+  mark(ranges: { from: number; to: number }[], current: number): void;
+  reveal(range: { from: number; to: number }): void;
+  top(): number;
+  selection(): { from: number; to: number };
+  select(range: { from: number; to: number }): void;
+  onChange(listener: (() => void) | null): void;
+}
+// A heading as the outline uses an element: where it is on screen, and a way there. CodeMirror draws only the lines
+// near the window, so the heading's line may have no element at all; its place comes from the editor's own measure.
+interface HeadingAnchor {
+  getBoundingClientRect(): { top: number; bottom: number; left: number; right: number; width: number; height: number };
+  scrollIntoView(): void;
+  closest(): null;
+}
+
 let styled = false;
 function injectStyle() {
   if (styled) return;
@@ -120,6 +158,40 @@ export async function open(options: OpenOptions): Promise<Session> {
   injectStyle();
 
   const edit: string = loaded.edit, openedSig: string = loaded.sig;
+  let changeListener: (() => void) | null = null;
+
+  // Images come from the server, and only ones the note as saved references (/api/source/images), so one just typed
+  // shows once the save after it lands: a miss is asked about again after each save.
+  const imageUrls = new Map<string, string | null>(), asking = new Set<string>();
+  let askTimer = 0;
+  const images: ImageSource = {
+    url(kind, target) {
+      if (/^(https?:\/\/|data:image\/)/i.test(target)) return target;
+      const key = `${kind}:${target}`;
+      if (imageUrls.has(key)) return imageUrls.get(key);
+      asking.add(key);
+      clearTimeout(askTimer);
+      askTimer = window.setTimeout(askImages, 30);
+      return undefined;
+    },
+  };
+  async function askImages() {
+    const keys = [...asking];
+    asking.clear();
+    if (!keys.length || closed) return;
+    const refs = keys.map((k) => ({ kind: k.slice(0, k.indexOf(":")), target: k.slice(k.indexOf(":") + 1) }));
+    const d = await fetch(`${server}/api/source/images`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, edit, refs }),
+    }).then((r) => r.json()).catch(() => null);
+    if (!d || !d.ok || closed) return;
+    for (const k of keys) imageUrls.set(k, d.urls[k] ?? null);
+    view.dispatch({ effects: imagesChanged.of(null) });
+  }
+  function retryMissingImages() {
+    let missing = false;
+    for (const [k, v] of imageUrls) if (v === null) { imageUrls.delete(k); missing = true; }
+    if (missing && !closed) view.dispatch({ effects: imagesChanged.of(null) });
+  }
   let sig = openedSig;            // the version on disk the editor's text was last in step with
   let saved = loaded.text as string;
   let timer = 0, inflight: Promise<boolean> | null = null, again = false;
@@ -181,6 +253,7 @@ export async function open(options: OpenOptions): Promise<Session> {
         sig = d.sig;
         saved = text;
         failed = false;
+        retryMissingImages();
         return true;
       })
       .catch((err: Error) => {
@@ -231,6 +304,9 @@ export async function open(options: OpenOptions): Promise<Session> {
         EditorView.lineWrapping,
         yamlFrontmatter({ content: markdownSupport }),
         livePreview,
+        tables,
+        findMarks,
+        imageSource.of(images),
         keymap.of([
           { key: "Mod-s", run: () => { save(); return true; }, preventDefault: true },
           { key: "Mod-b", run: toggleWrap("**") },
@@ -242,13 +318,14 @@ export async function open(options: OpenOptions): Promise<Session> {
         EditorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "sentences" }),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return;
+          changeListener?.();
           if (u.transactions.some((t) => t.isUserEvent("sync"))) return;
           clearTimeout(timer);
           timer = window.setTimeout(save, SAVE_AFTER_MS);
           paint();
         }),
         EditorView.domEventHandlers({
-          mousedown: (event, v) => followLink(event, v),
+          mousedown: (event, v) => followLink(event, v) || enterDrawn(event, v),
           blur: () => { save(); return false; },
         }),
       ],
@@ -274,6 +351,17 @@ export async function open(options: OpenOptions): Promise<Session> {
       if (d.ok && d.href) go(d.href, newTab, false);
       else toast(wiki ? `No note named “${wiki.split("#")[0]}”` : "That link doesn’t lead to a local page.");
     }).catch(() => toast("Onyx isn’t answering."));
+    return true;
+  }
+  // A click on something drawn in place of its source (a table's cell, an image) puts the cursor there, which shows the
+  // source to edit, as in Obsidian.
+  function enterDrawn(event: MouseEvent, v: EditorView): boolean {
+    if (event.button !== 0) return false;
+    const el = (event.target as Element).closest?.("[data-askw-from]");
+    if (!el || !v.contentDOM.contains(el)) return false;
+    event.preventDefault();
+    v.dispatch({ selection: { anchor: Math.min(+(el.getAttribute("data-askw-from") || 0), v.state.doc.length) } });
+    v.focus();
     return true;
   }
   // Through a real link in the page, so the shell treats it as it treats the reader's own: ⌘-click for a new tab, an
@@ -305,6 +393,47 @@ export async function open(options: OpenOptions): Promise<Session> {
   view.focus();
   paint();
 
+  const face: EditorFace = {
+    live: () => !closed,
+    text: () => view.state.doc.toString(),
+    headings() {
+      const state = view.state, tree = ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state);
+      const out: { level: number; text: string; el: HeadingAnchor }[] = [];
+      tree.iterate({
+        enter(n) {
+          const m = /^(?:ATX|Setext)Heading(\d)$/.exec(n.name);
+          if (!m) return;
+          const text = inlineRuns(state.doc, n.node).map((r) => r.t).join("").replace(/\s+/g, " ").trim();
+          if (text) out.push({ level: +m[1], text, el: anchorAt(n.from) });
+          return false;
+        },
+      });
+      return out;
+    },
+    mark(ranges, current) { view.dispatch({ effects: setFind.of({ ranges, current }) }); },
+    reveal(range) {
+      const block = view.lineBlockAt(range.from), top = block.top + view.documentTop;
+      if (top < 56 || top + block.height > window.innerHeight - 24) {
+        view.dispatch({ effects: EditorView.scrollIntoView(range.from, { y: "center" }) });
+      }
+    },
+    top: () => view.lineBlockAtHeight(Math.max(0, -view.documentTop)).from,
+    selection: () => ({ from: view.state.selection.main.from, to: view.state.selection.main.to }),
+    select(range) { view.dispatch({ selection: { anchor: range.from, head: range.to } }); view.focus(); },
+    onChange(listener) { changeListener = listener; },
+  };
+  function anchorAt(pos: number): HeadingAnchor {
+    return {
+      getBoundingClientRect() {
+        const block = view.lineBlockAt(Math.min(pos, view.state.doc.length)), top = block.top + view.documentTop;
+        return { top, bottom: top + block.height, left: 0, right: 1, width: 1, height: block.height };
+      },
+      scrollIntoView() { view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 16 }) }); },
+      closest: () => null,
+    };
+  }
+  window.askwEditor = face;
+
   // The page going away: whatever is unsaved goes out with keepalive.
   const flushOnHide = () => { if (dirty() && !conflict) save(); };
   window.addEventListener("pagehide", flushOnHide);
@@ -335,6 +464,7 @@ export async function open(options: OpenOptions): Promise<Session> {
       const landing = topLanding();
       window.removeEventListener("pagehide", flushOnHide);
       document.removeEventListener("visibilitychange", onVisibility);
+      if (window.askwEditor === face) delete window.askwEditor;
       view.destroy();
       host.remove();
       status.remove();
@@ -349,6 +479,6 @@ export async function open(options: OpenOptions): Promise<Session> {
 }
 
 declare global {
-  interface Window { OnyxEditor?: { open: typeof open } }
+  interface Window { OnyxEditor?: { open: typeof open }; askwEditor?: EditorFace }
 }
 window.OnyxEditor = { open };

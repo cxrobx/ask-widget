@@ -313,6 +313,9 @@ def create_app(config: AppConfig) -> FastAPI:
     # The editor's: one per note opened for editing (/api/source), naming the one file it may save. Kept apart from
     # the asset capabilities, which expire and are pushed out by the next 32 pages opened, under a note being written.
     app.state.edit_caps = OrderedDict()
+    # Each editor's images come through /_fs under a capability of its own (the edit capability's "fs"), which lists
+    # only images the saved note references (/api/source/images).
+    app.state.edit_fs = {}
 
     def allowed_origins() -> list[str]:
         raw = storage.settings(model_default=config.model).get("allowed_origins")
@@ -669,10 +672,15 @@ def create_app(config: AppConfig) -> FastAPI:
         if not _host_allowed(request.headers.get("host", ""), config.port):
             return Response("Forbidden", status_code=403)
         cap = app.state.asset_caps.get(capability)
-        if not cap or cap["expires"] < time.time():
+        editing = app.state.edit_caps.get(app.state.edit_fs.get(capability, "")) if cap is None else None
+        if editing is not None:
+            allowed = editing["assets"]
+        elif not cap or cap["expires"] < time.time():
             app.state.asset_caps.pop(capability, None)
             return Response("Expired", status_code=404)
-        result = viewer.resolve_fs_path(path, allowed=cap["assets"], home=Path.home())
+        else:
+            allowed = cap["assets"]
+        result = viewer.resolve_fs_path(path, allowed=allowed, home=Path.home())
         if result is None:
             return Response("Not found", status_code=404)
         abspath, ctype = result
@@ -760,10 +768,12 @@ def create_app(config: AppConfig) -> FastAPI:
         except viewer.ViewerError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         edits: OrderedDict = app.state.edit_caps
-        edit = secrets.token_urlsafe(18)
-        edits[edit] = {"source": src, **opened}
+        edit, fs = secrets.token_urlsafe(18), secrets.token_urlsafe(18)
+        edits[edit] = {"source": src, "fs": fs, "assets": set(), **opened}
+        app.state.edit_fs[fs] = edit
         while len(edits) > MAX_EDIT_CAPABILITIES:
-            edits.popitem(last=False)
+            _, gone = edits.popitem(last=False)
+            app.state.edit_fs.pop(gone["fs"], None)
         return JSONResponse({"ok": True, "text": text, "sig": sig, "edit": edit}, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/source")
@@ -791,6 +801,87 @@ def create_app(config: AppConfig) -> FastAPI:
         except viewer.ViewerError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         app.state.edit_caps.move_to_end(str(body["edit"]))
+        return {"ok": True, "sig": sig}
+
+    @app.post("/api/source/images")
+    async def note_images(request: Request):
+        """The URLs to draw the editor's images with. An image is served only when the note as saved on disk references
+        it, as /view would serve it for this note: the reader renders the saved note for the list, and the editor asks
+        again after its next save for one typed since."""
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        opened = app.state.edit_caps.get(str(body.get("edit") or ""))
+        if not opened:
+            return JSONResponse({"ok": False, "error": "Reload this page to see its images."}, status_code=403)
+        refs = [r for r in body.get("refs") or [] if isinstance(r, dict)][:200]
+
+        def resolve() -> dict[str, str | None]:
+            notes = opened.get("notes")
+            index = app.state.vault.get(Path(notes)) if notes else None
+            display = Path(opened["display"])
+            loaded = viewer.load_local_document(
+                Path(opened["source"]), display_path=display, folder=opened.get("folder"), vault=index
+            )
+            prefix = f"/_fs/{opened['fs']}"
+            _, referenced = viewer.prepare_html(
+                opened["source"], html_text=loaded.html, server_origin="", folder=opened.get("folder"), asset_token=opened["fs"]
+            )
+            ctx = viewer.RenderContext(doc_path=display, folder=opened.get("folder"), vault=index)
+            urls: dict[str, str | None] = {}
+            for ref in refs:
+                kind, target = str(ref.get("kind") or "md"), str(ref.get("target") or "")
+                found = viewer.image_asset(target, kind, ctx, src=opened["source"], fs_prefix=prefix)
+                url = None
+                if found is not None:
+                    url, asset = found
+                    if asset is not None:
+                        if asset in referenced:
+                            opened["assets"].add(asset)
+                        else:
+                            url = None
+                urls[f"{kind}:{target}"] = url
+            return urls
+
+        try:
+            urls = await asyncio.to_thread(resolve)
+        except viewer.ViewerError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "urls": urls}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/source/task")
+    async def tick_task(request: Request):
+        """A task box clicked on the reading page: its line ticked or cleared in the page's own note, over the version
+        the page was showing (409 when the note has changed since, and the page reloads with it)."""
+        if denied := api_forbidden(request):
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        if body.get("token") != config.token:
+            return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
+        src = str(body.get("src") or "")
+        capability = app.state.asset_caps.get(str(body.get("cap") or ""))
+        if not capability or capability["expires"] < time.time() or capability["source"] != src or not capability.get("editing"):
+            return JSONResponse({"ok": False, "error": "Reload this page to tick its tasks."}, status_code=403)
+        try:
+            line = int(body.get("line"))
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "no line"}, status_code=400)
+        try:
+            sig = await asyncio.to_thread(
+                viewer.set_task, Path(src), line, bool(body.get("done")), base=str(body.get("base") or "")
+            )
+        except viewer.SourceConflict as exc:
+            return JSONResponse({"ok": False, "error": str(exc), "sig": exc.sig}, status_code=409)
+        except viewer.ViewerError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         return {"ok": True, "sig": sig}
 
     @app.get("/api/source/link")

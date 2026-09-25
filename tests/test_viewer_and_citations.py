@@ -31,6 +31,7 @@ from onyx.viewer import (
     parse_flat_frontmatter,
     prepare_html,
     read_source,
+    set_task,
     split_frontmatter,
     stat_signature,
     validate_remote_url,
@@ -162,6 +163,32 @@ class ViewerAndCitationTests(unittest.TestCase):
             page.write_text("<p>x</p>", encoding="utf-8")
             with self.assertRaises(ViewerError):
                 read_source(page)
+
+    def test_notes_render_obsidians_strikethrough_highlights_and_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "tasks.md"
+            path.write_text(
+                "---\ntags: [x]\n---\n\n- [ ] open ~~gone~~ ==marked==\n- [x] done\n- plain [ ] item\n\nnot a == highlight\n",
+                encoding="utf-8",
+            )
+            html = load_local_document(path).html
+            self.assertIn("<s>gone</s> <mark>marked</mark>", html)
+            self.assertIn("not a == highlight", html)
+            # A box carries its line in the file, frontmatter included, for a click to tick it.
+            self.assertIn('<li class="askw-task"><input type="checkbox" class="askw-task-box" data-askw-line="4" aria-label="Task">'
+                          '<span class="askw-task-label">open', html)
+            self.assertIn('<li class="askw-task is-done"><input type="checkbox" class="askw-task-box" checked data-askw-line="5"', html)
+            self.assertIn("<li>plain [ ] item</li>", html)
+
+            text, sig = read_source(path)
+            sig = set_task(path, 4, True, base=sig)
+            self.assertIn("- [x] open ~~gone~~", path.read_text(encoding="utf-8"))
+            sig = set_task(path, 5, False, base=sig)
+            self.assertIn("- [ ] done", path.read_text(encoding="utf-8"))
+            with self.assertRaises(ViewerError):
+                set_task(path, 6, True, base=sig)  # not a task
+            with self.assertRaises(SourceConflict):
+                set_task(path, 4, False, base="stale")
 
     def test_wikilinks_render_only_in_vault_context(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

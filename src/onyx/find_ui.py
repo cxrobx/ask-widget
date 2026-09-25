@@ -12,9 +12,13 @@ selected in the page becomes the query. The bar stays open from page to page and
 moving it, and counts again when a page's script adds text or a click changes what shows (the Artifact Kit's ELI switch
 is CSS alone, which no observer sees).
 
+While ⌘E has a note open for editing, the bar searches the note's text instead, as Obsidian's does in its editor:
+the editor draws only the lines near the window, so the page's drawn text is not all there. Matches are then marked,
+brought into view and left selected by the editor (``window.askwEditor``, editor/src/main.ts).
+
 It opens from Edit ▸ Find in the app (``window.onyxShell.find``), and from ⌘F in a browser or with focus inside the
 reader. The script runs inside the shell's ``<script>`` and leans on it: ``$``, ``reader``, ``readerDoc``,
-``readerPage``, ``pillRoom``, ``hidePeek`` and ``onReaderLoad``.
+``readerPage``, ``editorOf``, ``pillRoom``, ``hidePeek`` and ``onReaderLoad``.
 """
 
 from __future__ import annotations
@@ -56,10 +60,17 @@ function space(n){return n===32||(n>8&&n<14)||n===160||(n>=0x2000&&n<=0x200a)||n
 // A soft hyphen or a zero-width space is in the text but not in the word it splits.
 function unseen(n){return n===0xad||(n>=0x200b&&n<=0x200d)||n===0x2060||n===0xfeff}
 function ours(n){const el=n&&(n.nodeType===1?n:n.parentElement);return !!(el&&el.closest&&el.closest('.askw-root'))}
+// The editor redraws its lines as the page scrolls; what it holds changing is told by the editor itself (onChange).
+function drawnByEditor(n){const el=n&&(n.nodeType===1?n:n.parentElement);return !!(el&&el.closest&&el.closest('.cm-editor'))}
+// The note's text while it is being edited, folded as the page's is, with where each character came from in it.
+function collectEditor(d,ed){const src=ed.text(),out=[],off=[];let last=10;ed.onChange(later);
+for(let k=0;k<src.length;k++){const c=src.charCodeAt(k);if(c===10){if(last!==10){out.push('\n');off.push(k);last=10}continue}if(unseen(c))continue;
+if(space(c)){if(last!==32&&last!==10){out.push(' ');off.push(k);last=32}}else{out.push(fold(src[k]));off.push(k);last=c}}
+return {doc:d,editor:ed,text:out.join(''),off}}
 // The page's text as it is drawn. An element the page hides takes its text with it, but a shut <details> keeps its own
 // (a match there opens it). A run of space is one space, and each block (a paragraph, a cell, a list item) starts on a
 // line break no query can hold, so nothing matches from one into the next. at/off say where each character came from.
-function collect(d){const w=d.defaultView,css=el=>w.getComputedStyle(el),blocks=new Map(),seen=new Map(),nodes=[],at=[],off=[],out=[];let last=10,block=null;
+function collect(d){const ed=editorOf(d);if(ed)return collectEditor(d,ed);const w=d.defaultView,css=el=>w.getComputedStyle(el),blocks=new Map(),seen=new Map(),nodes=[],at=[],off=[],out=[];let last=10,block=null;
 const shown=el=>{let v=seen.get(el);if(v===undefined){v=css(el).visibility==='visible';seen.set(el,v)}return v};
 const blockOf=el=>{let b=blocks.get(el);if(b===undefined){b=el!==d.body&&el.parentElement&&/^(inline|contents|ruby)/.test(css(el).display)?blockOf(el.parentElement):el;blocks.set(el,b)}return b};
 const put=(ch,node,i)=>{out.push(ch);at.push(node);off.push(i);last=ch.charCodeAt(0)};
@@ -72,6 +83,7 @@ return {doc:d,text:out.join(''),at,off,nodes}}
 function queryOf(){const q=input.value,out=[];let last=32;for(let k=0;k<q.length;k++){const c=q.charCodeAt(k);if(unseen(c))continue;if(space(c)){if(last!==32)out.push(' ');last=32}else{out.push(fold(q[k]));last=c}}return out.join('')}
 // Every match left to right, as a Range: at most CAP of them, past which the count says "+".
 function search(q){hits=[];capped=false;if(!q.trim()||!INDEX)return;const {doc:d,text,at,off,nodes}=INDEX;
+if(INDEX.editor){for(let i=text.indexOf(q);i>=0;i=text.indexOf(q,i+q.length)){if(hits.length===CAP){capped=true;break}hits.push({from:off[i],to:off[i+q.length-1]+1})}return}
 for(let i=text.indexOf(q);i>=0;i=text.indexOf(q,i+q.length)){if(hits.length===CAP){capped=true;break}let a=i,b=i+q.length-1;while(a<=b&&at[a]<0)a++;while(b>=a&&at[b]<0)b--;if(a>b)continue;
 const r=d.createRange();try{r.setStart(nodes[at[a]],off[a]);r.setEnd(nodes[at[b]],off[b]+1)}catch(e){continue}hits.push(r)}}
 function inSummary(d,node){const s=d.querySelector(':scope > summary');return !!s&&s.contains(node)}
@@ -79,27 +91,27 @@ function inSummary(d,node){const s=d.querySelector(':scope > summary');return !!
 function rectOf(r){const b=r.getBoundingClientRect();if(b.width||b.height)return b;let shut=null;for(let el=r.startContainer.parentElement;el;el=el.parentElement)if(el.tagName==='DETAILS'&&!el.open&&!inSummary(el,r.startContainer))shut=el;return shut?shut.getBoundingClientRect():b}
 // The first match at or after `anchor` (the one the bar was on, so a refined query stays where it is), or, with none,
 // the first at or below the top of the reader.
-function pick(anchor){if(!hits.length)return -1;let i=-1;try{i=anchor?hits.findIndex(r=>r.compareBoundaryPoints(Range.START_TO_START,anchor)>=0):hits.findIndex(r=>rectOf(r).bottom>0)}catch(e){}return i<0?0:i}
+function pick(anchor){if(!hits.length)return -1;let i=-1;if(INDEX&&INDEX.editor){const at=anchor&&anchor.from!=null?anchor.from:INDEX.editor.top();i=hits.findIndex(h=>h.from>=at);return i<0?0:i}try{i=anchor?hits.findIndex(r=>r.compareBoundaryPoints(Range.START_TO_START,anchor)>=0):hits.findIndex(r=>rectOf(r).bottom>0)}catch(e){}return i<0?0:i}
 // A page's `scroll-behavior:smooth` would glide there; find goes at once, as Obsidian's does.
 function instant(el,move){const had=el.getAttribute('style'),was=el.style.scrollBehavior;el.style.scrollBehavior='auto';move();if(had===null)el.removeAttribute('style');else el.style.scrollBehavior=was}
 // The current match in the middle of the reader, at once: its shut <details> opened, and any box it scrolls inside
 // scrolled to it too. Left where it is when it is already in view, clear of the bar.
-function reveal(){const r=hits[cur];if(!r)return;const node=r.startContainer,w=doc.defaultView;
+function reveal(){const r=hits[cur];if(!r)return;if(INDEX&&INDEX.editor){INDEX.editor.reveal(r);return}const node=r.startContainer,w=doc.defaultView;
 for(let el=node.parentElement;el;el=el.parentElement)if(el.tagName==='DETAILS'&&!el.open&&!inSummary(el,node))el.open=true;let b=r.getBoundingClientRect();
 for(let el=node.parentElement;el&&el!==doc.documentElement;el=el.parentElement){if(el.scrollHeight<=el.clientHeight+1&&el.scrollWidth<=el.clientWidth+1)continue;const s=w.getComputedStyle(el);if(!/auto|scroll|overlay/.test(s.overflowX+' '+s.overflowY))continue;const box=el.getBoundingClientRect();
 if(b.top<box.top||b.bottom>box.bottom)instant(el,()=>{el.scrollTop+=b.top-box.top-(el.clientHeight-b.height)/2});if(b.left<box.left||b.right>box.right)instant(el,()=>{el.scrollLeft+=b.left-box.left-(el.clientWidth-b.width)/2});b=r.getBoundingClientRect()}
 if(b.top<56||b.bottom>w.innerHeight-24)instant(doc.documentElement,()=>w.scrollBy(0,b.top-(w.innerHeight-b.height)/2))}
 // Every match tinted, the current one stronger. An engine without highlights shows the current one as the selection.
-function paint(){const w=doc&&doc.defaultView;if(!w)return;const reg=w.CSS&&w.CSS.highlights;
+function paint(){const w=doc&&doc.defaultView;if(!w)return;if(INDEX&&INDEX.editor){try{INDEX.editor.mark(hits,cur)}catch(e){}return}const reg=w.CSS&&w.CSS.highlights;
 if(!reg||!w.Highlight){if(cur>=0){const s=doc.getSelection();s.removeAllRanges();s.addRange(hits[cur])}return}
 const all=new w.Highlight(...hits);if(cur>=0)all.delete(hits[cur]);reg.set('onyx-find',all);if(cur>=0)reg.set('onyx-find-current',new w.Highlight(hits[cur]));else reg.delete('onyx-find-current')}
-function unpaint(){try{const reg=doc.defaultView.CSS.highlights;reg.delete('onyx-find');reg.delete('onyx-find-current')}catch(e){}}
+function unpaint(){try{if(INDEX&&INDEX.editor){INDEX.editor.mark([],-1);INDEX.editor.onChange(null)}}catch(e){}try{const reg=doc.defaultView.CSS.highlights;reg.delete('onyx-find');reg.delete('onyx-find-current')}catch(e){}}
 function show(){const n=hits.length,plus=capped?'+':'';count.textContent=!queryOf().trim()?'':!n?'No matches':cur<0?n+plus+(n===1&&!capped?' match':' matches'):`${cur+1} of ${n}${plus}`;prevBtn.disabled=nextBtn.disabled=!n}
 // The two tints, in a sheet the page adopts, so no element is added to it.
 function dress(d){if(DRESSED.has(d))return;DRESSED.add(d);try{const s=new d.defaultView.CSSStyleSheet();s.replaceSync(MARKS);d.adoptedStyleSheets=[...d.adoptedStyleSheets,s]}catch(e){const s=d.createElement('style');s.textContent=MARKS;(d.head||d.documentElement).appendChild(s)}}
 // The bar follows one page at a time. A change in it (outside Onyx's own panel, which streams answers) counts again a beat
 // later; so does a click or a changed control, since what a page shows can change with CSS alone.
-function changed(r){if(ours(r.target))return false;if(r.type!=='childList')return true;for(const n of r.addedNodes)if(!ours(n))return true;for(const n of r.removedNodes)if(!ours(n))return true;return false}
+function changed(r){if(ours(r.target)||drawnByEditor(r.target))return false;if(r.type!=='childList')return true;for(const n of r.addedNodes)if(!ours(n))return true;for(const n of r.removedNodes)if(!ours(n))return true;return false}
 function attach(d){detach();doc=d;dress(d);watcher=new MutationObserver(recs=>{if(recs.some(changed))later()});watcher.observe(d.body,{childList:true,subtree:true,characterData:true,attributeFilter:['hidden']})}
 function detach(){clearTimeout(timer);if(watcher)watcher.disconnect();watcher=null;if(doc)unpaint();doc=INDEX=null;hits=[];cur=-1;stale=false}
 function later(){stale=true;clearTimeout(timer);if(doc&&!bar.hidden)timer=setTimeout(()=>{if(doc&&!bar.hidden)refind('keep')},250)}
@@ -118,12 +130,12 @@ function selected(d){try{const t=String(d.getSelection()||'').trim();return t&&t
 // ⌘F: the bar, its field selected. A short passage selected in the page becomes the query, its current match the one
 // selected. Open already, ⌘F only selects the field, unless that passage is new.
 function open(seed){const d=readerDoc();if(!d||document.querySelector('dialog[open]'))return true;if(window.OnyxMenu)OnyxMenu.close();hidePeek();
-const picked=seed?selected(d):'',fresh=bar.hidden||d!==doc||(!!picked&&picked!==input.value);let from=null;if(picked){input.value=picked;try{from=d.getSelection().getRangeAt(0)}catch(e){}}
+const picked=seed?selected(d):'',fresh=bar.hidden||d!==doc||(!!picked&&picked!==input.value);let from=null;if(picked){input.value=picked;const ed=editorOf(d);try{from=ed?ed.selection():d.getSelection().getRangeAt(0)}catch(e){}}
 if(bar.hidden){bar.hidden=false;pillRoom()}input.focus();input.select();if(fresh){if(d!==doc)attach(d);refind('jump',from)}return true}
 // Escape, the ×, or the page gone: the tints go, and the match the bar was on is left selected in the reader, which has
 // the focus back, as in Safari, so a right-click can ask about it.
-function close(select){if(bar.hidden)return;const r=select?hits[cur]:null,d=doc;detach();bar.hidden=true;pillRoom();
-try{if(d&&d===readerDoc()){reader.contentWindow.focus();if(r){const s=d.getSelection();s.removeAllRanges();s.addRange(r)}}else if(document.activeElement===input)input.blur()}catch(e){}}
+function close(select){if(bar.hidden)return;const r=select?hits[cur]:null,d=doc,ed=INDEX&&INDEX.editor;detach();bar.hidden=true;pillRoom();
+try{if(d&&d===readerDoc()){reader.contentWindow.focus();if(r&&ed&&ed.live())ed.select(r);else if(r&&r.startContainer){const s=d.getSelection();s.removeAllRanges();s.addRange(r)}}else if(document.activeElement===input)input.blur()}catch(e){}}
 // Edit ▸ Find's three items (the app menu, through window.onyxShell.find) and ⌘G: the next or previous match, the bar
 // opened for it if it was away; nothing while there is no query.
 function run(verb){if(verb==='open')return open(true);if(!queryOf().trim())return true;if(bar.hidden)open(false);else go(verb==='previous'?-1:1);return true}

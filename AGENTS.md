@@ -74,7 +74,12 @@ an existing UTF-8 Markdown file in place, refuses a path that has become a
 symlink, and refuses a save written against an older version than the one on
 disk (409), so neither side's edit is lost. This is the user's write path; it
 does not loosen the model's.
+The editor's images come through `/_fs` under their own capability, which lists
+only images the note *as saved* references, so `/_fs` still serves only files a
+document referenced.
 → `test_editing_saves_only_the_note_its_page_opened_and_never_over_a_newer_version`,
+`test_the_editor_draws_only_images_the_saved_note_references`,
+`test_a_task_box_on_the_page_ticks_its_line_in_the_note`,
 `test_saving_a_note_keeps_its_file_its_line_endings_and_its_byte_order_mark`,
 `test_a_note_edited_through_a_linked_folder_saves_to_its_real_file_and_follows_its_links`
 
@@ -140,9 +145,16 @@ WebKit's snapshot, was the owner's call (2026-09-22).
 then `npm run build` in `editor/`; CI fails on a bundle that doesn't match its
 source. It is a separate file so `ask.js` stays one dependency-free script, and it
 loads only on the first ⌘E. The editor follows the reader's Markdown (CommonMark,
-tables, wikilinks) rather than all of Obsidian's, on purpose: ⌘E should never show
-a construct styled that the page it toggles back to leaves as plain text. Add a
-construct to the reader (`viewer._build_markdown`) and the editor together.
+tables, strikethrough, `==highlights==`, tasks, wikilinks) rather than all of
+Obsidian's, on purpose: ⌘E should never show a construct styled that the page it
+toggles back to leaves as plain text. Add a construct to the reader
+(`viewer._build_markdown`) and the editor (`editor/src/preview.ts`) together.
+
+**While the editor is open, the outline and ⌘F read it, not the page.** The page's
+rendering is hidden under it, and CodeMirror draws only the lines near the window,
+so the shell asks the editor (`window.askwEditor`): headings with their places,
+and the note's text to search (source, markup included, as Obsidian's editor
+search does). `headingsOf` and `find_ui.collect` branch on `editorOf(doc)`.
 
 **A save writes the note in place, not to a temp file renamed over it.** A rename
 gives the file a new inode and creation date, and Obsidian shows and sorts notes by

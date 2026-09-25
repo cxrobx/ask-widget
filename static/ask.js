@@ -2145,6 +2145,40 @@
   // The shell's ⌘E, and View ▸ Toggle Editing in the app, reach the page showing through this.
   window.askwToggleEdit = toggleEdit;
 
+  // A task's box on the reading page ticks its line in the note, as in Obsidian's reading view, over the version this
+  // page shows (reloadSig): if the note has moved on since, the server refuses, the box goes back, and live reload
+  // brings the new version. Its own write is taken as seen, so the page doesn't reload for it.
+  function initTasks() {
+    if (!editableNote()) return;
+    document.addEventListener('click', function (e) {
+      var box = e.target && e.target.closest ? e.target.closest('input.askw-task-box') : null;
+      if (!box || editSession) return;
+      var line = box.getAttribute('data-askw-line'), done = box.checked, item = box.closest('li');
+      if (line === null) { e.preventDefault(); return; }
+      if (item) item.classList.toggle('is-done', done);
+      var undo = function (message) {
+        box.checked = !done;
+        if (item) item.classList.toggle('is-done', !done);
+        toast(message);
+      };
+      var base = reloadSig ? Promise.resolve(reloadSig)
+        : fetch(SERVER + '/_mtime?src=' + encodeURIComponent(reloadSrc) + '&cap=' + encodeURIComponent(metaValue('askw-doc-token')), { cache: 'no-store' })
+            .then(function (r) { return r.json(); }).then(function (d) { return d.sig; });
+      base.then(function (sig) {
+        return fetch(SERVER + '/api/source/task', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: TOKEN, src: reloadSrc, cap: metaValue('askw-doc-token'), line: Number(line), done: done, base: sig })
+        });
+      }).then(function (r) {
+        return r.json().then(function (d) {
+          if (r.status === 409) return undo('This note changed on disk; showing the new version');
+          if (!d.ok) return undo(d.error || 'Couldn’t change that task');
+          reloadSig = reloadSeen = d.sig;
+        });
+      }).catch(function () { undo('Onyx isn’t answering'); });
+    });
+  }
+
   // A plain HTML page that paints no background of its own used to sit on the
   // window's material, which tinted it. The window is now a raw desktop blur, so
   // such a page would put its text straight on the wallpaper. Give it the page
@@ -2451,6 +2485,7 @@
     wire();
     initFolder().then(initHistoryReplay);
     initLiveReload();
+    initTasks();
     initMarkdownTheme();
     initVaultLook();
     pendingLanding = takeLanding();

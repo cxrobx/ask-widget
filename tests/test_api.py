@@ -388,6 +388,52 @@ class ApiTests(unittest.TestCase):
             refused = self.client.get("/api/source", params={"src": str(path.resolve()), "cap": self.page_capability(path)})
             self.assertEqual(refused.status_code, 400)
 
+    def test_a_task_box_on_the_page_ticks_its_line_in_the_note(self) -> None:
+        note = self.root / "tasks.md"
+        note.write_text("# Tasks\n\n- [ ] write it\n- [ ] ship it\n", encoding="utf-8")
+        src, cap = str(note.resolve()), self.page_capability(note)
+        base = self.client.get("/_mtime", params={"src": src, "cap": cap}).json()["sig"]
+        tick = {"token": self.config.token, "src": src, "cap": cap, "line": 3, "done": True, "base": base}
+        self.assertEqual(self.client.post("/api/source/task", json={**tick, "token": "wrong"}).status_code, 403)
+        self.assertEqual(self.client.post("/api/source/task", json={**tick, "cap": "forged"}).status_code, 403)
+        ticked = self.client.post("/api/source/task", json=tick).json()
+        self.assertTrue(ticked["ok"])
+        self.assertEqual(note.read_text(encoding="utf-8"), "# Tasks\n\n- [ ] write it\n- [x] ship it\n")
+        # Against the version the page was showing: once the note has moved on, refused.
+        self.assertEqual(self.client.post("/api/source/task", json={**tick, "line": 2}).status_code, 409)
+        self.assertEqual(self.client.post("/api/source/task", json={**tick, "line": 0, "base": ticked["sig"]}).status_code, 400)
+
+    def test_the_editor_draws_only_images_the_saved_note_references(self) -> None:
+        (self.root / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        (self.root / "other.png").write_bytes(b"\x89PNG\r\n\x1a\nother")
+        (self.root / "doc.pdf").write_bytes(b"%PDF-1.4")
+        note = self.root / "pictures.md"
+        note.write_text("# Pictures\n\n![a picture](pic.png) ![](doc.pdf) ![](https://example.com/x.png)\n", encoding="utf-8")
+        src, cap = str(note.resolve()), self.page_capability(note)
+        opened = self.client.get("/api/source", params={"src": src, "cap": cap}).json()
+        ask = {"token": self.config.token, "edit": opened["edit"], "refs": [
+            {"kind": "md", "target": "pic.png"}, {"kind": "md", "target": "other.png"},
+            {"kind": "md", "target": "doc.pdf"}, {"kind": "md", "target": "https://example.com/x.png"},
+        ]}
+        self.assertEqual(self.client.post("/api/source/images", json={**ask, "token": "wrong"}).status_code, 403)
+        self.assertEqual(self.client.post("/api/source/images", json={**ask, "edit": "forged"}).status_code, 403)
+        urls = self.client.post("/api/source/images", json=ask).json()["urls"]
+        home = patch("pathlib.Path.home", return_value=self.root.resolve())  # /_fs serves only under home
+        home.start()
+        self.addCleanup(home.stop)
+        self.assertEqual(urls["md:https://example.com/x.png"], "https://example.com/x.png")
+        self.assertIsNone(urls["md:doc.pdf"])      # not an image
+        self.assertIsNone(urls["md:other.png"])    # an image, but not one the note references
+        self.assertEqual(self.client.get(urls["md:pic.png"]).content, b"\x89PNG\r\n\x1a\nfake")
+        stranger = urls["md:pic.png"].replace(urllib.parse.quote(str((self.root / "pic.png").resolve())),
+                                              urllib.parse.quote(str((self.root / "other.png").resolve())))
+        self.assertEqual(self.client.get(stranger).status_code, 404)
+        # Once the note is saved referencing it, it is drawn too.
+        self.client.post("/api/source", json={"token": self.config.token, "edit": opened["edit"], "base": opened["sig"],
+                                              "text": note.read_text(encoding="utf-8") + "\n![](other.png)\n"})
+        urls = self.client.post("/api/source/images", json=ask).json()["urls"]
+        self.assertEqual(self.client.get(urls["md:other.png"]).content, b"\x89PNG\r\n\x1a\nother")
+
     def test_position_and_export_round_trip(self) -> None:
         self.client.get("/view", params={"src": str(self.document)})
         updated = self.client.post(
@@ -559,6 +605,18 @@ class VaultApiTests(unittest.TestCase):
         self.assertTrue(saved["ok"])
         self.assertTrue((self.vault / "linked").is_symlink())
         self.assertEqual((self.outside / "L.md").read_text(encoding="utf-8"), "# Linked\n\n[[M]] again\n")
+
+        # An embedded image resolves as the page's does, by the vault's rules, once the note references it.
+        (self.vault / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\nshot")
+        self.app.state.vault.invalidate()  # a new file, inside the index's few seconds of caching
+        self.client.post("/api/source", json={
+            "token": self.config.token, "edit": opened["edit"], "base": saved["sig"], "text": "# Linked\n\n![[shot.png]]\n",
+        })
+        urls = self.client.post("/api/source/images", json={
+            "token": self.config.token, "edit": opened["edit"], "refs": [{"kind": "wiki", "target": "shot.png"}],
+        }).json()["urls"]
+        with patch("pathlib.Path.home", return_value=self.base.resolve()):
+            self.assertEqual(self.client.get(urls["wiki:shot.png"]).content, b"\x89PNG\r\n\x1a\nshot")
 
     def test_history_says_which_vault_a_document_lives_in_and_its_row_there(self) -> None:
         # History keys a note by its real file; the shell lists it through the link, and says where.
