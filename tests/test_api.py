@@ -403,6 +403,44 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/source/task", json={**tick, "line": 2}).status_code, 409)
         self.assertEqual(self.client.post("/api/source/task", json={**tick, "line": 0, "base": ticked["sig"]}).status_code, 400)
 
+    def test_a_tick_is_made_against_the_version_the_page_shows(self) -> None:
+        # The page names the version it rendered; live reload may since have seen a newer one while a reload waits
+        # (an answer open). A tick against the page's version is refused once the note has moved on, so line 2 of
+        # the old text never ticks line 2 of the new.
+        note = self.root / "shown.md"
+        note.write_text("- [ ] first\n- [ ] second\n", encoding="utf-8")
+        page = self.client.get("/view", params={"src": str(note)}).text
+        shown = re.search(r'name="askw-doc-sig" content="([^"]+)"', page).group(1)
+        cap = re.search(r'name="askw-doc-token" content="([^"]+)"', page).group(1)
+        src = str(note.resolve())
+        self.assertEqual(shown, self.client.get("/_mtime", params={"src": src, "cap": cap}).json()["sig"])
+        note.write_text("- [ ] prepended\n- [ ] first\n- [ ] second\n", encoding="utf-8")
+        tick = {"token": self.config.token, "src": src, "cap": cap, "line": 0, "done": True, "base": shown}
+        self.assertEqual(self.client.post("/api/source/task", json=tick).status_code, 409)
+        self.assertEqual(note.read_text(encoding="utf-8"), "- [ ] prepended\n- [ ] first\n- [ ] second\n")
+
+    def test_the_editor_reads_the_note_again_without_minting_capabilities(self) -> None:
+        src, cap = str(self.document), self.page_capability(self.document)
+        opened = self.client.get("/api/source", params={"src": src, "cap": cap}).json()
+        minted = len(self.app.state.edit_caps)
+        self.document.write_text("# Guide\n\nChanged elsewhere.", encoding="utf-8")
+        for _ in range(3):
+            now = self.client.get("/api/source/current", params={"edit": opened["edit"]}).json()
+        self.assertEqual(now["text"], "# Guide\n\nChanged elsewhere.")
+        self.assertEqual(len(self.app.state.edit_caps), minted)
+        self.assertEqual(self.client.get("/api/source/current", params={"edit": "forged"}).status_code, 403)
+        # One in use stays while more notes are opened for editing than the server keeps.
+        for i in range(80):
+            other = self.root / f"other-{i}.md"
+            other.write_text(f"# {i}\n", encoding="utf-8")
+            self.client.get("/api/source", params={"src": str(other.resolve()), "cap": self.page_capability(other)})
+            if i % 20 == 0:
+                self.client.get("/api/source/current", params={"edit": opened["edit"]})
+        saved = self.client.post("/api/source", json={
+            "token": self.config.token, "edit": opened["edit"], "base": now["sig"], "text": "# Guide\n\nStill mine.",
+        })
+        self.assertEqual(saved.status_code, 200)
+
     def test_the_editor_draws_only_images_the_saved_note_references(self) -> None:
         (self.root / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
         (self.root / "other.png").write_bytes(b"\x89PNG\r\n\x1a\nother")

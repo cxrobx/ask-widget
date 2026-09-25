@@ -2146,10 +2146,25 @@
   window.askwToggleEdit = toggleEdit;
 
   // A task's box on the reading page ticks its line in the note, as in Obsidian's reading view, over the version this
-  // page shows (reloadSig): if the note has moved on since, the server refuses, the box goes back, and live reload
-  // brings the new version. Its own write is taken as seen, so the page doesn't reload for it.
+  // page shows: the one /view read (askw-doc-sig), not the one live reload last saw, which runs ahead of the page while
+  // a reload waits for the answer panel to close. If the note has moved on, the server refuses, the box goes back, and
+  // live reload brings the new version. Its own write is taken as seen, so the page doesn't reload for it.
   function initTasks() {
     if (!editableNote()) return;
+    var shown = metaValue('askw-doc-sig');
+    // A draft the editor kept as its page went (editor/src/main.ts): news only if the file doesn't already have it,
+    // which it does whenever the save sent on the way out landed.
+    var draftKey = 'askw:draft:' + reloadSrc, draft = null;
+    try { draft = JSON.parse(localStorage.getItem(draftKey) || 'null'); } catch (e) {}
+    if (draft && typeof draft.text === 'string') {
+      fetch(SERVER + '/api/source?src=' + encodeURIComponent(reloadSrc) + '&cap=' + encodeURIComponent(metaValue('askw-doc-token')), { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d.ok) return;
+          if (d.text === draft.text) { try { localStorage.removeItem(draftKey); } catch (e) {} }
+          else toast('Edits to this note never reached the file — ⌘E to get them back');
+        }).catch(function () {});
+    }
     document.addEventListener('click', function (e) {
       var box = e.target && e.target.closest ? e.target.closest('input.askw-task-box') : null;
       if (!box || editSession) return;
@@ -2161,19 +2176,14 @@
         if (item) item.classList.toggle('is-done', !done);
         toast(message);
       };
-      var base = reloadSig ? Promise.resolve(reloadSig)
-        : fetch(SERVER + '/_mtime?src=' + encodeURIComponent(reloadSrc) + '&cap=' + encodeURIComponent(metaValue('askw-doc-token')), { cache: 'no-store' })
-            .then(function (r) { return r.json(); }).then(function (d) { return d.sig; });
-      base.then(function (sig) {
-        return fetch(SERVER + '/api/source/task', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: TOKEN, src: reloadSrc, cap: metaValue('askw-doc-token'), line: Number(line), done: done, base: sig })
-        });
+      fetch(SERVER + '/api/source/task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, src: reloadSrc, cap: metaValue('askw-doc-token'), line: Number(line), done: done, base: shown })
       }).then(function (r) {
         return r.json().then(function (d) {
           if (r.status === 409) return undo('This note changed on disk; showing the new version');
           if (!d.ok) return undo(d.error || 'Couldn’t change that task');
-          reloadSig = reloadSeen = d.sig;
+          shown = reloadSig = reloadSeen = d.sig;
         });
       }).catch(function () { undo('Onyx isn’t answering'); });
     });

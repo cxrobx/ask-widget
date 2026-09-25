@@ -134,6 +134,7 @@ class ViewerAndCitationTests(unittest.TestCase):
 
     def test_saving_a_note_keeps_its_file_its_line_endings_and_its_byte_order_mark(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
+            raw = str(Path(raw).resolve())  # a capability names the realpath
             path = Path(raw) / "note.md"
             path.write_bytes(codecs.BOM_UTF8 + b"# Title\r\n\r\nBody\r\n")
             text, sig = read_source(path)
@@ -166,6 +167,7 @@ class ViewerAndCitationTests(unittest.TestCase):
 
     def test_notes_render_obsidians_strikethrough_highlights_and_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
+            raw = str(Path(raw).resolve())  # a capability names the realpath
             path = Path(raw) / "tasks.md"
             path.write_text(
                 "---\ntags: [x]\n---\n\n- [ ] open ~~gone~~ ==marked==\n- [x] done\n- plain [ ] item\n\nnot a == highlight\n",
@@ -189,6 +191,90 @@ class ViewerAndCitationTests(unittest.TestCase):
                 set_task(path, 6, True, base=sig)  # not a task
             with self.assertRaises(SourceConflict):
                 set_task(path, 4, False, base="stale")
+
+    def test_two_saves_against_one_version_never_both_land(self) -> None:
+        # Two tabs (or a tick beside an autosave) saving over the same version: one lands, the other is refused. Each
+        # thread is held at its version check until the other reaches its own, or half a second passes: unlocked, both
+        # pass the check together and both "succeed", one overwriting the other.
+        import threading
+        from unittest.mock import patch
+
+        from onyx import viewer
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw).resolve() / "race.md"
+            path.write_text("# Race\n", encoding="utf-8")
+            _, sig = read_source(path)
+            meet, real, outcomes = threading.Barrier(2, timeout=0.5), viewer.stat_signature, []
+
+            def held(st):
+                if getattr(held_here, "first", True):
+                    held_here.first = False
+                    try:
+                        meet.wait()
+                    except threading.BrokenBarrierError:
+                        pass
+                return real(st)
+            held_here = threading.local()
+
+            def save(text):
+                try:
+                    write_source(path, text, base=sig)
+                    outcomes.append("saved")
+                except SourceConflict:
+                    outcomes.append("refused")
+
+            with patch.object(viewer, "stat_signature", held):
+                threads = [threading.Thread(target=save, args=(f"# Race\n\n{who}\n",)) for who in ("one", "two")]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+            self.assertEqual(sorted(outcomes), ["refused", "saved"])
+            self.assertIn(path.read_text(encoding="utf-8"), ("# Race\n\none\n", "# Race\n\ntwo\n"))
+
+    def test_a_note_is_saved_only_where_its_page_found_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw).resolve()
+            (base / "notes").mkdir()
+            (base / "elsewhere").mkdir()
+            path = base / "notes" / "note.md"
+            path.write_text("# Mine\n", encoding="utf-8")
+            (base / "elsewhere" / "note.md").write_text("# Someone else's\n", encoding="utf-8")
+            _, sig = read_source(path)
+            # The folder swapped for a symlink to another with a note of the same name: the same path now leads there,
+            # and neither a read nor a save follows it.
+            (base / "notes").rename(base / "moved")
+            (base / "notes").symlink_to(base / "elsewhere", target_is_directory=True)
+            with self.assertRaises(ViewerError):
+                read_source(path)
+            with self.assertRaises(ViewerError):
+                write_source(path, "# Overwritten\n", base=sig)
+            self.assertEqual((base / "elsewhere" / "note.md").read_text(encoding="utf-8"), "# Someone else's\n")
+
+    def test_a_note_replaced_while_it_is_saved_is_a_conflict_not_a_save(self) -> None:
+        # A sync renaming its own copy over the note during the write: the bytes went to the file it replaced, so the
+        # save must not report success (the editor would call its text saved, then take the disk's over it).
+        from unittest.mock import patch
+
+        from onyx import viewer
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw).resolve() / "synced.md"
+            path.write_text("# Before\n", encoding="utf-8")
+            _, sig = read_source(path)
+            real_fsync = viewer.os.fsync
+
+            def sync_lands(fd):
+                real_fsync(fd)
+                incoming = path.with_name("synced.tmp")
+                incoming.write_text("# From the sync\n", encoding="utf-8")
+                incoming.replace(path)
+
+            with patch.object(viewer.os, "fsync", sync_lands), self.assertRaises(SourceConflict) as refused:
+                write_source(path, "# Mine\n", base=sig)
+            self.assertEqual(path.read_text(encoding="utf-8"), "# From the sync\n")
+            self.assertEqual(refused.exception.sig, stat_signature(path.stat()))
 
     def test_wikilinks_render_only_in_vault_context(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

@@ -196,6 +196,13 @@ export async function open(options: OpenOptions): Promise<Session> {
   let saved = loaded.text as string;
   let timer = 0, inflight: Promise<boolean> | null = null, again = false;
   let conflict: string | null = null, failed = false, closed = false;
+  // "Keep mine" chose this text over the disk's, so it has to be written even when it is the text last saved (undone
+  // back to it, say): otherwise the disk's version stays and the editor calls itself saved.
+  let mustWrite = false;
+  // Text that may never have reached the file (the page left mid-save, or with a conflict open) is kept here in the
+  // app's own storage, and offered back the next time the note is opened for editing.
+  const draftKey = "askw:draft:" + options.src;
+  let draftPending = false;
 
   const host = document.createElement("div");
   host.className = "askw-ed-host askw-ed";
@@ -209,7 +216,14 @@ export async function open(options: OpenOptions): Promise<Session> {
   host.append(bar);
   document.body.append(status);
 
-  const dirty = () => view.state.doc.toString() !== saved;
+  const dirty = () => mustWrite || view.state.doc.toString() !== saved;
+  function keepDraft() {
+    try { localStorage.setItem(draftKey, JSON.stringify({ text: view.state.doc.toString(), at: Date.now() })); } catch (e) { /* storage full or off */ }
+  }
+  function dropDraft() {
+    if (draftPending) return;  // one offered back and not yet answered stays until it is
+    try { localStorage.removeItem(draftKey); } catch (e) { /* nothing kept */ }
+  }
   function paint() {
     const text = conflict ? "Changed on disk" : failed ? "Not saved" : inflight ? "Saving…" : dirty() ? "Edited" : "Saved";
     status.textContent = "Editing · " + text;
@@ -224,7 +238,7 @@ export async function open(options: OpenOptions): Promise<Session> {
     text.textContent = "This note changed on disk while you were editing it.";
     const mine = document.createElement("button");
     mine.textContent = "Keep mine";
-    mine.onclick = () => { sig = disk; conflict = null; bar.hidden = true; save(); };
+    mine.onclick = () => { sig = disk; conflict = null; mustWrite = true; bar.hidden = true; save(); };
     const theirs = document.createElement("button");
     theirs.textContent = "Use the one on disk";
     theirs.onclick = () => { conflict = null; bar.hidden = true; reloadFromDisk(true); };
@@ -238,13 +252,14 @@ export async function open(options: OpenOptions): Promise<Session> {
     if (conflict) return Promise.resolve(false);
     if (inflight) { again = true; return inflight; }
     const text = view.state.doc.toString();
-    if (text === saved && !failed) return Promise.resolve(true);
+    if (text === saved && !failed && !mustWrite) return Promise.resolve(true);
     const body = JSON.stringify({ token, edit, text, base: sig });
     inflight = fetch(`${server}/api/source`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
-      keepalive: body.length < KEEPALIVE_BYTES,
+      // The browser's cap is on bytes sent; a string's length counts UTF-16 units, a third of CJK text's UTF-8 size.
+      keepalive: new TextEncoder().encode(body).length < KEEPALIVE_BYTES,
     })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
@@ -253,6 +268,8 @@ export async function open(options: OpenOptions): Promise<Session> {
         sig = d.sig;
         saved = text;
         failed = false;
+        mustWrite = false;
+        if (!dirty()) dropDraft();
         retryMissingImages();
         return true;
       })
@@ -284,13 +301,15 @@ export async function open(options: OpenOptions): Promise<Session> {
 
   // Take in the file's text, changing only the lines that differ, so a cursor away from them stays put.
   async function reloadFromDisk(force: boolean) {
-    const fresh = await fetch(`${server}/api/source?${query}`, { cache: "no-store" }).then((r) => r.json()).catch(() => null);
+    const fresh = await fetch(`${server}/api/source/current?${new URLSearchParams({ edit })}`, { cache: "no-store" })
+      .then((r) => r.json()).catch(() => null);
     if (!fresh || !fresh.ok || closed) return;
     if (!force && dirty()) { showConflict(fresh.sig); return; }
     const next = fresh.text as string, changes = lineChanges(view.state.doc.toString(), next);
     saved = next;
     sig = fresh.sig;
     failed = false;
+    mustWrite = false;
     if (changes.length) view.dispatch({ changes, userEvent: "sync" });
     paint();
   }
@@ -393,6 +412,32 @@ export async function open(options: OpenOptions): Promise<Session> {
   view.focus();
   paint();
 
+  // A draft left from last time: dropped if the file already has it, else offered back beside the file's text.
+  try {
+    const kept = JSON.parse(localStorage.getItem(draftKey) || "null");
+    if (kept && typeof kept.text === "string" && kept.text !== saved) offerDraft(kept.text, kept.at);
+    else localStorage.removeItem(draftKey);
+  } catch (e) { /* nothing kept */ }
+  function offerDraft(text: string, at: number) {
+    draftPending = true;
+    bar.hidden = false;
+    bar.innerHTML = "";
+    const say = document.createElement("span");
+    const when = new Date(at || Date.now()).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    say.textContent = `Edits from ${when} never reached the file.`;
+    const restore = document.createElement("button");
+    restore.textContent = "Restore them";
+    restore.onclick = () => {
+      draftPending = false;
+      bar.hidden = true;
+      view.dispatch({ changes: lineChanges(view.state.doc.toString(), text), userEvent: "input" });
+    };
+    const discard = document.createElement("button");
+    discard.textContent = "Discard them";
+    discard.onclick = () => { draftPending = false; bar.hidden = true; dropDraft(); };
+    bar.append(say, restore, discard);
+  }
+
   const face: EditorFace = {
     live: () => !closed,
     text: () => view.state.doc.toString(),
@@ -434,8 +479,14 @@ export async function open(options: OpenOptions): Promise<Session> {
   }
   window.askwEditor = face;
 
-  // The page going away: whatever is unsaved goes out with keepalive.
-  const flushOnHide = () => { if (dirty() && !conflict) save(); };
+  // The page going away (a sidebar click, a closed tab): whatever is unsaved is kept as a draft first, since this page
+  // can't see a save through or ask about a conflict any more, then sent with keepalive. A save that lands leaves a
+  // draft equal to the file, which the next open drops unasked.
+  const flushOnHide = () => {
+    if (!dirty() && !inflight) return;
+    if (dirty() || again) keepDraft();
+    if (!conflict) save();
+  };
   window.addEventListener("pagehide", flushOnHide);
   const onVisibility = () => { if (document.hidden) flushOnHide(); };
   document.addEventListener("visibilitychange", onVisibility);

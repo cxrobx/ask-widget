@@ -24,8 +24,10 @@ import os
 import re
 import socket
 import stat
+import threading
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -291,6 +293,34 @@ def stat_signature(st: os.stat_result) -> str:
     return f"{st.st_mtime_ns}:{st.st_size}"
 
 
+# One lock per stripe of note paths: a save's check of the version and its write are one step, so of two saves
+# written against the same version (two tabs, a task tick beside an autosave) the second is refused, not interleaved.
+_NOTE_LOCKS = tuple(threading.RLock() for _ in range(64))
+
+
+@contextmanager
+def _note_lock(path: Path):
+    with _NOTE_LOCKS[hash(str(path)) % len(_NOTE_LOCKS)]:
+        yield
+
+
+def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def _open_note(path: Path, flags: int) -> int:
+    """Open the one file a capability names. ``path`` is the realpath the page was opened with, so it must still be
+    one: a folder along it turned into a symlink since would lead the same path to another note. ``O_NOFOLLOW`` only
+    guards the last part, so the whole path is checked, before the open and again after it."""
+    if os.path.realpath(path) != str(path):
+        raise ViewerError("This note has moved since its page was opened; reload the page.")
+    fd = os.open(path, flags | os.O_NOFOLLOW)
+    if os.path.realpath(path) != str(path):
+        os.close(fd)
+        raise ViewerError("This note has moved since its page was opened; reload the page.")
+    return fd
+
+
 def read_source(path: Path) -> tuple[str, str]:
     """A note's text for the editor, and the signature of the version it is.
 
@@ -301,7 +331,7 @@ def read_source(path: Path) -> tuple[str, str]:
     if path.suffix.lower() not in EDITABLE_EXTENSIONS:
         raise ViewerError("Only Markdown notes can be edited.")
     try:
-        with path.open("rb") as handle:
+        with os.fdopen(_open_note(path, os.O_RDONLY), "rb") as handle:
             st = os.fstat(handle.fileno())
             if st.st_size > MAX_EDIT_BYTES:
                 raise ViewerError("This note is too large to edit here.")
@@ -314,7 +344,7 @@ def read_source(path: Path) -> tuple[str, str]:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         raise ViewerError("This note isn’t UTF-8 text, so Onyx won’t edit it.") from None
-    return text.removeprefix("﻿").replace("\r\n", "\n"), stat_signature(st)
+    return text.removeprefix("\ufeff").replace("\r\n", "\n"), stat_signature(st)
 
 
 def write_source(path: Path, text: str, *, base: str) -> str:
@@ -322,38 +352,54 @@ def write_source(path: Path, text: str, *, base: str) -> str:
 
     In place, never a new file renamed over the old: a rename gives the note a new inode and so a new creation date,
     which Obsidian shows and sorts notes by. The new bytes go over the old before the file is cut to length, so a
-    watcher never reads it empty. ``O_NOFOLLOW`` refuses a path that has become a symlink since the page was opened.
-    A file that ended its lines in CRLF, or began with a byte-order mark, keeps doing so.
+    watcher never reads it empty. A file that ended its lines in CRLF, or began with a byte-order mark, keeps doing so.
+
+    Another writer can still swap the file under it by renaming its own copy in (a sync can). Then the path no longer
+    names the file this wrote, whose bytes went nowhere, so that is a conflict, never a success.
     """
     if path.suffix.lower() not in EDITABLE_EXTENSIONS:
         raise ViewerError("Only Markdown notes can be edited.")
     encoded = text.replace("\r\n", "\n").encode("utf-8")
     if len(encoded) > MAX_EDIT_BYTES:
         raise ViewerError("This note is too large to save here.")
-    try:
-        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
-    except FileNotFoundError:
-        raise ViewerError("This note is no longer on disk.") from None
-    except OSError as exc:
-        raise ViewerError(f"Could not open {path.name} to save it: {exc.strerror or exc}") from exc
-    with os.fdopen(fd, "r+b") as handle:
-        st = os.fstat(handle.fileno())
-        if not stat.S_ISREG(st.st_mode):
-            raise ViewerError("Only a file can be edited.")
-        if stat_signature(st) != base:
-            raise SourceConflict(stat_signature(st))
-        current = handle.read()
-        if b"\r\n" in current and current.count(b"\r\n") == current.count(b"\n"):
-            encoded = encoded.replace(b"\n", b"\r\n")
-        if current.startswith(codecs.BOM_UTF8):
-            encoded = codecs.BOM_UTF8 + encoded
-        if encoded != current:
-            handle.seek(0)
-            handle.write(encoded)
-            handle.truncate()
-            handle.flush()
-            os.fsync(handle.fileno())
-        return stat_signature(os.fstat(handle.fileno()))
+
+    def at_path() -> os.stat_result:
+        try:
+            return os.stat(path)
+        except FileNotFoundError:
+            raise ViewerError("This note is no longer on disk.") from None
+
+    with _note_lock(path):
+        try:
+            fd = _open_note(path, os.O_RDWR)
+        except FileNotFoundError:
+            raise ViewerError("This note is no longer on disk.") from None
+        except OSError as exc:
+            raise ViewerError(f"Could not open {path.name} to save it: {exc.strerror or exc}") from exc
+        with os.fdopen(fd, "r+b") as handle:
+            st = os.fstat(handle.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                raise ViewerError("Only a file can be edited.")
+            now = at_path()
+            if not _same_file(st, now):
+                raise SourceConflict(stat_signature(now))
+            if stat_signature(st) != base:
+                raise SourceConflict(stat_signature(st))
+            current = handle.read()
+            if b"\r\n" in current and current.count(b"\r\n") == current.count(b"\n"):
+                encoded = encoded.replace(b"\n", b"\r\n")
+            if current.startswith(codecs.BOM_UTF8):
+                encoded = codecs.BOM_UTF8 + encoded
+            if encoded != current:
+                handle.seek(0)
+                handle.write(encoded)
+                handle.truncate()
+                handle.flush()
+                os.fsync(handle.fileno())
+            written, now = os.fstat(handle.fileno()), at_path()
+            if not _same_file(written, now):
+                raise SourceConflict(stat_signature(now))
+            return stat_signature(written)
 
 
 # A task item's line: any quote and list markers, then the box. Group 2 is the character inside it.
@@ -361,16 +407,22 @@ _TASK_LINE_RE = re.compile(r"^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)(
 
 
 def set_task(path: Path, line: int, done: bool, *, base: str) -> str:
-    """Tick or clear the task on ``line`` (0-based, as the page's box names it), over the version ``base`` names."""
-    text, _ = read_source(path)
-    lines = text.split("\n")
-    if not 0 <= line < len(lines):
-        raise ViewerError("That task is no longer in this note.")
-    found = _TASK_LINE_RE.match(lines[line])
-    if not found:
-        raise ViewerError("That task is no longer in this note.")
-    lines[line] = found.group(1) + ("x" if done else " ") + lines[line][found.end(2):]
-    return write_source(path, "\n".join(lines), base=base)
+    """Tick or clear the task on ``line`` (0-based, as the page's box names it), over the version ``base`` names.
+
+    The read and the write are one step under the note's lock, so the line ticked is the line read."""
+    with _note_lock(path):
+        text, sig = read_source(path)
+        if sig != base:
+            raise SourceConflict(sig)
+        lines = text.split("\n")
+        if not 0 <= line < len(lines):
+            raise ViewerError("That task is no longer in this note.")
+        found = _TASK_LINE_RE.match(lines[line])
+        if not found:
+            raise ViewerError("That task is no longer in this note.")
+        lines[line] = found.group(1) + ("x" if done else " ") + lines[line][found.end(2):]
+        return write_source(path, "\n".join(lines), base=base)
+
 
 # MARK: - Markdown: frontmatter, wikilinks, link rewriting
 

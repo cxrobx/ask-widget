@@ -67,17 +67,34 @@ never opt back in. Markdown is rendered without executing raw HTML.
 no writes, ever. Adding a write tool to the runner is not a feature.
 → `test_claude_command_gates_web_tools_and_never_allows_writes`
 
-**A save writes only the note its page was opened from.** ⌘E's editor gets a
-note's source only against that page's own document capability, and an edit
-capability for that one file with it; `POST /api/source` takes no path. It writes
-an existing UTF-8 Markdown file in place, refuses a path that has become a
-symlink, and refuses a save written against an older version than the one on
-disk (409), so neither side's edit is lost. This is the user's write path; it
-does not loosen the model's.
+**A save writes only the note its page was opened from, and never over a version
+nobody saw.** ⌘E's editor gets a note's source only against that page's own
+document capability, and an edit capability for that one file with it;
+`POST /api/source` takes no path. It writes an existing UTF-8 Markdown file in
+place, and refuses a save written against an older version than the one on disk
+(409), so neither side's edit is lost. This is the user's write path; it does
+not loosen the model's. The rules an adversarial review (Codex, 2026-09-25) found
+missing, each now with a test:
+- the version check and the write are one step under a per-note lock
+  (`viewer._note_lock`), so of two saves against one version the second is refused;
+- the capability's path must still be its own realpath, before and after the
+  open: `O_NOFOLLOW` alone guards only the last component, and a folder swapped
+  for a symlink led the same path to another note;
+- a save whose file was replaced under it (a sync renaming its copy in) is a
+  conflict, never "Saved": the bytes went to a file the path no longer names;
+- a task tick is made against the version the page *shows* (`askw-doc-sig`), not
+  the newer one live reload has seen while a reload waits;
+- text that may not have reached the file when its page goes is kept as a draft
+  and offered back on the next ⌘E; "Keep mine" always writes.
 The editor's images come through `/_fs` under their own capability, which lists
 only images the note *as saved* references, so `/_fs` still serves only files a
 document referenced.
 → `test_editing_saves_only_the_note_its_page_opened_and_never_over_a_newer_version`,
+`test_two_saves_against_one_version_never_both_land`,
+`test_a_note_is_saved_only_where_its_page_found_it`,
+`test_a_note_replaced_while_it_is_saved_is_a_conflict_not_a_save`,
+`test_a_tick_is_made_against_the_version_the_page_shows`,
+`test_no_edit_is_lost_or_misfiled_when_the_note_moves_under_it`,
 `test_the_editor_draws_only_images_the_saved_note_references`,
 `test_a_task_box_on_the_page_ticks_its_line_in_the_note`,
 `test_saving_a_note_keeps_its_file_its_line_endings_and_its_byte_order_mark`,

@@ -458,6 +458,7 @@ def create_app(config: AppConfig) -> FastAPI:
         seed_path = _resolve_folder(app, folder) if folder else config.default_folder
         seed = str(seed_path) if seed_path else None
         editing = None  # how a note was opened, which its links resolve against once it is being edited
+        shown = None    # the version of the file this page shows, which a task tick is made against
         try:
             if viewer.is_remote(src):
                 html_text = await asyncio.to_thread(
@@ -504,6 +505,12 @@ def create_app(config: AppConfig) -> FastAPI:
                     if context_path is not None:
                         seed = str(context_path)
                 root = _vault_root(app)
+                # Taken before the file is read: should it change in between, the page shows newer text than this
+                # names, and a tick made against it is refused rather than landing on a line the page never showed.
+                try:
+                    shown = viewer.stat_signature(path.stat())
+                except OSError:
+                    shown = None
                 index = None
                 if root is not None and vault.is_inside(lexical, root):
                     index = await asyncio.to_thread(app.state.vault.get, root)
@@ -538,7 +545,7 @@ def create_app(config: AppConfig) -> FastAPI:
             asset_token=capability,
             allow_document_scripts=interactive_local_html,
         )
-        out = first_paint(out, doc_src, settings)
+        out = first_paint(out, doc_src, settings, shown=shown if kind == "markdown" else None)
         caps: OrderedDict = app.state.asset_caps
         caps[capability] = {
             "assets": assets,
@@ -776,6 +783,28 @@ def create_app(config: AppConfig) -> FastAPI:
             app.state.edit_fs.pop(gone["fs"], None)
         return JSONResponse({"ok": True, "text": text, "sig": sig, "edit": edit}, headers={"Cache-Control": "no-store"})
 
+    def editing(edit: str) -> dict | None:
+        """The note an edit capability names, kept at the fresh end: one in use is never the one pushed out."""
+        opened = app.state.edit_caps.get(edit)
+        if opened is not None:
+            app.state.edit_caps.move_to_end(edit)
+        return opened
+
+    @app.get("/api/source/current")
+    async def note_source_now(request: Request, edit: str):
+        """The note's text as it is on disk now, read through the editor's own capability. Taking in a version written
+        elsewhere goes this way, so it neither mints capabilities nor depends on the page's, which expire."""
+        if denied := api_forbidden(request):
+            return denied
+        opened = editing(edit)
+        if not opened:
+            return JSONResponse({"ok": False, "error": "Onyx restarted since this note was opened; reload it."}, status_code=403)
+        try:
+            text, sig = await asyncio.to_thread(viewer.read_source, Path(opened["source"]))
+        except viewer.ViewerError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "text": text, "sig": sig}, headers={"Cache-Control": "no-store"})
+
     @app.post("/api/source")
     async def save_note_source(request: Request):
         """Save the editor's text to the one file its edit capability names, over the version it was written against;
@@ -788,7 +817,7 @@ def create_app(config: AppConfig) -> FastAPI:
             return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
         if body.get("token") != config.token:
             return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
-        edit = app.state.edit_caps.get(str(body.get("edit") or ""))
+        edit = editing(str(body.get("edit") or ""))
         if not edit:
             return JSONResponse({"ok": False, "error": "Onyx restarted since this note was opened; reload it to keep editing."}, status_code=403)
         text = body.get("text")
@@ -800,7 +829,6 @@ def create_app(config: AppConfig) -> FastAPI:
             return JSONResponse({"ok": False, "error": str(exc), "sig": exc.sig}, status_code=409)
         except viewer.ViewerError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        app.state.edit_caps.move_to_end(str(body["edit"]))
         return {"ok": True, "sig": sig}
 
     @app.post("/api/source/images")
@@ -816,7 +844,7 @@ def create_app(config: AppConfig) -> FastAPI:
             return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
         if body.get("token") != config.token:
             return JSONResponse({"ok": False, "error": "invalid token"}, status_code=403)
-        opened = app.state.edit_caps.get(str(body.get("edit") or ""))
+        opened = editing(str(body.get("edit") or ""))
         if not opened:
             return JSONResponse({"ok": False, "error": "Reload this page to see its images."}, status_code=403)
         refs = [r for r in body.get("refs") or [] if isinstance(r, dict)][:200]
@@ -889,7 +917,7 @@ def create_app(config: AppConfig) -> FastAPI:
         """Where a link clicked in the editor leads, from where its note was opened (see ``viewer.link_href``)."""
         if denied := api_forbidden(request):
             return denied
-        opened = app.state.edit_caps.get(edit)
+        opened = editing(edit)
         if not opened:
             return JSONResponse({"ok": False, "error": "Reload this page to follow its links."}, status_code=403)
 
@@ -1571,10 +1599,12 @@ def create_app(config: AppConfig) -> FastAPI:
     # first frame: the vault look's stylesheet, and its mode on <html> (its rules key on html[data-askw-look]); the app
     # theme; the remembered scroll position. ask.js takes each at boot (seedLook, initPosition) instead of fetching it and
     # restyling or jumping once the page had painted, which made every change of page look jerky.
-    def first_paint(html_text: str, source: str, settings: dict) -> str:
+    def first_paint(html_text: str, source: str, settings: dict, *, shown: str | None = None) -> str:
         look, row = current_vault_look(), app.state.storage.document(source)
         head = (f'<meta name="askw-appearance" content="{_esc(str(settings.get("appearance_theme") or "system"))}">'
                 f'<meta name="askw-scroll" content="{float(row["scroll_y"]) if row else 0.0:g}">')
+        if shown:
+            head += f'<meta name="askw-doc-sig" content="{_esc(shown)}">'
         if look["reader_css"]:
             mode = _esc(look["mode"])
             head += (f'<meta name="askw-look" content="{mode}"><meta name="askw-look-revision" content="{_esc(look["revision"])}">'

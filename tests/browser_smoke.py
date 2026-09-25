@@ -3052,7 +3052,13 @@ class BrowserSmokeTests(unittest.TestCase):
                     # A link drawn as a link follows on click, in the reader.
                     page.keyboard.press("Meta+e")
                     expect(frame.locator(".askw-ed .cm-content")).to_be_visible()
-                    reader.evaluate("scrollTo(0, 0)")
+                    # Up to the link. The editor lands where the page was on its next frame, which can come after a
+                    # scroll made at once and take the window back down, so the scroll is made until the link is drawn.
+                    page.wait_for_function("""() => {
+                      const w = document.querySelector('iframe[name=reader]').contentWindow;
+                      w.scrollTo(0, 0);
+                      return !!w.document.querySelector('.askw-ed [data-askw-href]');
+                    }""")
                     frame.locator(".askw-ed [data-askw-href]").click()
                     expect(frame.locator("h1", has_text="Other")).to_be_visible(timeout=5000)
                     self.assertIn(str(self.root / "other.md"), urllib.parse.unquote(page.frame(name="reader").url))
@@ -3218,6 +3224,102 @@ class BrowserSmokeTests(unittest.TestCase):
                     page.keyboard.type("After. ")
                     expect(status).to_have_text("Editing · Saved", timeout=5000)
                     self.assertEqual(note.read_text(encoding="utf-8"), disk.replace("Paragraph 1.", "After. Paragraph 1."))
+                    browser.close()
+
+        self.assertEqual(page_errors, [])
+
+    def test_no_edit_is_lost_or_misfiled_when_the_note_moves_under_it(self) -> None:
+        # The failure paths an adversarial review (Codex, 2026-09-25) found, each driven for real:
+        # - a conflict still open when the page goes keeps the typing as a draft, offered back on the next ⌘E;
+        # - "Keep mine" writes the editor's text even when undo took it back to the last save;
+        # - a note whose text is three bytes a character still saves (keepalive's cap is on bytes);
+        # - a task box ticks the version the page shows, not the newer one live reload has seen but not yet shown.
+        note, other = self.root / "moving.md", self.root / "aside.md"
+        other.write_text("# Aside\n", encoding="utf-8")
+        wide = self.root / "wide.md"
+        page_errors: list[str] = []
+
+        def goto(page, path: Path) -> None:
+            page.evaluate("src => { document.querySelector('iframe[name=reader]').src = '/view?src=' + encodeURIComponent(src) }", str(path))
+
+        def edited_elsewhere(old: str, new: str) -> None:
+            note.write_text(note.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+        with sync_playwright() as playwright:
+            for engine in ("chromium", "webkit"):
+                with self.subTest(engine=engine):
+                    base_text = "# Moving\n\nFirst line.\n\nSecond line.\n\nThird line.\n"
+                    note.write_text(base_text, encoding="utf-8")
+                    browser = getattr(playwright, engine).launch(headless=True)
+                    page = browser.new_page(viewport={"width": 1200, "height": 760})
+                    page.on("pageerror", lambda error, engine=engine: page_errors.append(f"{engine}: {error}"))
+                    page.goto(f"{self.base_url}/?{urllib.parse.urlencode({'src': str(note)})}", wait_until="networkidle")
+                    frame = page.frame_locator("iframe[name=reader]")
+                    status, bar = frame.locator(".askw-ed-status"), frame.locator(".askw-ed-conflict")
+
+                    # A conflict left open as the page goes: the typing comes back as a draft.
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+e")
+                    expect(status).to_have_text("Editing · Saved")
+                    frame.locator(".cm-line", has_text="Second line.").click(position={"x": 1, "y": 8})
+                    page.keyboard.type("Kept for later. ")
+                    edited_elsewhere("First line.", "First line, from Obsidian.")
+                    expect(bar).to_be_visible(timeout=5000)
+                    goto(page, other)
+                    expect(frame.locator("main > h1", has_text="Aside")).to_be_visible()
+                    goto(page, note)
+                    expect(frame.locator(".askw-toast")).to_have_text("Edits to this note never reached the file — ⌘E to get them back", timeout=5000)
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+e")
+                    expect(bar).to_contain_text("never reached the file")
+                    bar.locator("button", has_text="Restore them").click()
+                    expect(status).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertIn("Kept for later. Second line.", note.read_text(encoding="utf-8"))
+                    self.assertIsNone(page.frame(name="reader").evaluate("src => localStorage.getItem('askw:draft:' + src)", str(note.resolve())))
+
+                    # "Keep mine" after undoing back to the saved text: that text is written, not the disk's kept.
+                    mine = note.read_text(encoding="utf-8")
+                    frame.locator(".cm-line", has_text="Third line.").click(position={"x": 1, "y": 8})
+                    page.keyboard.type("Z")
+                    edited_elsewhere("Third line.", "Third line, from Obsidian.")
+                    expect(bar).to_be_visible(timeout=5000)
+                    page.keyboard.press("Meta+z")
+                    expect(frame.locator(".cm-line", has_text="ZThird")).to_have_count(0)
+                    bar.locator("button", has_text="Keep mine").click()
+                    expect(status).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertEqual(note.read_text(encoding="utf-8"), mine)
+                    page.keyboard.press("Meta+e")
+                    expect(frame.locator(".askw-ed")).to_have_count(0)
+
+                    # Three bytes a character: past keepalive's cap in bytes, though not in string length.
+                    wide.write_text("# 広い\n\n" + "\n\n".join("漢字" * 250 for _ in range(50)) + "\n", encoding="utf-8")
+                    goto(page, wide)
+                    expect(frame.locator("main > h1", has_text="広い")).to_be_visible()
+                    frame.locator("h1").click()
+                    page.keyboard.press("Meta+e")
+                    expect(status).to_have_text("Editing · Saved")
+                    frame.locator(".cm-line.askw-ed-h1").click()
+                    page.keyboard.press("End")
+                    page.keyboard.type("!")
+                    expect(status).to_have_text("Editing · Saved", timeout=5000)
+                    self.assertTrue(wide.read_text(encoding="utf-8").startswith("# 広い!\n"))
+                    page.keyboard.press("Meta+e")
+
+                    # A tick while a reload waits (an answer open): the page still shows the old lines, so it's refused.
+                    note.write_text("# Moving\n\n- [ ] first\n- [ ] second\n", encoding="utf-8")
+                    goto(page, note)
+                    boxes = frame.locator("main input.askw-task-box")
+                    expect(boxes).to_have_count(2)
+                    reader = page.frame(name="reader")
+                    reader.evaluate("document.querySelector('.askw-panel').classList.add('open')")
+                    time.sleep(1.0)
+                    note.write_text("# Moving\n\n- [ ] prepended\n- [ ] first\n- [ ] second\n", encoding="utf-8")
+                    time.sleep(7.0)  # two live-reload polls: it has seen the new version, and waits to show it
+                    expect(boxes).to_have_count(2)
+                    boxes.first.evaluate("box => box.click()")
+                    expect(frame.locator(".askw-toast")).to_have_text("This note changed on disk; showing the new version", timeout=5000)
+                    self.assertFalse(boxes.first.is_checked())
+                    self.assertEqual(note.read_text(encoding="utf-8"), "# Moving\n\n- [ ] prepended\n- [ ] first\n- [ ] second\n")
                     browser.close()
 
         self.assertEqual(page_errors, [])
