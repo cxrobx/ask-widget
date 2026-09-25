@@ -200,6 +200,23 @@ fi
 rm -rf "$BACKUP"
 # Clear the quarantine flag so it opens without the unidentified-developer prompt.
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+# The transparent gem, as the installed app's custom icon. The app sets it itself at launch
+# (adoptCustomIcon in Onyx.swift), but this install just replaced the bundle that carried it, and ⌘W
+# hides Onyx rather than quitting it: until the next launch, whatever reads the icon from disk
+# (Finder, a Dock replacement, the Dock once Onyx quits) shows the dark square. The archive and disk
+# image keep the bundle exactly as signed.
+if [ "$(defaults read com.cx.onyx customIcon 2>/dev/null)" = 0 ]; then
+  echo "  Custom icon: off (defaults com.cx.onyx customIcon)"
+elif [ "$(osascript -l JavaScript -e '
+  ObjC.import("AppKit")
+  function run(argv) {
+    const gem = $.NSImage.alloc.initWithContentsOfFile(argv[0] + "/Contents/Resources/AppIcon.icns")
+    return !gem.isNil() && $.NSWorkspace.sharedWorkspace.setIconForFileOptions(gem, argv[0], 0)
+  }' "$DEST" 2>/dev/null)" = true ]; then
+  echo "  Custom icon: the transparent gem"
+else
+  echo "  Couldn't set the custom icon; Onyx sets it on its next launch." >&2
+fi
 /System/Library/CoreServices/pbs -update >/dev/null 2>&1 || true
 # The headless service (scripts/install-daemon.sh) keeps running the bundle it started from, and the
 # app adopts whatever healthy service owns the port: left alone, the new app shows the old pages, and
