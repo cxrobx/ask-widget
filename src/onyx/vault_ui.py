@@ -497,6 +497,9 @@ outGrip.addEventListener('pointerdown',e=>{{if(e.button!==0)return;e.preventDefa
 outGrip.addEventListener('pointermove',e=>{{if(outGripFrom)outWidth(outGripFrom.w+outGripFrom.x-e.clientX)}});
 function outGripEnd(){{if(!outGripFrom)return;outGripFrom=null;document.body.classList.remove('outline-resizing');if(!outDocked()&&!outOver)outLater()}}
 outGrip.addEventListener('pointerup',outGripEnd); outGrip.addEventListener('pointercancel',outGripEnd); outGrip.addEventListener('lostpointercapture',outGripEnd);
+// The panel never scrolls sideways: its grip lies inside the edge it pulls. WebKit measures the panel's content 6 px
+// wider than its box and scrolled it by that on a click on its pin, which slid the grip out under the reader (2026-09-25).
+outSide.addEventListener('scroll',()=>{{if(outSide.scrollLeft)outSide.scrollLeft=0}},{{passive:true}});
 outGrip.addEventListener('dblclick',()=>outWidth(null));
 // Put back as it was left: set before the first paint (the page opens under outline-still), so nothing glides into place.
 {{const w=parseInt(recall(OUT_WIDE_KEY)||'',10);if(w>0)outWidth(w)}}
